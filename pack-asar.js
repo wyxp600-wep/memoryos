@@ -1,0 +1,170 @@
+/**
+ * MemoryOS — app.asar 重打包器（最小改动：只替换 /main.js，其余文件字节级保留）
+ *
+ * 用法：node pack-asar.js            # 备份旧 asar → 写入新 asar → 反解逐文件校验
+ *      node pack-asar.js --check    # 只校验当前 asar 与根目录 main.js 是否一致
+ *
+ * asar 文件布局（与 Electron @electron/asar 一致）：
+ *   [uint32 4][uint32 headerBuf.length][uint32 headerPayloadSize][uint32 jsonLen][json][file data...]
+ *   file.offset 相对数据区起点 base = 8 + headerBuf.length = 16 + jsonLen
+ */
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ROOT = __dirname;
+const ASAR = path.join(ROOT, "resources", "app.asar");
+const SYNC_FILES = ["/main.js", "/services/core-process.js", "/window/tray.js"]; // ★ 2026-09-13：tray.js 加入同步（托盘「重新启动」）
+
+function sourceFile(asarPath) {
+  return path.join(ROOT, asarPath.replace(/^\//, ""));
+}
+
+/** 解析 asar → { header, base, files: [{p, offset, size}] }（从 Buffer 或文件） */
+function readAsarBuffer(buf) {
+  const jsonLen = buf.readUInt32LE(12);
+  const header = JSON.parse(buf.slice(16, 16 + jsonLen).toString("utf8"));
+  const base = 16 + jsonLen;
+  const files = [];
+  (function walk(dir, prefix) {
+    for (const name of Object.keys(dir.files)) {
+      const e = dir.files[name];
+      const p = prefix + "/" + name;
+      if (e.files) walk(e, p);
+      else files.push({ p, offset: Number(e.offset), size: Number(e.size) });
+    }
+  })(header, ""); // 注意：从 header 起（header.files 才是根映射）
+  return { buf, header, base, files };
+}
+
+function readAsar(file) {
+  return readAsarBuffer(fs.readFileSync(file));
+}
+
+function extract(a, f) {
+  return a.buf.slice(a.base + f.offset, a.base + f.offset + f.size);
+}
+
+/** 取旧 header 中某路径的节点（用于沿用它未变动的字段，如 integrity） */
+function nodeAt(header, p) {
+  let node = header.files;
+  for (const part of p.replace(/^\//, "").split("/")) {
+    if (!node || !node[part]) return null;
+    node = node[part];
+    if (node.files) node = node.files;
+  }
+  return node;
+}
+
+/** 计算 per-file integrity（SHA256，blockSize 4MB；单块时 hash === blocks[0]） */
+function computeIntegrity(data) {
+  const blockSize = 4194304;
+  const blocks = [];
+  for (let i = 0; i < data.length; i += blockSize) {
+    blocks.push(require("node:crypto").createHash("sha256").update(data.slice(i, i + blockSize)).digest("hex"));
+  }
+  const hash = blocks.length === 1
+    ? blocks[0]
+    : require("node:crypto").createHash("sha256").update(blocks.join("")).digest("hex");
+  return { algorithm: "SHA256", hash, blockSize, blocks };
+}
+
+/** 打包：entries = [{ p, data }]（p 以 / 开头）；沿旧 header 顶层键与其他节点字段，变动文件重算 integrity */
+function packAsar(entries, oldHeader) {
+  const files = {};
+  let cursor = 0;
+  const ordered = entries.slice().sort((x, y) => (x.p < y.p ? -1 : x.p > y.p ? 1 : 0));
+  for (const e of ordered) {
+    const parts = e.p.replace(/^\//, "").split("/");
+    let node = files;
+    for (let i = 0; i < parts.length - 1; i++) {
+      node[parts[i]] = node[parts[i]] || { files: {} };
+      node = node[parts[i]].files;
+    }
+    const oldNode = nodeAt(oldHeader, e.p) || {};
+    node[parts[parts.length - 1]] = {
+      ...oldNode,
+      size: e.data.length,
+      offset: String(cursor),
+      integrity: e.recompute ? computeIntegrity(e.data) : oldNode.integrity || computeIntegrity(e.data),
+    };
+    cursor += e.data.length;
+  }
+  const header = { ...oldHeader, files };
+  // 删掉旧 header 里可能残留的非 files 顶层键之外的东西？保留原样，仅覆盖 files
+  let json = Buffer.from(JSON.stringify(header), "utf8");
+  const pad = (4 - (json.length % 4)) % 4;
+  if (pad) json = Buffer.concat([json, Buffer.alloc(pad, 0x20)]); // 空格填充，JSON.parse 可容忍
+  // 布局：[4][headerBuf.length][picklePayloadSize][jsonLen][json][data...]
+  // 其中 picklePayloadSize = 4 + jsonLen（与 @electron/asar 一致，json 起始偏移恒为 16）
+  const headerPayload = Buffer.alloc(8 + json.length);
+  headerPayload.writeUInt32LE(4 + json.length, 0); // pickle payload size
+  headerPayload.writeUInt32LE(json.length, 4); // writeString 的长度前缀
+  json.copy(headerPayload, 8);
+  const sizeBuf = Buffer.alloc(8);
+  sizeBuf.writeUInt32LE(4, 0);
+  sizeBuf.writeUInt32LE(headerPayload.length, 4);
+  const out = Buffer.concat([sizeBuf, headerPayload, ...ordered.map((e) => e.data)]);
+  // 自检：产物必须能被解析且文件数一致，否则拒绝落盘
+  const self = readAsarBuffer(out);
+  if (self.files.length !== entries.length) throw new Error(`自检失败：文件数 ${self.files.length} ≠ ${entries.length}`);
+  return out;
+}
+
+function main() {
+  const checkOnly = process.argv.includes("--check");
+  const old = readAsar(ASAR);
+  if (checkOnly) {
+    let ok = true;
+    for (const p of SYNC_FILES) {
+      const cur = old.files.find((f) => f.p === p);
+      const same = !!cur && extract(old, cur).equals(fs.readFileSync(sourceFile(p)));
+      console.log(`asar ${p} 与根目录一致:`, same);
+      ok = ok && same;
+    }
+    process.exit(ok ? 0 : 1);
+  }
+
+  const entries = old.files.map((f) => ({
+    p: f.p,
+    data: SYNC_FILES.includes(f.p) ? fs.readFileSync(sourceFile(f.p)) : extract(old, f),
+    recompute: SYNC_FILES.includes(f.p),
+  }));
+
+  const out = packAsar(entries, old.header);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const bak = path.join(ROOT, "resources", `app.asar.bak-${stamp}`);
+  fs.copyFileSync(ASAR, bak);
+  const tmp = ASAR + ".tmp";
+  fs.writeFileSync(tmp, out);
+  // 说明：rename 覆盖 app.asar 在本机报 EPERM，改用 copy 覆盖（同目录，原子性足够）
+  fs.copyFileSync(tmp, ASAR);
+  fs.unlinkSync(tmp);
+  console.log("备份:", bak);
+  console.log("新 asar 字节:", out.length, "（旧:", old.buf.length, "）");
+
+  // 反解校验：逐文件字节比对
+  const v = readAsar(ASAR);
+  let bad = 0;
+  for (const e of entries) {
+    const f = v.files.find((x) => x.p === e.p);
+    if (!f) {
+      console.log("❌ 缺失", e.p);
+      bad++;
+      continue;
+    }
+    const got = extract(v, f);
+    if (!got.equals(e.data)) {
+      console.log("❌ 内容不一致", e.p);
+      bad++;
+    }
+  }
+  console.log(`校验文件数 ${entries.length}，不一致 ${bad}`);
+  for (const p of SYNC_FILES) {
+    const file = v.files.find((x) => x.p === p);
+    console.log(`${p} 与根目录一致:`, !!file && extract(v, file).equals(fs.readFileSync(sourceFile(p))));
+  }
+  process.exit(bad === 0 ? 0 : 1);
+}
+
+main();

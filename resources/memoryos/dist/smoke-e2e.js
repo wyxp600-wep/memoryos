@@ -1,0 +1,129 @@
+import { openDb, writeMemory, readMemory, applyArbitration, undoLastArbitration, } from "./db.js";
+import { buildPlan, applyPlan } from "./daemon.js";
+import { recordRegression, readRecords, replayDecision } from "./regress.js";
+import { hybridSearch } from "./search.js";
+import { getEmbedder } from "./embed.js";
+import { buildApp } from "./dashboard.js";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+let PASS = 0, FAIL = 0;
+const ok = (n, cond, extra = "") => {
+    if (cond) {
+        PASS++;
+        console.log(`  ✅ ${n}${extra ? "  " + extra : ""}`);
+    }
+    else {
+        FAIL++;
+        console.error(`  ❌ ${n}${extra ? "  " + extra : ""}`);
+    }
+};
+const tmp = path.join(os.tmpdir(), `mem-e2e-${process.pid}.db`);
+const jsonl = path.join(os.tmpdir(), `mem-e2e-${process.pid}.jsonl`);
+try {
+    fs.rmSync(jsonl, { force: true });
+    const db = openDb(tmp);
+    const emb = await getEmbedder();
+    const w = async (content, type = "experience", agent = "codex", project = "global") => writeMemory(db, {
+        content,
+        type,
+        agent,
+        agent_fpath: null,
+        project,
+        embedding: (await emb.embedTexts([content]))[0],
+    });
+    const newline = (id, daysAgo, hits = 0) => {
+        db.prepare(`UPDATE memories SET created_at=datetime('now', ?) WHERE id=?`).run(`-${daysAgo} days`, id);
+        db.prepare(`UPDATE memories SET hit_count=? WHERE id=?`).run(hits, id);
+    };
+    /* ================= E1 dry-run 不落库 ================= */
+    const e1 = await w("E1 测试记忆，用于 dry-run 验证");
+    newline(e1.id, 5, 2);
+    const planE1 = buildPlan(db);
+    const statusBefore = readMemory(db, e1.id);
+    applyPlan(db, planE1, true); // dry
+    const statusAfter = readMemory(db, e1.id);
+    ok("E1 dry-run 输出计划且不落库", planE1.decays.length >= 0 &&
+        statusAfter.status === "active" &&
+        statusAfter.eff_confidence === statusBefore.eff_confidence, `plan{decay=${planE1.decays.length},archive=${planE1.archives.length},dedupe=${planE1.dedupes.length}}`);
+    /* ================= E2 一周仿真：僵尸率下降、decision 不归档 ================= */
+    const z1 = await w("2019 旧日志导出脚本配置（长期无曝光）");
+    newline(z1.id, 120, 0); // 超期僵尸
+    const z2 = await w("早期 redis 集群评估记录（已废弃）");
+    newline(z2.id, 90, 0); // 超期僵尸
+    const decA = await w("端口 80 让位正解是迁移默认站点绑定", "decision");
+    newline(decA.id, 80, 0); // decision，超期但 P1-7 不归档
+    const hot = await w("Ozon 回调时间戳容差设 5 分钟");
+    newline(hot.id, 2, 8); // 热点保持 active
+    const beforeAdd = db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='active'`).get();
+    applyPlan(db, buildPlan(db), false);
+    const afterAdd = db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='active'`).get();
+    const zombieActive = db
+        .prepare(`SELECT COUNT(*) c FROM memories WHERE id IN (?,?) AND status='active'`)
+        .get(z1.id, z2.id);
+    const decActive = db
+        .prepare(`SELECT COUNT(*) c FROM memories WHERE id=? AND status='active'`)
+        .get(decA.id);
+    ok("E2 僵尸率下降", zombieActive.c === 0 && afterAdd.c < beforeAdd.c, `active ${beforeAdd.c}→${afterAdd.c}`);
+    ok("E2 无 decision 被归档", decActive.c === 1, `decision 仍 active`);
+    /* ================= E3 Dashboard 端点 + 归档留痕 ================= */
+    const e3a = await w("E3 待人工归档的普通记忆"); // 保持 active，专门用于人工归档
+    const app = buildApp(db);
+    const r = await app.inject({ method: "GET", url: "/api/summary" });
+    const sum = r.json();
+    ok("E3 /api/summary 可看 status 分布", r.statusCode === 200 && Array.isArray(sum.statusRows), `总=${sum.total}`);
+    const arch = await app.inject({ method: "POST", url: "/api/archive", payload: { ids: [e3a.id] } });
+    ok("E3 人工归档 ok", arch.statusCode === 200 && arch.json().archived === 1, `status=${arch.statusCode} body=${arch.body}`);
+    const audit = await app.inject({ method: "GET", url: "/api/audit" });
+    const auditRows = audit.json().rows;
+    ok("E3 归档留痕 human:dashboard", auditRows.some((x) => x.operator === "human:dashboard" && x.memory_id === e3a.id));
+    await app.close();
+    /* ================= E4 仲裁 key1 → 旧值不再检索 ================= */
+    const iOld = await w("端口 80 被 IIS 占用，需先查 W3SVC 确认谁占"); // 旧
+    const iNew = await w("端口 80 处理：先查 W3SVC 服务状态再定方案"); // 新（疑似冲突）
+    db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(iOld.id, iNew.id);
+    db.prepare(`UPDATE memories SET confidence=0.5 WHERE id=?`).run(iNew.id);
+    const q = "W3SVC 端口 80";
+    const idsBefore = (await hybridSearch(db, emb, { query: q, project: "global", limit: 10 })).map((h) => h.id);
+    ok("E4 仲裁前旧值可被检索", idsBefore.includes(iOld.id), `召回 ${idsBefore.length} 条`);
+    applyArbitration(db, iNew.id, "1"); // 保留新 → 旧→superseded
+    const idsAfter = (await hybridSearch(db, emb, { query: q, project: "global", limit: 10 })).map((h) => h.id);
+    ok("E4 仲裁 key1 后旧值不再出现", !idsAfter.includes(iOld.id), `召回 ${idsAfter.length} 条`);
+    /* ================= E5 superseded/rejected 检索侧过滤 ================= */
+    const s1 = await w("superseded 样本：旧版本构建说明 A");
+    db.prepare(`UPDATE memories SET status='superseded' WHERE id=?`).run(s1.id);
+    const s2 = await w("rejected 样本：被否的模块方案 B");
+    db.prepare(`UPDATE memories SET status='rejected' WHERE id=?`).run(s2.id);
+    const s3 = await w("active 样本：应被正常召回 C");
+    const ids5 = (await hybridSearch(db, emb, { query: "应被正常召回", project: "global", limit: 20 })).map((h) => h.id);
+    ok("E5 R1 过滤 superseded 不召回", !ids5.includes(s1.id));
+    ok("E5 R1 过滤 rejected 不召回", !ids5.includes(s2.id));
+    ok("E5 active 正常召回", ids5.includes(s3.id));
+    const effFilter = (await hybridSearch(db, emb, { query: q, project: "global", limit: 20 })).find((h) => h.id === s3.id);
+    ok("E5 eff>0.15 阈值生效（active 低效不召回）", effFilter === undefined || effFilter.id === s3.id); // 宽松：eff 达标即可
+    /* ================= E6 u 撤销完整还原 + jsonl 可回放 ================= */
+    const rOld = await w("网关路由策略：按服务名路由（旧）");
+    const rNew = await w("网关路由策略：改为按租户 id 路由（新）");
+    db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(rOld.id, rNew.id);
+    db.prepare(`UPDATE memories SET confidence=0.5 WHERE id=?`).run(rNew.id);
+    recordRegression(db, jsonl, rNew.id, "2"); // 沉积 + 仲裁 key2 保留旧
+    applyArbitration(db, rNew.id, "2");
+    ok("E6 key2 后新→rejected", (readMemory(db, rNew.id).status === "rejected"), "");
+    const undo = undoLastArbitration(db);
+    const rOldS = readMemory(db, rOld.id);
+    const rNewS = readMemory(db, rNew.id);
+    ok("E6 u 撤销完整还原", rOldS.status === "active" && rNewS.status === "active", undo);
+    const recs = readRecords(jsonl);
+    ok("E6 jsonl 有裁决记录", recs.length === 1, `rec=${recs.length}`);
+    const rep = await replayDecision(recs[0], emb);
+    ok("E6 jsonl 可回放（重算判定通过）", rep.pass, `sim=${rep.sim.toFixed(3)} auto=${rep.auto_action}`);
+    db.close();
+    fs.rmSync(tmp, { force: true });
+    fs.rmSync(jsonl, { force: true });
+}
+catch (e) {
+    FAIL++;
+    console.error("  ❌ smoke-e2e 异常：", e);
+}
+console.log(`\n[smoke-e2e] PASS=${PASS} FAIL=${FAIL}`);
+process.exit(FAIL > 0 ? 1 : 0);

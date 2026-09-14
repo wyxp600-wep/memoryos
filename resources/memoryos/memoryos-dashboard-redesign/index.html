@@ -1,0 +1,4150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>
+<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<script src="./echarts.min.js"></script>
+<style>
+/* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */
+:root {
+  --bg-deep: #FCF9E8;
+  --bg-base: #F5F1E0;
+  --bg-card: rgba(255, 255, 255, 0.72);
+  --bg-card-hover: rgba(255, 255, 255, 0.92);
+  --border-glass: rgba(65, 187, 200, 0.2);
+  --border-glow: rgba(65, 187, 200, 0.45);
+  --text-primary: #1a2e35;
+  --text-secondary: #4a6570;
+  --text-muted: #8aa0aa;
+  --accent-cyan: #41BBC8;
+  --accent-purple: #2a9daf;
+  --accent-blue: #5ec9d6;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --archived: #6b7280;
+  --merged: #7c3aed;
+  --superseded: #d97706;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 8px;
+  --sidebar-w: 260px;
+  --font-display: 'Space Grotesk', 'Noto Sans SC', sans-serif;
+  --font-body: 'Noto Sans SC', 'Space Grotesk', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* ===== Dark Theme ===== */
+[data-theme="dark"] {
+  --bg-deep: #0a0f14;
+  --bg-base: #0f1620;
+  --bg-card: rgba(20, 30, 42, 0.85);
+  --bg-card-hover: rgba(28, 40, 56, 0.95);
+  --border-glass: rgba(65, 187, 200, 0.15);
+  --border-glow: rgba(65, 187, 200, 0.4);
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-cyan: #22d3ee;
+  --accent-purple: #a78bfa;
+  --accent-blue: #38bdf8;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --archived: #64748b;
+  --merged: #c084fc;
+  --superseded: #fbbf24;
+}
+[data-theme="dark"] body {
+  background: linear-gradient(160deg, #0a0f14 0%, #0f1620 45%, #0c1420 100%);
+}
+[data-theme="dark"] .glass-card { background: rgba(20, 30, 42, 0.85); }
+[data-theme="dark"] .modal { background: rgba(15, 22, 32, 0.98); }
+[data-theme="dark"] .form-field textarea,
+[data-theme="dark"] .form-field input,
+[data-theme="dark"] .form-field select { background: rgba(15, 22, 32, 0.8); color: #e2e8f0; }
+[data-theme="dark"] .status-bar-track { background: rgba(255,255,255,0.06); }
+[data-theme="dark"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+[data-theme="dark"] .global-loading { background: rgba(10,15,20,0.85); }
+[data-theme="dark"] .sidebar { background: rgba(15, 22, 32, 0.85); border-right-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .nav-item { color: rgba(226,232,240,0.7); }
+[data-theme="dark"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
+[data-theme="dark"] .nav-item.active { background: rgba(65,187,200,0.15); color: #41bbc8; }
+[data-theme="dark"] .nav-group-title { color: rgba(226,232,240,0.4); }
+[data-theme="dark"] .logo-title { color: #e2e8f0; }
+[data-theme="dark"] .logo-sub { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .page-title { color: #e2e8f0; }
+[data-theme="dark"] .card-title { color: #e2e8f0; }
+[data-theme="dark"] .data-table th { color: rgba(226,232,240,0.6); border-bottom-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .data-table td { color: rgba(226,232,240,0.85); border-bottom-color: rgba(255,255,255,0.05); }
+[data-theme="dark"] .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .filter-btn { color: rgba(226,232,240,0.6); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .filter-btn:hover { color: #e2e8f0; border-color: rgba(255,255,255,0.2); }
+[data-theme="dark"] .filter-btn.active { background: rgba(65,187,200,0.15); border-color: #41bbc8; color: #41bbc8; }
+[data-theme="dark"] .search-input { background: rgba(15,22,32,0.8); color: #e2e8f0; border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .search-input::placeholder { color: rgba(226,232,240,0.4); }
+[data-theme="dark"] .text-muted { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .text-secondary { color: rgba(226,232,240,0.7); }
+[data-theme="dark"] .text-primary { color: #e2e8f0; }
+[data-theme="dark"] .detail-content-box { background: rgba(15,22,32,0.6); color: #e2e8f0; }
+[data-theme="dark"] .detail-item label { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .detail-item .val { color: #e2e8f0; }
+[data-theme="dark"] .empty-state { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .pagination .page-btn { background: rgba(15,22,32,0.8); color: rgba(226,232,240,0.7); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .pagination .page-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
+[data-theme="dark"] .pagination .page-btn.active { background: #41bbc8; color: white; border-color: #41bbc8; }
+[data-theme="dark"] .modal-overlay { background: rgba(0,0,0,0.6); }
+[data-theme="dark"] .modal-header { border-bottom-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .modal-title { color: #e2e8f0; }
+[data-theme="dark"] .modal-close { color: rgba(226,232,240,0.6); }
+[data-theme="dark"] .modal-close:hover { color: #e2e8f0; background: rgba(255,255,255,0.08); }
+[data-theme="dark"] .form-field label { color: rgba(226,232,240,0.7); }
+[data-theme="dark"] .form-hint { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .stat-card { background: rgba(20,30,42,0.85); border-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .stat-label { color: rgba(226,232,240,0.6); }
+[data-theme="dark"] .stat-value { color: #e2e8f0; }
+[data-theme="dark"] .stat-trend { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .toast { background: rgba(15,22,32,0.95); color: #e2e8f0; border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .context-menu { background: rgba(15,22,32,0.98); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .context-menu-item { color: rgba(226,232,240,0.85); }
+[data-theme="dark"] .context-menu-item:hover { background: rgba(65,187,200,0.15); color: #41bbc8; }
+[data-theme="dark"] .context-menu-divider { border-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .preview-tooltip { background: rgba(15,22,32,0.98); border-color: rgba(255,255,255,0.1); color: #e2e8f0; }
+[data-theme="dark"] .error-boundary { background: rgba(15,22,32,0.98); color: #e2e8f0; }
+[data-theme="dark"] .command-palette-modal { background: rgba(15,22,32,0.98); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .command-palette-input-wrap { border-bottom-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .command-palette-input-wrap input { color: #e2e8f0; }
+[data-theme="dark"] .command-item-name { color: #e2e8f0; }
+[data-theme="dark"] .command-item-desc { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .command-item:hover, [data-theme="dark"] .command-item.active { background: rgba(65,187,200,0.15); }
+[data-theme="dark"] .settings-section-title { color: #41bbc8; border-bottom-color: rgba(65,187,200,0.2); }
+[data-theme="dark"] .settings-name { color: #e2e8f0; }
+[data-theme="dark"] .settings-desc { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .settings-option { background: rgba(15,22,32,0.8); color: rgba(226,232,240,0.7); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .settings-option:hover { border-color: rgba(65,187,200,0.4); color: #41bbc8; }
+[data-theme="dark"] .settings-option.active { background: rgba(65,187,200,0.15); border-color: #41bbc8; color: #41bbc8; }
+[data-theme="dark"] .shortcut-help-item { background: rgba(255,255,255,0.04); color: rgba(226,232,240,0.7); }
+[data-theme="dark"] .shortcut-help-item kbd { background: rgba(15,22,32,0.8); color: #e2e8f0; border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .about-info { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .about-row span { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .about-row strong { color: #e2e8f0; }
+[data-theme="dark"] .skeleton { background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%); background-size: 200% 100%; }
+[data-theme="dark"] .skeleton-card { background: rgba(20,30,42,0.85); border-color: rgba(255,255,255,0.08); }
+[data-theme="dark"] .batch-bar { background: rgba(15,22,32,0.95); border-color: rgba(255,255,255,0.1); }
+[data-theme="dark"] .quality-score { background: linear-gradient(135deg, rgba(65,187,200,0.08), rgba(168,85,247,0.08)); border-color: rgba(65,187,200,0.2); }
+[data-theme="dark"] .word-cloud-item { opacity: 0.8; }
+
+/* ===== Ripple Effect ===== */
+.btn-primary, .btn-ghost, .btn-danger, .page-btn, .filter-btn, .row-action-btn, .proj-chip {
+  position: relative;
+  overflow: hidden;
+}
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.4);
+  transform: scale(0);
+  animation: rippleAnim 0.6s ease-out;
+  pointer-events: none;
+}
+@keyframes rippleAnim {
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* ===== Staggered Card Entry ===== */
+.page.active .glass-card {
+  animation: cardIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.page.active .glass-card:nth-child(1) { animation-delay: 0.05s; }
+.page.active .glass-card:nth-child(2) { animation-delay: 0.1s; }
+.page.active .glass-card:nth-child(3) { animation-delay: 0.15s; }
+.page.active .glass-card:nth-child(4) { animation-delay: 0.2s; }
+.page.active .glass-card:nth-child(5) { animation-delay: 0.25s; }
+.page.active .glass-card:nth-child(6) { animation-delay: 0.3s; }
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Number Counter Animation ===== */
+.stat-value {
+  display: inline-block;
+}
+
+/* ===== Theme Toggle Button ===== */
+.theme-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border-glass);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: all 0.2s;
+  margin-left: 8px;
+}
+.theme-toggle:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  transform: rotate(15deg);
+}
+
+/* ===== Context Menu ===== */
+.context-menu {
+  position: fixed;
+  z-index: 500;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  min-width: 160px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  display: none;
+}
+.context-menu.show { display: block; animation: menuIn 0.15s ease; }
+@keyframes menuIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.context-menu-item:hover { background: rgba(65,187,200,0.1); color: var(--accent-cyan); }
+.context-menu-item.danger:hover { background: rgba(239,68,68,0.1); color: #ef4444; }
+.context-menu-divider { height: 1px; background: var(--border-glass); margin: 4px 0; }
+
+/* ===== Hover Preview Tooltip ===== */
+.preview-tooltip {
+  position: fixed;
+  z-index: 400;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  max-width: 400px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  display: none;
+  pointer-events: none;
+}
+.preview-tooltip.show { display: block; }
+.preview-tooltip .preview-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+}
+
+/* ===== Search Highlight ===== */
+.search-highlight {
+  background: rgba(245,158,11,0.25);
+  color: #b45309;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+/* ===== Expandable Row ===== */
+.data-table tbody tr.expanded { background: rgba(65,187,200,0.06) !important; }
+.expanded-content {
+  display: none;
+  padding: 16px 20px;
+  background: rgba(65,187,200,0.03);
+  border-top: 1px solid rgba(65,187,200,0.1);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+tr.expanded + tr .expanded-content { display: block; }
+
+/* ===== Error Boundary ===== */
+.error-boundary {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: var(--bg-deep);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+}
+.error-boundary.show { display: flex; }
+.error-boundary .error-icon { font-size: 48px; }
+.error-boundary .error-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+.error-boundary .error-msg { font-size: 13px; color: var(--text-muted); max-width: 400px; text-align: center; font-family: var(--font-mono); }
+.error-boundary .error-reload { padding: 10px 24px; background: var(--accent-cyan); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: linear-gradient(160deg, #f8fafc 0%, #f0f7fa 45%, #e8f4f8 100%);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+/* ===== Custom Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(65,187,200,0.4);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
+}
+
+/* ===== Command Palette ===== */
+.command-palette-modal {
+  width: 560px;
+  background: var(--bg-card);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: modalIn 0.2s ease;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.2);
+}
+.command-palette-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-glass);
+}
+.command-palette-icon {
+  font-size: 18px;
+  color: var(--accent-cyan);
+  font-weight: 700;
+}
+.command-palette-input-wrap input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 15px;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+.command-palette-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.command-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.command-item:hover, .command-item.active {
+  background: rgba(65,187,200,0.1);
+}
+.command-item-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(65,187,200,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.command-item-info { flex: 1; }
+.command-item-name { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.command-item-desc { font-size: 11px; color: var(--text-muted); }
+.command-item-shortcut {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  background: rgba(0,0,0,0.05);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.command-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ===== Shortcuts Help ===== */
+.shortcuts-help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.shortcut-help-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(65,187,200,0.04);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.shortcut-help-item kbd {
+  display: inline-block;
+  padding: 3px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+}
+.shortcut-help-item span { margin-left: 4px; }
+
+/* ===== Settings Modal ===== */
+#settingsModal .modal { width: min(920px, 95vw); }
+#settingsModal .modal-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px 28px;
+  align-items: start;
+}
+.settings-section { margin-bottom: 24px; }
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(65,187,200,0.15);
+}
+.settings-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+.settings-item:last-child { border-bottom: none; }
+.settings-label { flex: 1; }
+.settings-name { font-size: 14px; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; }
+.settings-desc { font-size: 12px; color: var(--text-muted); }
+.settings-control { display: flex; gap: 6px; align-items: center; }
+.settings-option {
+  padding: 6px 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-option:hover { border-color: rgba(65,187,200,0.35); color: var(--accent-cyan); }
+.settings-option.active {
+  background: rgba(65,187,200,0.12);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+/* Toggle Switch */
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(0,0,0,0.15);
+  border-radius: 24px;
+  transition: 0.3s;
+}
+.toggle-slider::before {
+  position: absolute;
+  content: '';
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--accent-cyan); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+/* Shortcuts Grid */
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(65,187,200,0.04);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.shortcut-item kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+}
+.shortcut-item span { margin-left: 4px; }
+
+/* About Info */
+.about-info {
+  background: rgba(65,187,200,0.04);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.about-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.about-row span { color: var(--text-muted); }
+.about-row strong { color: var(--text-primary); font-weight: 600; }
+
+/* Font size classes */
+[data-font-size="small"] { font-size: 13px; }
+[data-font-size="small"] .stat-value { font-size: 26px; }
+[data-font-size="large"] { font-size: 17px; }
+[data-font-size="large"] .stat-value { font-size: 38px; }
+
+/* Reduce motion */
+[data-reduce-motion="true"] * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ===== Code Block ===== */
+.detail-content-box pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 14px 16px;
+  border-radius: 10px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 12px 0;
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.detail-content-box code {
+  font-family: var(--font-mono);
+  background: rgba(65,187,200,0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--accent-cyan);
+}
+.detail-content-box pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px 10px 0 0;
+  margin: -14px -16px 12px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  font-family: var(--font-mono);
+}
+.code-copy-btn {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: rgba(255,255,255,0.8);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.code-copy-btn:hover { background: rgba(255,255,255,0.2); }
+
+/* ===== Fly-in Animation ===== */
+@keyframes flyIn {
+  from { opacity: 0; transform: translateY(-20px); background: rgba(65,187,200,0.15); }
+  to { opacity: 1; transform: translateY(0); background: transparent; }
+}
+.fly-in { animation: flyIn 0.6s ease-out; }
+
+/* ===== Skeleton Loading ===== */
+.skeleton {
+  background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 6px;
+}
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.skeleton-stat { height: 100px; }
+.skeleton-line { height: 14px; margin-bottom: 10px; }
+.skeleton-line.short { width: 60%; }
+.skeleton-line.medium { width: 80%; }
+
+/* ===== Background: Deep Space with Orbs ===== */
+.bg-space {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.bg-space::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: -10%;
+  width: 60vw;
+  height: 60vw;
+  background: radial-gradient(circle, rgba(252,211,77,0.15) 0%, transparent 55%);
+  border-radius: 50%;
+  animation: orbFloat1 20s ease-in-out infinite;
+}
+.bg-space::after {
+  content: '';
+  position: absolute;
+  bottom: -15%;
+  right: -5%;
+  width: 50vw;
+  height: 50vw;
+  background: radial-gradient(circle, rgba(225,29,72,0.1) 0%, transparent 55%);
+  border-radius: 50%;
+  animation: orbFloat2 25s ease-in-out infinite;
+}
+@keyframes orbFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(5%, 8%) scale(1.1); }
+}
+@keyframes orbFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-6%, -5%) scale(1.08); }
+}
+
+/* Star particles */
+.stars {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: rgba(252,211,77,0.7);
+  border-radius: 50%;
+  animation: twinkle 3s ease-in-out infinite;
+}
+@keyframes twinkle {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.5); }
+}
+
+/* ===== Layout ===== */
+.app-layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ===== Sidebar ===== */
+.sidebar {
+  width: var(--sidebar-w);
+  min-height: 100vh;
+  background: rgba(255,255,255,0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-right: 1px solid var(--border-glass);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 100;
+  transition: width 0.25s ease;
+}
+.sidebar.collapsed { width: 64px; }
+.sidebar.collapsed .logo-text,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-group-title,
+.sidebar.collapsed .sidebar-footer-text { display: none; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 10px; }
+.sidebar.collapsed .sidebar-logo { justify-content: center; padding: 16px 0; }
+.sidebar.collapsed .nav-badge { position: absolute; top: 4px; right: 4px; font-size: 9px; min-width: 16px; height: 16px; }
+.main-content { transition: margin-left 0.25s ease; }
+.main-content.sidebar-collapsed { margin-left: 64px; }
+
+.sidebar-logo {
+  padding: 28px 24px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-glass);
+}
+.logo-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 32px rgba(252,211,77,0.5);
+  flex-shrink: 0;
+}
+.logo-icon svg { width: 24px; height: 24px; }
+.logo-text { display: flex; flex-direction: column; }
+.logo-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.logo-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 16px 12px;
+  overflow-y: auto;
+}
+.nav-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 16px 16px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-section-label::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  background: linear-gradient(180deg, var(--accent-cyan), var(--accent-purple));
+  border-radius: 2px;
+  opacity: 0.6;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 2px;
+  position: relative;
+  text-decoration: none;
+}
+.nav-item:hover {
+  background: rgba(65,187,200,0.08);
+  color: var(--text-primary);
+}
+.nav-item.active {
+  background: linear-gradient(135deg, rgba(65,187,200,0.18), rgba(42,157,175,0.1));
+  color: var(--accent-cyan);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(65,187,200,0.3);
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 65%;
+  background: linear-gradient(180deg, var(--accent-cyan), var(--accent-purple));
+  border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 8px rgba(65,187,200,0.4);
+}
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.nav-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: rgba(65,187,200,0.08);
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+.nav-item.active .nav-badge {
+  background: rgba(65,187,200,0.18);
+  color: var(--accent-cyan);
+}
+
+.sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid var(--border-glass);
+}
+.daemon-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(74,222,128,0.06);
+  border: 1px solid rgba(74,222,128,0.15);
+  border-radius: var(--radius-sm);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.daemon-text { font-size: 12px; color: var(--text-secondary); }
+.daemon-text strong { color: var(--success); font-weight: 600; }
+
+/* ===== Main Content ===== */
+.main-content {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  padding: 0;
+  min-height: 100vh;
+  min-width: 0;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 36px;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-glass);
+}
+.topbar-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+}
+.topbar-title span { color: var(--text-muted); font-weight: 400; font-size: 14px; margin-left: 10px; }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  width: 280px;
+  transition: all 0.2s;
+}
+.search-box:focus-within {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 3px rgba(65,187,200,0.12), 0 0 16px rgba(65,187,200,0.15);
+}
+.search-box:focus-within svg { color: var(--accent-cyan); }
+.search-box svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
+.search-box input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-body);
+  width: 100%;
+}
+.search-box input::placeholder { color: var(--text-muted); }
+
+.btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(65,187,200,0.3);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(65,187,200,0.45);
+}
+.btn-primary:active { transform: translateY(0); }
+.btn-primary svg { width: 16px; height: 16px; }
+
+.btn-ghost {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-ghost:hover {
+  background: rgba(65,187,200,0.06);
+  color: var(--accent-cyan);
+  border-color: rgba(65,187,200,0.35);
+}
+.btn-ghost:active { transform: scale(0.98); }
+.btn-ghost svg { width: 15px; height: 15px; }
+
+.btn-danger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  background: rgba(220,38,38,0.08);
+  border: 1px solid rgba(220,38,38,0.25);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-danger:hover {
+  background: rgba(220,38,38,0.15);
+  border-color: rgba(220,38,38,0.4);
+  transform: translateY(-1px);
+}
+.btn-danger:active { transform: scale(0.98); }
+
+/* ===== Page Container ===== */
+.page {
+  display: none;
+  padding: 28px 36px 48px;
+  animation: pageIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.page.active { display: block; }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ===== Glass Card ===== */
+.glass-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+}
+.glass-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(65,187,200,0.4), transparent);
+}
+.glass-card:hover {
+  border-color: rgba(65,187,200,0.35);
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.06), 0 12px 28px rgba(65,187,200,0.08);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.card-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-title .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+}
+
+/* ===== Overview: Stat Cards ===== */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: visible;
+  min-height: 130px;
+}
+.stat-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  filter: blur(40px);
+  opacity: 0.15;
+  transition: opacity 0.3s;
+}
+.stat-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255,255,255,0.15);
+}
+.stat-card:hover::after { opacity: 0.3; }
+.stat-card.cyan::after { background: var(--accent-cyan); }
+.stat-card.purple::after { background: var(--accent-purple); }
+.stat-card.green::after { background: var(--success); }
+.stat-card.orange::after { background: var(--warning); }
+
+.stat-icon {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  font-size: 28px;
+  opacity: 0.7;
+  transition: all 0.3s;
+}
+.stat-card:hover .stat-icon {
+  transform: scale(1.15) rotate(-5deg);
+  opacity: 1;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+.stat-card.cyan .stat-value { color: var(--accent-cyan); }
+.stat-card.purple .stat-value { color: var(--accent-purple); }
+.stat-card.green .stat-value { color: var(--success); }
+.stat-card.orange .stat-value { color: var(--warning); }
+.stat-trend {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-trend .up { color: var(--success); }
+.stat-trend .down { color: var(--danger); }
+
+/* ===== Overview: Write Health Banner ===== */
+.write-health {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 16px 22px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.write-health::after {
+  content: '';
+  position: absolute;
+  right: -30px;
+  top: -30px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  filter: blur(50px);
+  opacity: 0.18;
+  background: var(--warning);
+  pointer-events: none;
+}
+.write-health.ok::after { background: var(--success); }
+.write-health.warn::after { background: var(--danger); }
+.wh-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  background: rgba(252, 211, 77, 0.12);
+  color: var(--warning);
+  flex-shrink: 0;
+}
+.write-health.ok .wh-icon { color: var(--success); background: rgba(74, 222, 128, 0.12); }
+.write-health.warn .wh-icon { color: var(--danger); background: rgba(248, 113, 113, 0.12); }
+.wh-body { flex: 1; min-width: 0; }
+.wh-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+.wh-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.wh-btn {
+  flex-shrink: 0;
+  background: var(--warning);
+  color: #1c1610;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 18px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+.wh-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(252, 211, 77, 0.25); }
+
+/* ===== Overview: Two Column ===== */
+.two-col {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.three-col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+/* ===== Status Distribution ===== */
+.status-bars { display: flex; flex-direction: column; gap: 14px; }
+.status-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+.status-bar-row:hover { background: rgba(65,187,200,0.04); }
+.status-bar-label {
+  width: 90px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.status-bar-label .sdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-bar-track {
+  flex: 1;
+  height: 10px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 5px;
+  overflow: hidden;
+  position: relative;
+}
+.status-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 1s ease;
+  position: relative;
+  overflow: hidden;
+}
+.status-bar-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.status-bar-count {
+  width: 50px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+/* ===== Table ===== */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+}
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+table.data-table th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 2px solid var(--border-glass);
+  white-space: nowrap;
+  background: rgba(65,187,200,0.08);
+}
+table.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+table.data-table tr {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+table.data-table tbody tr:hover {
+  background: rgba(65,187,200,0.08) !important;
+  box-shadow: inset 3px 0 0 var(--accent-cyan);
+}
+table.data-table tbody tr:hover td { color: var(--text-primary); }
+
+.memory-content {
+  max-width: 520px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-primary) !important;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* Status pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-family: var(--font-mono);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.status-pill .sdot { width: 6px; height: 6px; border-radius: 50%; }
+.status-pill.active { background: rgba(16,185,129,0.1); color: #047857; border-color: rgba(16,185,129,0.25); }
+.status-pill.active .sdot { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,0.5); }
+.status-pill.merged { background: rgba(168,85,247,0.1); color: #7c3aed; border-color: rgba(168,85,247,0.25); }
+.status-pill.merged .sdot { background: #a855f7; }
+.status-pill.superseded { background: rgba(245,158,11,0.1); color: #b45309; border-color: rgba(245,158,11,0.25); }
+.status-pill.superseded .sdot { background: #f59e0b; }
+.status-pill.rejected { background: rgba(239,68,68,0.1); color: #dc2626; border-color: rgba(239,68,68,0.25); }
+.status-pill.rejected .sdot { background: #ef4444; }
+.status-pill.archived { background: rgba(107,114,128,0.12); color: #4b5563; border-color: rgba(107,114,128,0.25); }
+.status-pill.archived .sdot { background: #6b7280; }
+
+/* Type tag */
+.type-tag {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.type-tag.decision { background: rgba(245,158,11,0.12); color: #b45309; border-color: rgba(245,158,11,0.28); }
+.type-tag.experience { background: rgba(168,85,247,0.1); color: #7c3aed; border-color: rgba(168,85,247,0.25); }
+.type-tag.pitfall { background: rgba(239,68,68,0.1); color: #dc2626; border-color: rgba(239,68,68,0.25); }
+.type-tag.convention { background: rgba(16,185,129,0.1); color: #047857; border-color: rgba(16,185,129,0.25); }
+.type-tag.rule { background: rgba(16,185,129,0.1); color: #047857; border-color: rgba(16,185,129,0.25); }
+
+/* ===== Toolbar ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.filter-group {
+  display: flex;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+.filter-btn {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.filter-btn:hover { color: var(--text-secondary); }
+.filter-btn.active {
+  background: var(--accent-cyan);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(65,187,200,0.3);
+}
+
+/* ===== Task Map ===== */
+.task-map-shell {
+  overflow: hidden;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.task-map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-glass);
+  background: rgba(255,255,255,0.34);
+  flex-wrap: wrap;
+}
+[data-theme="dark"] .task-map-toolbar { background: rgba(10,15,20,0.35); }
+.task-map-stats {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.task-map-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.task-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.task-map-legend-line {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px solid #41bbc8;
+}
+.task-map-legend-line.depends { border-top-color: #f59e0b; border-top-style: dashed; }
+.task-map-legend-line.blocks { border-top-color: #ef4444; }
+.task-map-legend-line.relates { border-top-color: #94a3b8; border-top-style: dotted; }
+.task-map-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.task-map-actions .btn-ghost { padding: 5px 10px; font-size: 11px; }
+.task-map-canvas {
+  position: relative;
+  height: calc(100vh - 285px);
+  min-height: 420px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-color: rgba(255,255,255,0.2);
+  background-image: radial-gradient(circle, rgba(65,187,200,0.2) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+[data-theme="dark"] .task-map-canvas {
+  background-color: rgba(4,9,14,0.46);
+  background-image: radial-gradient(circle, rgba(148,163,184,0.18) 1px, transparent 1px);
+}
+.task-map-canvas.panning { cursor: grabbing; }
+.task-map-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.task-map-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.task-map-nodes {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.task-map-node {
+  position: absolute;
+  width: 226px;
+  min-height: 96px;
+  padding: 10px 12px 9px 14px;
+  border: 1px solid rgba(65,187,200,0.28);
+  border-left: 4px solid var(--node-color, #64748b);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  box-shadow: 0 7px 20px rgba(15,23,42,0.10);
+  text-align: left;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.task-map-node:hover,
+.task-map-node:focus-visible {
+  border-color: var(--node-color, var(--accent-cyan));
+  box-shadow: 0 10px 28px rgba(15,23,42,0.18);
+  outline: none;
+  transform: translateY(-2px);
+}
+.task-map-node-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.task-map-node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--node-color, #64748b);
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+.task-map-node-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--node-color, #64748b);
+}
+.task-map-node-title {
+  display: -webkit-box;
+  min-height: 36px;
+  margin-top: 7px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.task-map-node-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.task-map-node-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ★ 2026-09-13 任务地图交互增强：连线手柄 / 辅助卡 / 拖拽态 / 目标高亮 / 状态 chips / 菜单标题 */
+.task-map-node { cursor: grab; }
+.task-map-node.dragging { cursor: grabbing; opacity: 0.92; z-index: 30; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.task-map-node-link {
+  position: absolute; right: -11px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-card, #fff); border: 1.5px solid var(--accent-cyan, #41bbc8);
+  color: var(--accent-cyan, #41bbc8); font-size: 13px; line-height: 19px; text-align: center;
+  display: none; cursor: crosshair; z-index: 5;
+}
+.task-map-node:hover .task-map-node-link { display: block; }
+.task-map-node.link-target { outline: 2px solid #f59e0b; outline-offset: 2px; }
+.task-map-node-aux { width: 170px; min-height: 72px; border-style: dashed; opacity: 0.92; }
+.task-map-node-aux .task-map-node-title { font-size: 11px; }
+.task-map-chips { display: flex; gap: 4px; flex-wrap: wrap; margin-right: 8px; }
+.task-map-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; font-size: 11px; border: 1px solid var(--border-glass);
+  border-radius: 10px; background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.task-map-chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.task-map-chip:hover { color: var(--text-primary); border-color: var(--accent-cyan); }
+.context-menu-title { padding: 6px 10px; font-size: 10px; color: var(--text-muted); border-bottom: 1px solid var(--border-glass); }
+.task-map-empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+.task-map-empty.show { display: flex; }
+
+/* ===== Modal ===== */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+.modal-overlay.show { display: flex; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+  width: 640px;
+  max-height: 80vh;
+  background: rgba(255,255,255,0.98);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: modalIn 0.3s ease;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(255,255,255,0.5) inset;
+  position: relative;
+}
+.modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+  z-index: 1;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  background: linear-gradient(180deg, rgba(65,187,200,0.03), transparent);
+}
+.modal-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  font-size: 18px;
+  line-height: 1;
+}
+.modal-close:hover { background: rgba(239,68,68,0.08); color: #ef4444; border-color: rgba(239,68,68,0.2); transform: rotate(90deg); }
+.modal-body { padding: 24px; overflow-y: auto; max-height: calc(80vh - 70px); }
+
+/* 记忆 新建/编辑 表单 */
+.form-field { margin-bottom: 16px; }
+.form-field label { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-weight: 600; }
+.form-field textarea, .form-field input[type="text"], .form-field select {
+  width: 100%; box-sizing: border-box; background: #fff;
+  border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-md);
+  color: var(--text-primary); font-size: 14px; padding: 10px 12px; outline: none; resize: vertical;
+  transition: all 0.2s; font-family: var(--font-body);
+}
+.form-field textarea:hover, .form-field input:hover, .form-field select:hover { border-color: rgba(65,187,200,0.4); }
+.form-field textarea { line-height: 1.6; min-height: 120px; }
+.form-field select { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+.form-field textarea:focus, .form-field input:focus, .form-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(65,187,200,0.1); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(0,0,0,0.06); }
+.form-hint { margin-top: 12px; font-size: 12px; color: var(--text-muted); min-height: 16px; }
+.form-hint.err { color: #ef4444; }
+
+/* Project chips (标签云风格) */
+.proj-chip {
+  cursor: pointer;
+  background: rgba(65,187,200,0.06);
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  transition: all 0.2s;
+}
+.proj-chip:hover {
+  background: rgba(65,187,200,0.12);
+  border-color: rgba(65,187,200,0.35);
+  color: var(--accent-cyan);
+  transform: translateY(-1px);
+}
+.proj-chip.has-agents {
+  background: rgba(16,185,129,0.08);
+  border-color: rgba(16,185,129,0.25);
+  color: #047857;
+}
+.proj-chip.has-agents:hover {
+  background: rgba(16,185,129,0.15);
+  border-color: rgba(16,185,129,0.4);
+  color: #047857;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin-bottom: 20px;
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #fff;
+}
+.detail-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+  min-height: 40px;
+}
+.detail-item:nth-child(odd) { border-right: 1px solid rgba(0,0,0,0.04); }
+.detail-item:nth-last-child(-n+2) { border-bottom: none; }
+.detail-item label {
+  flex-shrink: 0;
+  width: 80px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.detail-item .val {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.detail-item .val.mono { font-family: var(--font-mono); font-size: 12px; }
+.detail-content-box {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.06);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ===== Chart containers ===== */
+.chart-box { width: 100%; height: 300px; }
+.chart-box-sm { width: 100%; height: 200px; }
+
+/* ===== Cross-tool Matrix ===== */
+.matrix-grid {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+.matrix-header-row, .matrix-row {
+  display: grid;
+  grid-template-columns: 100px repeat(5, 1fr);
+  gap: 2px;
+}
+.matrix-cell {
+  padding: 10px 8px;
+  text-align: center;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-height: 44px;
+}
+.matrix-cell.head {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-family: var(--font-body);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.matrix-cell.row-label {
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-family: var(--font-body);
+  text-align: left;
+  justify-content: flex-start;
+  padding-left: 4px;
+}
+.matrix-cell.data {
+  background: rgba(251,191,36,0.06);
+  color: var(--accent-cyan);
+  font-weight: 500;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.matrix-cell.data:hover {
+  background: rgba(251,191,36,0.15);
+  transform: scale(1.05);
+}
+.matrix-cell.data.zero {
+  background: rgba(255,255,255,0.02);
+  color: var(--text-muted);
+}
+.matrix-cell.data.high { background: rgba(251,191,36,0.2); }
+.matrix-cell.data.diag { background: rgba(220,38,38,0.12); color: var(--accent-purple); }
+
+/* ===== Cross-tool List (fallback) ===== */
+.cross-header {
+  padding: 14px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-glass);
+  background: rgba(65,187,200,0.04);
+}
+.cross-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+  transition: background 0.15s;
+}
+.cross-row:hover { background: rgba(65,187,200,0.06); }
+.cross-path { font-size: 13px; color: var(--text-secondary); }
+.agent-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  background: rgba(65,187,200,0.1);
+  color: var(--accent-cyan);
+}
+.cross-count {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  min-width: 32px;
+  text-align: right;
+}
+.empty-state {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.empty-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ===== Audit Timeline ===== */
+.audit-timeline { position: relative; padding-left: 28px; }
+.audit-timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--accent-cyan), var(--accent-purple), transparent);
+  opacity: 0.4;
+}
+.audit-item {
+  position: relative;
+  padding-bottom: 20px;
+  transition: transform 0.15s;
+}
+.audit-item:hover { transform: translateX(4px); }
+.audit-item::before {
+  content: '';
+  position: absolute;
+  left: -24px;
+  top: 6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(65,187,200,0.3);
+}
+.audit-item.warn::before { border-color: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.3); }
+.audit-item.danger::before { border-color: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+.audit-item.success::before { border-color: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.3); }
+.audit-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
+}
+.audit-action {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+.audit-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.audit-meta .operator {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 6px;
+  font-family: var(--font-mono);
+}
+.operator.daemon { background: rgba(6,182,212,0.1); color: #0891b2; }
+.operator.human { background: rgba(168,85,247,0.1); color: #7c3aed; }
+
+/* ===== Zombie checkbox ===== */
+.checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-glass);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.checkbox.checked {
+  background: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+.checkbox.checked svg { opacity: 1; }
+.checkbox svg { width: 12px; height: 12px; color: #1c1610; opacity: 0; transition: opacity 0.15s; }
+
+/* ===== Top Memory Rank ===== */
+.rank-list { display: flex; flex-direction: column; gap: 10px; }
+.rank-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.rank-item:hover {
+  background: rgba(251,191,36,0.05);
+  border-color: rgba(251,191,36,0.15);
+}
+.rank-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.rank-num.r1 { background: linear-gradient(135deg, #fcd34d, #f59e0b); color: #1c1610; }
+.rank-num.r2 { background: linear-gradient(135deg, #cbd5e1, #b8a88a); color: #1c1610; }
+.rank-num.r3 { background: linear-gradient(135deg, #d97706, #92400e); color: #fef3c7; }
+.rank-num.rn { background: rgba(255,255,255,0.06); color: var(--text-muted); }
+.rank-content { flex: 1; min-width: 0; }
+.rank-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 3px;
+}
+.rank-meta { font-size: 11px; color: var(--text-muted); }
+.rank-stats {
+  text-align: right;
+  flex-shrink: 0;
+}
+.rank-hits {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+.rank-hits-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+
+/* ===== Eff bar ===== */
+.eff-bar {
+  width: 60px;
+  height: 5px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.eff-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+  border-radius: 3px;
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ===== Empty / helper ===== */
+.text-muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.mono { font-family: var(--font-mono); }
+.flex { display: flex; }
+.items-center { align-items: center; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+
+/* Global Loading */
+.global-loading {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: rgba(248,250,252,0.8);
+  backdrop-filter: blur(4px);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+}
+.global-loading.show { display: flex; }
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(65,187,200,0.15);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  z-index: 300;
+  padding: 14px 22px;
+  background: rgba(255,255,255,0.97);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(65,187,200,0.3);
+  border-radius: var(--radius-md);
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  transform: translateY(20px);
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+
+/* ===== 全部记忆：多选/操作/类型色条 ===== */
+.data-table tbody tr { border-left: 3px solid transparent; transition: background 0.15s; }
+.data-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.018); }
+.data-table tbody tr.row-experience { border-left-color: rgba(168,85,247,0.45); }
+.data-table tbody tr.row-decision { border-left-color: rgba(245,158,11,0.55); }
+.data-table tbody tr.row-pitfall { border-left-color: rgba(239,68,68,0.55); }
+.data-table tbody tr.row-convention { border-left-color: rgba(16,185,129,0.45); }
+.data-table tbody tr.row-rule { border-left-color: rgba(16,185,129,0.5); }
+.data-table tbody tr.selected { background: rgba(65,187,200,0.1) !important; }
+.data-table tbody tr.selected td:first-child { box-shadow: inset 4px 0 0 var(--accent-cyan); }
+.row-checkbox { width:15px; height:15px; cursor:pointer; accent-color:var(--accent-cyan); vertical-align:middle; }
+.row-actions { display:flex; gap:4px; align-items:center; }
+.row-action-btn {
+  width:26px; height:26px; border-radius:6px; border:1px solid var(--border-glass);
+  background:transparent; color:var(--text-muted); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:13px;
+  transition:all 0.15s; padding:0;
+}
+.row-action-btn:hover { background:rgba(65,187,200,0.1); color:var(--accent-cyan); border-color:rgba(65,187,200,0.3); }
+.row-action-btn.del:hover { background:rgba(220,38,38,0.1); color:var(--danger); border-color:rgba(220,38,38,0.3); }
+
+/* ===== Pagination ===== */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+}
+.page-btn {
+  padding: 7px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.page-btn:hover:not(:disabled) {
+  background: rgba(65,187,200,0.06);
+  color: var(--accent-cyan);
+  border-color: rgba(65,187,200,0.35);
+  transform: translateY(-1px);
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.page-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  min-width: 80px;
+  text-align: center;
+}
+.page-size-info {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ===== 概览：利用率健康卡片 ===== */
+.usage-health {
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(12px);
+}
+.usage-health.ok { border-left: 4px solid var(--success); }
+.usage-health.warn { border-left: 4px solid var(--warning); }
+.uh-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.uh-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 14px; }
+.uh-stat { text-align: center; padding: 12px; background: rgba(65,187,200,0.06); border-radius: var(--radius-md); }
+.uh-num { font-size: 28px; font-weight: 700; color: var(--accent-cyan); font-family: var(--font-mono); line-height: 1.2; }
+.uh-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.uh-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; padding-top: 12px; border-top: 1px solid var(--border-glass); }
+
+/* ===== 响应式断点（窗口缩小自适应） ===== */
+/* ≥1280 默认大屏布局不变；以下逐步降列/堆叠/折叠侧栏 */
+
+/* 汉堡按钮：大屏默认隐藏，仅窄屏抽屉显示 */
+.sidebar-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border-glass);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.sidebar-toggle:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+.sidebar-backdrop { display: none; }
+
+/* 中屏：四列统计 → 两列，双栏 → 单列 */
+@media (max-width: 1280px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .two-col, .three-col { grid-template-columns: 1fr; }
+  .form-row { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .detail-item:nth-child(odd) { border-right: none; }
+  .uh-stats { grid-template-columns: 1fr; }
+  .search-box { width: 200px; }
+}
+
+/* 小屏：自动折叠侧栏为图标条（复用 .collapsed 视觉，纯 CSS 无需 JS） */
+@media (max-width: 992px) {
+  .sidebar { width: 64px; }
+  .sidebar .logo-text,
+  .sidebar .nav-label,
+  .sidebar .nav-section-label,
+  .sidebar .sidebar-footer-text,
+  .sidebar .logo-sub { display: none; }
+  .sidebar .nav-item { justify-content: center; padding: 10px; }
+  .sidebar .nav-badge { position: absolute; top: 4px; right: 4px; font-size: 9px; min-width: 16px; height: 16px; }
+  .sidebar .sidebar-logo { justify-content: center; padding: 16px 0; }
+  .main-content { margin-left: 64px; }
+  .stat-grid { grid-template-columns: 1fr; }
+  .shortcuts-help-grid, .shortcuts-grid { grid-template-columns: 1fr; }
+  .topbar { padding: 14px 18px; }
+  .page { padding: 20px 18px 36px; }
+}
+
+/* 超小屏：进一步压缩间距与弹窗宽度，侧栏改抽屉式菜单 */
+@media (max-width: 768px) {
+  .topbar-title span { display: none; }
+  .search-box { width: 140px; }
+  .stat-grid { gap: 12px; }
+  .glass-card { padding: 18px; }
+  .modal { width: 96vw; }
+  .command-palette-modal { width: 94vw; }
+  .topbar-actions .btn-ghost { display: none; }
+  .matrix-header-row, .matrix-row { grid-template-columns: 80px repeat(5, 1fr); font-size: 10px; }
+
+  .page { padding: 16px 14px 32px; }
+
+  /* 抽屉式侧栏：默认隐藏，点击汉堡滑入 */
+  .sidebar {
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    box-shadow: 0 0 40px rgba(0,0,0,0.25);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar .logo-text,
+  .sidebar .nav-label { display: block; }
+  .sidebar .logo-sub { display: block; }
+  .sidebar .nav-section-label { display: block; }
+  .sidebar .sidebar-footer-text { display: block; }
+  .sidebar .nav-item { justify-content: flex-start; padding: 11px 14px; }
+  .sidebar .nav-badge { position: static; font-size: 11px; min-width: auto; height: auto; }
+  .sidebar .sidebar-logo { justify-content: flex-start; padding: 28px 24px 20px; }
+  .main-content { margin-left: 0; }
+
+  .sidebar-toggle { display: flex; }
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(2px);
+  }
+  .sidebar-backdrop.show { display: block; }
+}
+  /* ── 受限模式（能力位由后端 /api/summary 下发）：隐藏用户不可用的入口 ──
+     入口不删除，仅隐藏 —— 后端 MEMORY_RESTRICTED=0 时能力位转 false，界面自动恢复 */
+  body.restricted #createTaskBtn,
+  body.restricted #importPlanBtn,
+  body.restricted #addSourceBtn,
+  body.restricted .col-add,
+  body.restricted .src-del { display: none !important; }
+  .src-toggle { padding: 3px 8px; font-size: 11px; }
+  .sysplan-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(148,163,184,0.08); margin-bottom: 8px; flex-wrap: wrap; }
+
+  /* ===== 全部记忆：类别计数徽标（类别按钮此前点了不生效，顺带把每类条数摆明） ===== */
+  .filter-btn .fcount {
+    display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 8px;
+    font-size: 10px; line-height: 15px; font-family: var(--font-mono, monospace);
+    background: rgba(65,187,200,0.14); color: var(--accent-cyan); vertical-align: 1px;
+  }
+  .filter-btn.zero { opacity: 0.55; }
+  .filter-btn.zero .fcount { background: rgba(148,163,184,0.18); color: var(--text-muted); }
+  .all-empty-hint { padding: 26px 20px; text-align: center; color: var(--text-muted); font-size: 12px; line-height: 1.9; }
+  .all-empty-hint b { color: var(--text-secondary); }
+  .all-empty-hint .mono { color: var(--accent-cyan); }
+
+  /* ===== 笔记工作台（Obsidian 风格：左笔记列表 · 中关系图谱 · 右内容/反向链接） ===== */
+  .notes-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 16px; margin-bottom: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: var(--radius-md);
+    backdrop-filter: blur(12px);
+  }
+  .notes-bar-left { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .notes-bar-icon {
+    width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 17px; background: linear-gradient(135deg, rgba(65,187,200,0.18), rgba(42,157,175,0.18));
+    border: 1px solid var(--border-glass);
+  }
+  .notes-bar-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.3px; }
+  .notes-bar-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .notes-bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .notes-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+  .notes-check input { accent-color: var(--accent-cyan); }
+
+  .notes-vaultrow {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; margin-bottom: 10px;
+    background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: var(--radius-md);
+  }
+  .notes-vrow-label { font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px; text-transform: uppercase; }
+  .notes-vault-input { flex: 1 1 320px; min-width: 200px; }
+  .notes-proj-input { flex: 0 0 150px; }
+  .notes-vchips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .notes-vchip {
+    padding: 3px 10px; font-size: 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border-glass); color: var(--text-secondary); background: transparent; transition: all 0.15s;
+  }
+  .notes-vchip:hover { color: var(--accent-cyan); border-color: var(--border-glow); background: rgba(65,187,200,0.08); }
+  .notes-vchip.on { color: var(--accent-cyan); border-color: var(--border-glow); background: rgba(65,187,200,0.13); }
+  .notes-hint { font-size: 11px; color: var(--text-muted); line-height: 1.8; margin: 0 2px 12px; }
+  .notes-progress { display: none; margin: 0 2px 12px; }
+
+  .notes-workbench {
+    display: grid; grid-template-columns: 246px minmax(0, 1fr) 330px; gap: 12px;
+    height: calc(100vh - 330px); min-height: 460px;
+  }
+  .notes-workbench > .glass-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .notes-rail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 14px; border-bottom: 1px solid var(--border-glass);
+    font-size: 12px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.3px;
+  }
+  .notes-rail-head .mono { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+  .notes-rail-search {
+    margin: 10px 12px 8px; padding: 6px 10px; font-size: 12px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--border-glass); color: var(--text-primary); outline: none;
+  }
+  .notes-rail-search:focus { border-color: var(--border-glow); }
+  .notes-rail-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+  .notes-item {
+    padding: 7px 9px; border-radius: 8px; cursor: pointer; margin-bottom: 2px;
+    border-left: 2px solid transparent; transition: background 0.12s;
+  }
+  .notes-item:hover { background: rgba(65,187,200,0.07); }
+  .notes-item.active { background: rgba(65,187,200,0.12); border-left-color: var(--accent-cyan); }
+  .notes-item-title { font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notes-item-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+  .notes-item .nbadge { font-size: 9px; padding: 0 5px; border-radius: 6px; margin-left: 5px; background: rgba(42,157,175,0.16); color: var(--accent-purple); }
+  .notes-rail-foot { padding: 8px 12px; border-top: 1px solid var(--border-glass); }
+  .notes-rail-foot .btn-ghost { width: 100%; font-size: 12px; padding: 6px 0; }
+
+  .notes-canvas-bar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border-glass); flex-wrap: wrap;
+  }
+  .notes-canvas-title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+  .notes-canvas-sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .notes-mini-select {
+    margin-left: auto; padding: 4px 8px; font-size: 11px; border-radius: 6px;
+    background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-glass); cursor: pointer;
+  }
+  .notes-canvas-body { position: relative; flex: 1; background: #fbfbfa; }
+  [data-theme="dark"] .notes-canvas-body { background: #10151c; }
+  #noteGraphChart { width: 100%; height: 100%; }
+  .notes-canvas-empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; line-height: 1.9;
+    background: inherit;
+  }
+  .notes-canvas-empty .big { font-size: 30px; }
+  .notes-canvas-empty b { color: var(--text-secondary); }
+  .notes-zoom { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .notes-zoom button {
+    width: 26px; height: 26px; border-radius: 7px; cursor: pointer; font-size: 13px; line-height: 1;
+    background: rgba(255,255,255,0.9); color: #64748b; border: 1px solid rgba(0,0,0,0.08);
+  }
+  [data-theme="dark"] .notes-zoom button { background: rgba(30,41,59,0.9); color: #94a3b8; border-color: rgba(255,255,255,0.1); }
+  .notes-zoom button:hover { color: var(--accent-cyan); border-color: var(--border-glow); }
+
+  .notes-tabs { display: flex; gap: 4px; padding: 9px 12px 0; border-bottom: 1px solid var(--border-glass); }
+  .notes-tab {
+    padding: 6px 12px; font-size: 12px; border: none; background: transparent; color: var(--text-muted);
+    cursor: pointer; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
+  }
+  .notes-tab:hover { color: var(--text-secondary); }
+  .notes-tab.active { color: var(--accent-cyan); border-bottom-color: var(--accent-cyan); background: rgba(65,187,200,0.06); }
+  .notes-tabpane { flex: 1; overflow-y: auto; padding: 12px; }
+  .notes-detail-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text-primary); line-height: 1.5; word-break: break-word; }
+  .notes-detail-meta { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 5px; line-height: 1.7; word-break: break-all; }
+  .notes-tagchips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+  .notes-tagchip { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: rgba(65,187,200,0.12); color: var(--accent-cyan); }
+  .notes-body {
+    margin-top: 11px; padding: 11px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.95;
+    color: var(--text-secondary); background: rgba(148,163,184,0.07); border: 1px solid var(--border-glass);
+    white-space: pre-wrap; word-break: break-word; max-height: 100%; overflow-y: auto;
+  }
+  .notes-body .wl { color: var(--accent-cyan); cursor: pointer; border-bottom: 1px dashed rgba(65,187,200,0.5); }
+  .notes-body .wl.miss { color: var(--warning); border-bottom-style: dotted; cursor: default; }
+  .notes-empty { font-size: 12px; color: var(--text-muted); text-align: center; padding: 34px 14px; line-height: 1.9; }
+  .notes-empty .big { font-size: 26px; display: block; margin-bottom: 8px; }
+
+  .notes-fold {
+    margin-top: 12px; background: var(--bg-card); border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md); overflow: hidden;
+  }
+  .notes-fold > summary {
+    padding: 11px 16px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-primary);
+    display: flex; align-items: center; gap: 10px; list-style: none;
+  }
+  .notes-fold > summary::-webkit-details-marker { display: none; }
+  .notes-fold > summary::before { content: '▸'; color: var(--accent-cyan); transition: transform 0.15s; }
+  .notes-fold[open] > summary::before { transform: rotate(90deg); }
+  .notes-fold > summary .text-muted { margin-left: auto; font-weight: 400; }
+  .notes-fold-body { padding: 0 16px 16px; }
+  .notes-form-two { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 16px; }
+  /* 受限模式：用户自建笔记被后端关闭（noteCreate）——沿用「入口不删除、只隐藏」的既有约定 */
+  body.restricted #noteNewBtn { display: none !important; }
+  .notes-restricted {
+    margin-bottom: 10px; padding: 8px 11px; border-radius: 8px; font-size: 11.5px; line-height: 1.8;
+    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: var(--text-secondary);
+  }
+
+  /* ===== 工具连接：MCP 证据链 + 库比对 ===== */
+  .mcp-summary { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted); padding: 0 2px 10px; }
+  .mcp-sum-item .mono { color: var(--text-secondary); }
+  .mcp-alert {
+    margin: 0 2px 12px; padding: 9px 13px; border-radius: 9px; font-size: 12px; line-height: 1.85;
+    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.32); color: var(--text-secondary);
+  }
+  .mcp-alert b { color: var(--text-primary); }
+  .mcp-evidence {
+    font-size: 10.5px; color: var(--text-muted); margin-top: 3px; font-family: var(--font-mono);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px;
+  }
+  .db-pill { font-size: 10.5px; padding: 2px 7px; border-radius: 6px; font-family: var(--font-mono); white-space: nowrap; }
+  .db-pill.ok { background: rgba(22,163,74,0.12); color: var(--success); }
+  .db-pill.bad { background: rgba(220,38,38,0.1); color: var(--danger); cursor: help; }
+  .db-pill.unknown { background: rgba(148,163,184,0.16); color: var(--text-muted); }
+  .mcp-carrier-row.bad td { background: rgba(220,38,38,0.045); }
+
+  @media (max-width: 1280px) {
+    .notes-workbench { grid-template-columns: 210px minmax(0,1fr) 290px; }
+  }
+  @media (max-width: 1080px) {
+    .notes-workbench { grid-template-columns: 1fr; height: auto; }
+    .notes-workbench > .glass-card { height: 420px; }
+    .notes-canvas { height: 380px !important; }
+    .notes-form-two { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Background -->
+<div class="bg-space"></div>
+<div class="stars" id="stars"></div>
+
+<div class="app-layout">
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#1c1610" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V12h-4V9.5C8.8 8.8 8 7.5 8 6a4 4 0 0 1 4-4z"/>
+          <path d="M5 12a7 7 0 0 0 14 0"/>
+          <circle cx="12" cy="17" r="2"/>
+        </svg>
+      </div>
+      <div class="logo-text">
+        <span class="logo-title">MemoryOS</span>
+        <span class="logo-sub">Shared Memory v0.3 · UI 09-11 23:36</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">总览</div>
+      <a class="nav-item active" data-route="summary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        概览
+      </a>
+
+      <div class="nav-section-label">记忆库</div>
+      <a class="nav-item" data-route="all">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        全部记忆
+        <span class="nav-badge">247</span>
+      </a>
+      <a class="nav-item" data-route="top">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        高价值 TOP
+      </a>
+      <a class="nav-item" data-route="zombies">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        待归档·僵尸
+        <span class="nav-badge">18</span>
+      </a>
+      <a class="nav-item" data-route="arbitrate">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        仲裁队列
+        <span class="nav-badge" id="arbitrateBadge" style="display:none">0</span>
+      </a>
+
+      <div class="nav-section-label">分析</div>
+      <a class="nav-item" data-route="trend">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        趋势
+      </a>
+      <a class="nav-item" data-route="cross">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.5"/><path d="M8 2v20M16 2v20M2 8h20M2 16h20"/></svg>
+        跨工具
+      </a>
+      <a class="nav-item" data-route="audit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        审计
+      </a>
+
+      <div class="nav-section-label">工作流</div>
+      <a class="nav-item" data-route="graph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 9a5 5 0 0 0-5 5M12 15a5 5 0 0 1 5-5M9 12a3 3 0 0 0 3 3M15 12a3 3 0 0 1-3 3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.5 6.5l3 3M17.5 6.5l-3 3M6.5 17.5l3-3M17.5 17.5l-3-3"/></svg>
+        知识图谱
+      </a>
+      <a class="nav-item" data-route="tasks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 8l-2 2 3 3 5-5 2 2"/><path d="M8 15h8"/></svg>
+        任务看板
+      </a>
+      <a class="nav-item" data-route="obsidian">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg>
+        笔记
+      </a>
+
+      <div class="nav-section-label">集成</div>
+      <a class="nav-item" data-route="connect">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        工具连接
+        <span class="nav-badge" id="connectedBadge">5</span>
+      </a>
+      <a class="nav-item" data-route="ingest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        采集消化
+      </a>
+      <a class="nav-item" data-route="rules">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        规则管理
+      </a>
+      <a class="nav-item" data-route="skills">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>
+        技能同步
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="daemon-status" id="daemonStatusBox" title="治理守护状态（点击刷新）">
+        <div class="status-dot" id="daemonStatusDot"></div>
+        <div class="daemon-text">治理守护 <strong id="daemonStatusText">检查中…</strong><br><span id="daemonStatusSub" style="font-size:10px;color:var(--text-muted)">衰减 · 归档 · 去重</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== Main ===== -->
+  <main class="main-content">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="sidebar-toggle" id="sidebarToggle" title="菜单">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="topbar-title" id="pageTitle">概览 <span>MemoryOS Dashboard</span></div>
+        <span id="uiBuild" style="font-size:10px;color:var(--accent-cyan);border:1px solid rgba(65,187,200,0.35);border-radius:4px;padding:1px 6px;white-space:nowrap;font-family:var(--font-mono)">UI 09-11 23:36</span>
+      </div>
+      <div class="topbar-actions">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="语义检索记忆…" id="globalSearch">
+        </div>
+        <button class="btn-ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          导出
+        </button>
+        <button class="btn-primary" id="createMemoryBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          写入记忆
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
+        <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
+      </div>
+    </div>
+
+    <!-- 加载失败：部分失败警示条（其余数据正常显示） -->
+    <div id="loadErrorBar" style="display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.30);font-size:12px;color:var(--text-secondary);align-items:center;gap:10px">
+      <span style="font-size:14px">⚠️</span>
+      <span id="loadErrorBarText" style="flex:1;line-height:1.6"></span>
+      <button class="btn-ghost" id="loadErrorBarDetail" style="padding:4px 10px;font-size:11px">详情</button>
+      <button class="btn-ghost" id="loadRetryBtn" style="padding:4px 10px;font-size:11px">重试</button>
+    </div>
+
+    <!-- 加载失败：全部失败 → 全屏错误态 -->
+    <div id="loadErrorFull" style="display:none;padding:56px 20px;text-align:center">
+      <div style="font-size:44px;margin-bottom:14px">🔌</div>
+      <div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:8px">无法连接到内核服务</div>
+      <div id="loadErrorFullDesc" style="font-size:13px;color:var(--text-secondary);line-height:1.9;max-width:540px;margin:0 auto 18px"></div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button class="btn-primary" id="loadRetryBtn2">重试</button>
+        <button class="btn-ghost" id="loadErrorFullDetail">查看详情</button>
+      </div>
+      <pre id="loadErrorDetail" style="display:none;text-align:left;max-width:660px;margin:18px auto 0;padding:12px 14px;border-radius:10px;background:rgba(0,0,0,0.25);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-height:220px;overflow:auto;white-space:pre-wrap;line-height:1.7"></pre>
+    </div>
+
+    <!-- ===== Page: Summary ===== -->
+    <section class="page active" id="page-summary">
+      <!-- 骨架屏 -->
+      <div id="summarySkeleton">
+        <div class="stat-grid">
+          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
+          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
+          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
+          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
+        </div>
+        <div class="glass-card" style="margin-top:18px;height:200px"><div class="skeleton skeleton-line" style="width:30%;margin:20px"></div><div class="skeleton skeleton-line" style="width:90%;margin:0 20px 10px"></div><div class="skeleton skeleton-line" style="width:85%;margin:0 20px 10px"></div><div class="skeleton skeleton-line" style="width:92%;margin:0 20px 10px"></div></div>
+      </div>
+      <!-- 实际内容 -->
+      <div id="summaryContent" style="display:none">
+      <div class="stat-grid">
+        <div class="stat-card cyan" data-route="all">
+          <div class="stat-icon">📚</div>
+          <div class="stat-label">记忆总量</div>
+          <div class="stat-value">247</div>
+          <div class="stat-trend"><span class="up">+12.4%</span> 较上周</div>
+        </div>
+        <div class="stat-card green" data-route="all">
+          <div class="stat-icon">✅</div>
+          <div class="stat-label">活跃可检索</div>
+          <div class="stat-value">189</div>
+          <div class="stat-trend">eff &gt; 0.15 阈值</div>
+        </div>
+        <div class="stat-card purple" data-route="top">
+          <div class="stat-icon">🔗</div>
+          <div class="stat-label">本周引用</div>
+          <div class="stat-value">1,342</div>
+          <div class="stat-trend"><span class="up">+8.7%</span> 跨工具复用</div>
+        </div>
+        <div class="stat-card orange" data-route="zombies">
+          <div class="stat-icon">💤</div>
+          <div class="stat-label">僵尸待归档</div>
+          <div class="stat-value">18</div>
+          <div class="stat-trend">平均闲置 32 天</div>
+        </div>
+      </div>
+
+      <!-- 主动写入健康：写习惯闭环提醒（/api/write-health 驱动） -->
+      <div class="write-health" id="writeHealth">
+        <div class="wh-icon">✎</div>
+        <div class="wh-body">
+          <div class="wh-title">主动写入习惯</div>
+          <div class="wh-desc" id="writeHealthText">加载中…</div>
+        </div>
+        <button class="wh-btn" id="writeHealthBtn">去写入一条记忆</button>
+      </div>
+
+      <!-- 利用率健康：search/write 两个提升方向的闭环度量（/api/usage-health 驱动） -->
+      <div class="usage-health" id="usageHealth">
+        <div class="uh-head">
+          <div class="card-title"><span class="dot"></span>记忆利用率健康</div>
+          <span class="text-muted" style="font-size:12px">先搜后干 · 干完必写</span>
+        </div>
+        <div class="uh-stats">
+          <div class="uh-stat"><div class="uh-num" id="uhSearch">-</div><div class="uh-label">今日检索 search</div></div>
+          <div class="uh-stat"><div class="uh-num" id="uhWrite">-</div><div class="uh-label">今日沉淀 write</div></div>
+          <div class="uh-stat"><div class="uh-num" id="uh30">-</div><div class="uh-label">30天 搜/写/回/引</div></div>
+        </div>
+        <div class="uh-desc" id="usageHealthText">加载中…</div>
+      </div>
+
+      <div class="two-col">
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>记忆活动趋势（近 14 天）</div>
+            <span class="text-muted" style="font-size:12px">write / returned / cited</span>
+          </div>
+          <div class="chart-box" id="trendChart"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>状态分布</div>
+          </div>
+          <div class="status-bars">
+            <div class="status-bar-row">
+              <div class="status-bar-label"><span class="sdot" style="background:var(--success)"></span>活跃</div>
+              <div class="status-bar-track"><div class="status-bar-fill" style="width:76.5%;background:var(--success)"></div></div>
+              <div class="status-bar-count">189</div>
+            </div>
+            <div class="status-bar-row">
+              <div class="status-bar-label"><span class="sdot" style="background:var(--merged)"></span>已合并</div>
+              <div class="status-bar-track"><div class="status-bar-fill" style="width:9.3%;background:var(--merged)"></div></div>
+              <div class="status-bar-count">23</div>
+            </div>
+            <div class="status-bar-row">
+              <div class="status-bar-label"><span class="sdot" style="background:var(--superseded)"></span>已取代</div>
+              <div class="status-bar-track"><div class="status-bar-fill" style="width:5.3%;background:var(--superseded)"></div></div>
+              <div class="status-bar-count">13</div>
+            </div>
+            <div class="status-bar-row">
+              <div class="status-bar-label"><span class="sdot" style="background:var(--archived)"></span>已归档</div>
+              <div class="status-bar-track"><div class="status-bar-fill" style="width:7.3%;background:var(--archived)"></div></div>
+              <div class="status-bar-count">18</div>
+            </div>
+            <div class="status-bar-row">
+              <div class="status-bar-label"><span class="sdot" style="background:var(--danger)"></span>已拒绝</div>
+              <div class="status-bar-track"><div class="status-bar-fill" style="width:1.6%;background:var(--danger)"></div></div>
+              <div class="status-bar-count">4</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>记忆类型构成</div>
+          </div>
+          <div class="chart-box" id="typeChart"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>治理守护最近动作</div>
+          </div>
+          <div class="audit-timeline">
+            <div class="audit-item success">
+              <div class="audit-time">2026-09-05 21:12:03</div>
+              <div class="audit-action">衰减任务完成</div>
+              <div class="audit-meta"><span class="operator daemon">daemon</span>42 条记忆 eff 自然衰减，0 条跌破阈值</div>
+            </div>
+            <div class="audit-item warn">
+              <div class="audit-time">2026-09-05 20:00:00</div>
+              <div class="audit-action">僵尸归档：3 条</div>
+              <div class="audit-meta"><span class="operator daemon">daemon</span>闲置 &gt; 30 天自动归档，审计 ID #A-1042</div>
+            </div>
+            <div class="audit-item">
+              <div class="audit-time">2026-09-05 18:30:15</div>
+              <div class="audit-action">去重合并：2 条 → 1 条</div>
+              <div class="audit-meta"><span class="operator daemon">daemon</span>相似度 0.91，合并为 #M-0234，保留双方引用</div>
+            </div>
+            <div class="audit-item danger">
+              <div class="audit-time">2026-09-05 15:22:41</div>
+              <div class="audit-action">仲裁裁决：保留新记忆</div>
+              <div class="audit-meta"><span class="operator human">human:dashboard</span>冲突对 #C-0089，旧记忆标记 superseded</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:18px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>记忆热词云</div>
+          <span class="text-muted" style="font-size:12px">基于 active 记忆内容的高频词提取</span>
+        </div>
+        <div class="word-cloud" id="wordCloud" style="padding:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;min-height:120px"></div>
+      </div>
+
+      <div class="glass-card" style="margin-top:18px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>eff 质量分布</div>
+          <span class="text-muted" style="font-size:12px">所有记忆的有效度分布直方图</span>
+        </div>
+        <div id="effHistogram" style="padding:20px;display:flex;align-items:flex-end;gap:6px;height:160px;border-bottom:1px solid var(--border-glass)"></div>
+        <div id="effHistogramLabels" style="display:flex;gap:6px;padding:8px 20px 0"></div>
+      </div>
+
+      <div class="glass-card" style="margin-top:18px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>写入活跃度热力图</div>
+          <span class="text-muted" style="font-size:12px">最近 12 周记忆写入分布</span>
+        </div>
+        <div id="heatmap" style="padding:20px;display:flex;gap:4px;overflow-x:auto"></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:0 20px 16px;font-size:11px;color:var(--text-muted)">
+          <span>少</span>
+          <div style="width:12px;height:12px;background:rgba(65,187,200,0.1);border-radius:2px"></div>
+          <div style="width:12px;height:12px;background:rgba(65,187,200,0.3);border-radius:2px"></div>
+          <div style="width:12px;height:12px;background:rgba(65,187,200,0.5);border-radius:2px"></div>
+          <div style="width:12px;height:12px;background:rgba(65,187,200,0.75);border-radius:2px"></div>
+          <div style="width:12px;height:12px;background:rgba(65,187,200,1);border-radius:2px"></div>
+          <span>多</span>
+        </div>
+      </div>
+      <div class="two-col" style="margin-top:18px">
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>记忆类别分布（9 类）</div><span class="text-muted" style="font-size:12px">sector · OpenMemory 认知分层</span></div>
+          <div class="chart-box" id="sectorChart" style="height:220px"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>前瞻到期提醒</div><span class="text-muted" style="font-size:12px">cron 到期 / pattern 命中 → 自动建卡</span></div>
+          <div id="prospectiveList" style="min-height:120px"><div class="text-muted" style="font-size:12px;padding:12px">加载中…</div></div>
+        </div>
+      </div>
+      </div><!-- /summaryContent -->
+    </section>
+
+    <!-- ===== Page: All Memories ===== -->
+    <section class="page" id="page-all">
+      <div class="toolbar">
+        <div class="filter-group" id="statusFilter">
+          <button class="filter-btn active" data-status="all">全部</button>
+          <button class="filter-btn" data-status="active">活跃</button>
+          <button class="filter-btn" data-status="merged">已合并</button>
+          <button class="filter-btn" data-status="superseded">已取代</button>
+          <button class="filter-btn" data-status="archived">已归档</button>
+          <button class="filter-btn" data-status="rejected">已拒绝</button>
+        </div>
+        <div class="filter-group" id="typeFilter">
+          <button class="filter-btn active" data-type="all">全部类型</button>
+          <button class="filter-btn" data-type="decision">决策</button>
+          <button class="filter-btn" data-type="experience">经验</button>
+          <button class="filter-btn" data-type="pitfall">踩坑</button>
+          <button class="filter-btn" data-type="convention">约定</button>
+          <button class="filter-btn" data-type="rule">规则</button>
+        </div>
+        <div class="filter-group" id="sectorFilter" style="flex-wrap:wrap">
+          <button class="filter-btn active" data-sector="all">全部类别</button>
+          <button class="filter-btn" data-sector="working"><span class="sdot" style="background:#94a3b8"></span>工作</button>
+          <button class="filter-btn" data-sector="episodic"><span class="sdot" style="background:#38bdf8"></span>情景</button>
+          <button class="filter-btn" data-sector="semantic"><span class="sdot" style="background:#34d399"></span>语义</button>
+          <button class="filter-btn" data-sector="procedural"><span class="sdot" style="background:#a78bfa"></span>程序</button>
+          <button class="filter-btn" data-sector="meta"><span class="sdot" style="background:#fbbf24"></span>元记忆</button>
+          <button class="filter-btn" data-sector="social"><span class="sdot" style="background:#f472b6"></span>协作</button>
+          <button class="filter-btn" data-sector="user"><span class="sdot" style="background:#22d3ee"></span>用户</button>
+          <button class="filter-btn" data-sector="prospective"><span class="sdot" style="background:#fb923c"></span>前瞻</button>
+          <button class="filter-btn" data-sector="affective"><span class="sdot" style="background:#f87171"></span>情感</button>
+        </div>
+        <div style="margin-left:auto" class="text-muted" style="font-size:12px" id="allCount">共 247 条</div>
+      </div>
+
+      <div class="glass-card" style="padding:0;overflow:hidden">
+        <div id="batchBar" style="display:none;align-items:center;gap:10px;padding:10px 16px;background:rgba(65,187,200,0.08);border-bottom:1px solid var(--border-glass)">
+          <span style="font-size:13px;font-weight:600;color:var(--accent-cyan)">已选 <span id="batchCount">0</span> 条</span>
+          <select id="batchTypeSelect" style="padding:5px 10px;font-size:12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer">
+            <option value="">改类型…</option>
+            <option value="experience">经验</option>
+            <option value="decision">决策</option>
+            <option value="pitfall">踩坑</option>
+            <option value="convention">约定</option>
+            <option value="rule">规则</option>
+          </select>
+          <select id="batchStatusSelect" style="padding:5px 10px;font-size:12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer">
+            <option value="">改状态…</option>
+            <option value="active">活跃</option>
+            <option value="archived">已归档</option>
+            <option value="superseded">已取代</option>
+          </select>
+          <button class="btn-ghost" id="batchArchiveBtn" style="padding:5px 12px;font-size:12px">批量归档</button>
+          <button class="btn-ghost" id="batchExportBtn" style="padding:5px 12px;font-size:12px">导出选中</button>
+          <button class="btn-ghost" id="batchDeleteBtn" style="padding:5px 12px;font-size:12px;color:var(--danger);border-color:rgba(220,38,38,0.3)">批量删除</button>
+          <button class="btn-ghost" id="batchClearBtn" style="padding:5px 12px;font-size:12px;margin-left:auto">取消选择</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="allTable">
+            <thead>
+              <tr>
+                <th style="width:36px"><input type="checkbox" id="selectAllCb" style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent-cyan)"></th>
+                <th style="width:40px" data-sort="id">#</th>
+                <th>内容</th>
+                <th style="width:100px" data-sort="type">类型</th>
+                <th style="width:100px" data-sort="status">状态</th>
+                <th style="width:120px" data-sort="agent">来源工具</th>
+                <th style="width:90px" data-sort="eff">eff</th>
+                <th style="width:70px" data-sort="hits">引用</th>
+                <th style="width:150px" data-sort="created_at">创建时间</th>
+                <th style="width:80px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="allTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pagination" id="allPagination">
+        <button class="page-btn" id="allPrevBtn">上一页</button>
+        <span class="page-info" id="allPageInfo">第 1 / 1 页</span>
+        <button class="page-btn" id="allNextBtn">下一页</button>
+        <span class="page-size-info" id="allPageSizeInfo">每页 100 条</span>
+      </div>
+    </section>
+
+    <!-- ===== Page: Top ===== -->
+    <section class="page" id="page-top">
+      <div class="two-col">
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>引用量 TOP 10</div>
+            <span class="text-muted" style="font-size:12px">raw-cited + inferred-cited</span>
+          </div>
+          <div class="rank-list" id="topCitedList"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>曝光量 TOP 10</div>
+            <span class="text-muted" style="font-size:12px">检索返回次数</span>
+          </div>
+          <div class="rank-list" id="topExposedList"></div>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>高价值记忆分布（eff × 引用）</div>
+        </div>
+        <div class="chart-box" id="scatterChart"></div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Zombies ===== -->
+    <section class="page" id="page-zombies">
+      <div class="toolbar">
+        <div class="filter-group" id="zombieFilter">
+          <button class="filter-btn active" data-days="all">全部僵尸</button>
+          <button class="filter-btn" data-days="15">闲置 15+ 天</button>
+          <button class="filter-btn" data-days="30">闲置 30+ 天</button>
+          <button class="filter-btn" data-days="60">闲置 60+ 天</button>
+        </div>
+        <button class="btn-primary" id="archiveSelectedBtn" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+          归档所选 (<span id="selectedCount">0</span>)
+        </button>
+      </div>
+
+      <div class="glass-card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:40px"></th>
+                <th>内容</th>
+                <th style="width:100px">类型</th>
+                <th style="width:100px">来源工具</th>
+                <th style="width:100px">eff</th>
+                <th style="width:110px">闲置天数</th>
+                <th style="width:150px">最后命中</th>
+              </tr>
+            </thead>
+            <tbody id="zombieTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Trend ===== -->
+    <section class="page" id="page-trend">
+      <div class="two-col">
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>写入 / 返回 / 引用（近 30 天）</div>
+          </div>
+          <div class="chart-box" id="trend30Chart"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><span class="dot"></span>eff 均值衰减曲线</div>
+            <span class="text-muted" style="font-size:12px">遗忘曲线</span>
+          </div>
+          <div class="chart-box" id="effChart"></div>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>各类型记忆周增量</div>
+        </div>
+        <div class="chart-box" id="typeTrendChart"></div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Cross-tool ===== -->
+    <section class="page" id="page-cross">
+      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card cyan">
+          <div class="stat-label">接入工具数</div>
+          <div class="stat-value">5</div>
+          <div class="stat-trend">Codex · Claude · TRAE · Cursor · Continue</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">跨工具复用率</div>
+          <div class="stat-value">34.2%</div>
+          <div class="stat-trend"><span class="up">+5.1%</span> 较上月</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">最活跃写入方</div>
+          <div class="stat-value" style="font-size:24px">Codex</div>
+          <div class="stat-trend">写入 98 条 / 引用 412 次</div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>Writer × Reader 复用矩阵</div>
+          <span class="text-muted" style="font-size:12px">单元格 = 被引用次数</span>
+        </div>
+        <div class="matrix-grid" id="crossMatrix"></div>
+      </div>
+
+      <div class="two-col" style="margin-top:18px">
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具写入占比</div></div>
+          <div class="chart-box-sm" id="writerPie"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具引用占比</div></div>
+          <div class="chart-box-sm" id="readerPie"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Audit ===== -->
+    <section class="page" id="page-audit">
+      <div class="toolbar">
+        <div class="filter-group" id="auditFilter">
+          <button class="filter-btn active" data-op="all">全部</button>
+          <button class="filter-btn" data-op="daemon">daemon 治理</button>
+          <button class="filter-btn" data-op="human">人工操作</button>
+          <button class="filter-btn" data-op="arbitrate">仲裁</button>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>治理留痕（最近 50 条）</div>
+          <span class="text-muted" style="font-size:12px">daemon + human，可回溯</span>
+        </div>
+        <div class="audit-timeline" id="auditTimeline"></div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Arbitrate ===== -->
+    <section class="page" id="page-arbitrate">
+      <div class="toolbar">
+        <div class="card-title" style="font-size:15px"><span class="dot"></span>仲裁队列 · pending-conflict</div>
+        <span class="text-muted" style="font-size:12px">待裁决 <strong id="arbCount" style="color:var(--accent-cyan)">0</strong> 条</span>
+        <button class="btn-ghost" id="arbReloadBtn" style="padding:6px 14px;font-size:12px;margin-left:auto">刷新</button>
+      </div>
+      <div id="arbToast" style="display:none;padding:10px 16px;margin-bottom:12px;border-radius:8px;font-size:13px;background:rgba(65,187,200,0.08)"></div>
+      <div class="glass-card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>新记忆内容</th>
+                <th style="width:100px">类型</th>
+                <th style="width:70px">eff</th>
+                <th style="width:80px">旧记忆ID</th>
+                <th style="width:100px">旧类型</th>
+                <th>旧记忆内容</th>
+                <th style="width:240px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="arbTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Connect ===== -->
+    <section class="page" id="page-connect">
+      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat-card cyan">
+          <div class="stat-label">已连接工具</div>
+          <div class="stat-value" id="connectedCount">5</div>
+          <div class="stat-trend">实时读写记忆库</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">扫描发现</div>
+          <div class="stat-value" id="discoveredCount">0</div>
+          <div class="stat-trend">本机已安装 AI Agent</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">待连接</div>
+          <div class="stat-value" id="pendingCount">0</div>
+          <div class="stat-trend">发现但未接入</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-label">Dashboard 地址</div>
+          <div class="stat-value" style="font-size:24px">localhost:8787</div>
+          <div class="stat-trend">MCP stdio · memory_write / search / cite</div>
+        </div>
+      </div>
+
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>扫描本机 AI Agent</div>
+          <button class="btn-primary" id="scanBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            开始扫描
+          </button>
+        </div>
+        <div class="mcp-summary" id="mcpSummary">
+          <span class="mcp-sum-item">当前库 <span class="mono" id="mcpDbPath">—</span></span>
+          <span class="mcp-sum-item">已连接 <b id="mcpConnectedSummary">—</b></span>
+        </div>
+        <div class="mcp-alert" id="mcpDbAlert" style="display:none"></div>
+        <div id="scanProgress" style="display:none;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px">
+            <span id="scanStatus">正在扫描…</span>
+            <span id="scanPercent" class="mono">0%</span>
+          </div>
+          <div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
+            <div id="scanBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));border-radius:3px;transition:width 0.3s ease"></div>
+          </div>
+          <div id="scanLog" style="margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-height:80px;overflow-y:auto;line-height:1.8"></div>
+        </div>
+        <div id="scanEmpty" style="text-align:center;padding:32px;color:var(--text-muted)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 12px;opacity:0.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M8 11h6M11 8v6"/></svg>
+          <div style="font-size:14px;margin-bottom:4px">尚未扫描</div>
+          <div style="font-size:12px">点击右上角「开始扫描」发现本机已安装的 AI Agent 工具</div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>工具注册表</div>
+          <span class="text-muted" style="font-size:12px">指纹 + 证据 · 一键接入</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="toolTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>工具名称</th>
+                <th style="width:110px">类型</th>
+                <th style="width:180px">安装路径 / 指纹</th>
+                <th style="width:90px">版本</th>
+                <th style="width:190px">MCP 连接状态</th>
+                <th style="width:150px">指向的库</th>
+                <th style="width:120px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="toolTableBody">
+              <tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">扫描后将显示发现的工具</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <details class="notes-fold" id="mcpCarriersFold" style="margin-top:16px">
+        <summary>MCP 载体核验（磁盘上所有已知配置文件）<span class="text-muted" style="font-size:12px" id="mcpCarriersBadge">扫描后查看</span></summary>
+        <div class="notes-fold-body">
+          <div class="text-muted" style="font-size:11.5px;line-height:1.9;margin-bottom:10px">
+            逐个体检每个客户端真实的 MCP 配置文件：是否声明 memoryos、指向哪个 <span class="mono">server.js</span>、以及按该配置实际会打开哪个 <span class="mono">memory.db</span>（未写 <span class="mono">MEMORY_DB</span> 时按 server.js 同级 <span class="mono">../data/memory.db</span> 推算）。
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="mcpCarriersTable">
+              <thead>
+                <tr>
+                  <th style="width:150px">客户端</th>
+                  <th>配置文件</th>
+                  <th style="width:90px">声明</th>
+                  <th>指向 server.js</th>
+                  <th>实际打开的 memory.db</th>
+                </tr>
+              </thead>
+              <tbody id="mcpCarriersBody">
+                <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">扫描后显示</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ===== Page: Rules 规则管理 ===== -->
+    <section class="page" id="page-rules">
+      <div class="toolbar">
+        <div class="filter-group" id="ruleFilter">
+          <button class="filter-btn active" data-rstatus="all">全部</button>
+          <button class="filter-btn" data-rstatus="active">活跃</button>
+          <button class="filter-btn" data-rstatus="rejected">已拒绝</button>
+        </div>
+        <button class="btn-primary" id="createRuleBtn" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建规则
+        </button>
+        <button class="btn-ghost" id="syncRulesBtn" style="margin-left:12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          同步到智能体
+        </button>
+        <div id="syncRulesResult" style="margin-left:12px;font-size:12px;color:var(--text-secondary);align-self:center"></div>
+      </div>
+
+      <div class="glass-card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>项目级注入（写入项目根 AGENTS.md）</div>
+          <span class="text-muted" style="font-size:12px">ZCode / Trae / Codex / Claude 打开该项目即自动加载，覆盖无全局规则入口的桌面智能体</span>
+        </div>
+        <div class="card-body" style="padding:14px 18px 18px">
+          <div id="projChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;min-height:30px">
+            <span style="color:var(--text-muted);font-size:12px;align-self:center">候选项目加载中…</span>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <input id="projDirInput" type="text" placeholder="或手动输入项目绝对路径，如 C:\Users\WYX\Desktop\wimoor-erp"
+              style="flex:1;min-width:280px;background:rgba(255,255,255,0.06);border:1px solid var(--border-glass);border-radius:8px;color:var(--text-primary);padding:8px 12px;font-size:13px;outline:none" />
+            <button class="btn-primary" id="projSyncBtn" style="white-space:nowrap">注入到该项目</button>
+          </div>
+          <div id="projSyncResult" style="margin-top:10px;font-size:12px;color:var(--text-secondary)"></div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>规则列表（AI Agent 协同约束）</div>
+          <span class="text-muted" style="font-size:12px" id="ruleCount">共 0 条</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="ruleTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>规则内容（可长文）</th>
+                <th style="width:110px">来源工具</th>
+                <th style="width:100px">状态</th>
+                <th style="width:90px">置信度</th>
+                <th style="width:150px">创建时间</th>
+                <th style="width:130px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="ruleTableBody">
+              <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Ingest 采集消化 ===== -->
+    <section class="page" id="page-ingest">
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>采集消化 — 让 AI Agent 记忆自己长出来</div>
+          <button class="btn-primary" id="ingestRunBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polyline points="20 6 9 17 4 12"/></svg>
+            开始采集
+          </button>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;margin-bottom:14px" class="text-muted">
+          读取本机各 AI Agent（Codex / Claude / ZCode / WorkBuddy / Trae…）的明文<strong style="color:var(--text-primary)">记忆、规则、对话日志</strong>，
+          先做库内相似去重，再经本地 LLM (+127.0.0.1:18900) 提炼成结构化记忆/规则写回记忆库。
+          <br>预算默认：每轮最多 <span class="mono">30</span> 次 LLM 提炼、每源最多 <span class="mono">12</span> 块，可用环境变量 <span class="mono">INGEST_MAX_CALLS</span> 调整。
+        </div>
+        <div id="ingestProgress" style="display:none;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px">
+            <span id="ingestStatus">正在采集…</span>
+            <span id="ingestPercent" class="mono">0%</span>
+          </div>
+          <div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
+            <div id="ingestBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));border-radius:3px;transition:width 0.3s ease"></div>
+          </div>
+          <div id="ingestStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary)"></div>
+          <div id="ingestLog" style="margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-height:140px;overflow-y:auto;line-height:1.8"></div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>可采集的知识源</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="text-muted" style="font-size:12px">内置源运行时探测 · 自定义源存于 sources.json</span>
+            <button class="btn-ghost" id="addSourceBtn" style="padding:6px 14px;font-size:12px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              添加自定义源
+            </button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="ingestSourceTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>Agent</th>
+                <th>名称</th>
+                <th style="width:90px">类型</th>
+                <th>文件路径</th>
+                <th style="width:70px">来源</th>
+                <th style="width:70px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="ingestSourceBody">
+              <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-obsidian">
+      <!-- 顶栏：标题 + 同步动作（功能不变，仅呈现重构为工作台） -->
+      <div class="notes-bar">
+        <div class="notes-bar-left">
+          <span class="notes-bar-icon">📓</span>
+          <div>
+            <div class="notes-bar-title">笔记</div>
+            <div class="notes-bar-sub">vault 笔记 ↔ 共享记忆库 · 内容哈希增量同步 · 双向链接图谱</div>
+          </div>
+        </div>
+        <div class="notes-bar-right">
+          <label class="notes-check"><input type="checkbox" id="obsidianDryRun"> dry-run 预演</label>
+          <button class="btn-primary" id="obsidianImportBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            导入笔记
+          </button>
+          <button class="btn-primary" id="obsidianExportBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            导出记忆
+          </button>
+        </div>
+      </div>
+
+      <!-- vault 选择行：本机探测到的 vault 以芯片直选（不自动填入，避免误导入） -->
+      <div class="notes-vaultrow">
+        <span class="notes-vrow-label">Vault</span>
+        <input list="obsidianVaultList" id="obsidianVaultInput" class="form-input notes-vault-input" placeholder="例如 C:\Users\WYX\Desktop\知识库\知识库">
+        <datalist id="obsidianVaultList"></datalist>
+        <span class="notes-vrow-label">Project</span>
+        <input id="obsidianProjectInput" class="form-input notes-proj-input" value="global" placeholder="global（推荐，所有 Agent 可检索）">
+        <div class="notes-vchips" id="noteVaultChips"></div>
+      </div>
+
+      <div id="obsidianProgress" class="notes-progress">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px">
+          <span id="obsidianStatus">正在同步…</span>
+          <span id="obsidianPercent" class="mono">0%</span>
+        </div>
+        <div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
+          <div id="obsidianBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));border-radius:3px;transition:width 0.3s ease"></div>
+        </div>
+        <div id="obsidianStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary)"></div>
+      </div>
+
+      <div class="notes-hint">
+        扫描 vault 内 <strong style="color:var(--text-primary)">.md 笔记</strong>，解析 frontmatter（title/tags/type）与正文，按<strong style="color:var(--text-primary)">内容哈希增量同步</strong>：不变跳过、变更更新（保持同一条记忆 id）、新增自动去重 / 冲突预检；导出则把 active 记忆写回 <span class="mono">vault/MemoryOS 导出/</span>，带溯源 frontmatter，幂等不覆盖。本地优先：零插件、零网络；语义检索需 <span class="mono">EMBED_MODE=local</span>。
+      </div>
+
+      <!-- 三栏工作台：左=笔记列表 · 中=关系图谱 · 右=内容 / 反向链接 / 编辑 -->
+      <div class="notes-workbench">
+        <aside class="glass-card notes-rail">
+          <div class="notes-rail-head"><span>笔记列表</span><span class="mono" id="notesRailCount">0</span></div>
+          <input id="notesRailSearch" class="notes-rail-search" placeholder="筛选标题 / 路径…">
+          <div class="notes-rail-list" id="notesRailList">
+            <div class="notes-empty">加载中…</div>
+          </div>
+          <div class="notes-rail-foot"><button class="btn-ghost" id="noteNewBtn">＋ 新建笔记</button></div>
+        </aside>
+
+        <main class="glass-card notes-canvas">
+          <div class="notes-canvas-bar">
+            <span class="notes-canvas-title">关系图谱</span>
+            <span class="notes-canvas-sub" id="noteGraphStats">—</span>
+            <select id="noteGraphScope" class="notes-mini-select" title="节点范围">
+              <option value="vault">当前 vault</option>
+              <option value="all">全部笔记</option>
+            </select>
+            <label class="notes-check"><input type="checkbox" id="noteGraphLabels" checked> 标签</label>
+            <button class="btn-ghost" id="noteGraphRefreshBtn" style="padding:4px 10px;font-size:12px">刷新</button>
+          </div>
+          <div class="notes-canvas-body">
+            <div id="noteGraphChart"></div>
+            <div id="noteGraphEmpty" class="notes-canvas-empty">
+              <span class="big">🕸️</span>
+              <div id="noteGraphEmptyText">选择 vault 后点击右上角「导入笔记」，笔记与双向链接会在这里结成图谱</div>
+            </div>
+            <div class="notes-zoom">
+              <button type="button" data-zoom="in" title="放大">＋</button>
+              <button type="button" data-zoom="out" title="缩小">－</button>
+              <button type="button" data-zoom="reset" title="复位">⟳</button>
+            </div>
+          </div>
+        </main>
+
+        <aside class="glass-card notes-side">
+          <div class="notes-tabs">
+            <button class="notes-tab active" data-ntab="content" type="button">内容</button>
+            <button class="notes-tab" data-ntab="links" type="button">反向链接</button>
+            <button class="notes-tab" data-ntab="edit" type="button">编辑</button>
+          </div>
+
+          <div class="notes-tabpane" data-npane="content">
+            <div id="noteDetail">
+              <div class="notes-empty"><span class="big">📄</span>从左侧列表或中间图谱点选一条笔记</div>
+            </div>
+          </div>
+
+          <div class="notes-tabpane" data-npane="links" style="display:none">
+            <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+              <select id="noteSelect" style="flex:1;padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px"><option value="">选择笔记…</option></select>
+              <button class="btn-ghost" id="noteLinksRefresh" style="padding:6px 12px;font-size:12px">刷新</button>
+            </div>
+            <div id="noteLinksPanel" style="font-size:12px;color:var(--text-muted);min-height:100px">选择笔记查看反向链接 / 未解析链接</div>
+          </div>
+
+          <div class="notes-tabpane" data-npane="edit" style="display:none">
+            <div class="form-field" style="margin-bottom:8px">
+              <label>标题</label>
+              <input id="noteTitle" class="form-input" placeholder="笔记标题（自动作文件名）" style="width:100%">
+            </div>
+            <div class="form-field" style="position:relative">
+              <label>正文（支持 [[wikilink]]）</label>
+              <textarea id="noteBody" rows="8" placeholder="支持 [[笔记名]]、[[笔记名|别名]]、![[嵌入]]…" style="width:100%;min-height:140px"></textarea>
+              <div id="noteLinkSuggest" style="display:none;position:absolute;left:0;right:0;bottom:-6px;transform:translateY(100%);z-index:30;background:var(--bg-card);border:1px solid var(--border-glass);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);max-height:180px;overflow-y:auto"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn-primary" id="noteSaveBtn">保存笔记</button>
+              <button class="btn-ghost" id="notePreviewBtn">预览</button>
+            </div>
+            <div class="form-hint" id="noteHint"></div>
+            <div id="notePreviewBox" style="display:none;margin-top:10px;padding:14px;background:var(--bg-card);border:1px solid var(--border-glass);border-radius:10px;white-space:pre-wrap;font-size:13px;color:var(--text-primary)"></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 原有同步明细：折叠保留，数据与功能不变 -->
+      <details class="notes-fold">
+        <summary>已导入笔记（obsidian_sync 元表）<span class="text-muted" style="font-size:12px" id="obsidianStatusBadge">选择 vault 后查看</span></summary>
+        <div class="notes-fold-body">
+          <div class="table-wrap">
+            <table class="data-table" id="obsidianImportedTable">
+              <thead>
+                <tr>
+                  <th style="width:40px">#</th>
+                  <th>笔记路径（vault 相对）</th>
+                  <th style="width:90px">记忆 id</th>
+                  <th style="width:90px">内容哈希</th>
+                  <th style="width:160px">导入时间</th>
+                </tr>
+              </thead>
+              <tbody id="obsidianImportedBody">
+                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">选择 vault 后加载…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="page" id="page-skills">
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>技能同步 — 中央技能库 ↔ 多 Agent 一键分发</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-primary" id="skillsRefreshBtn" style="background:rgba(65,187,200,0.12);color:var(--accent-cyan);border:1px solid rgba(65,187,200,0.25);box-shadow:none">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              刷新状态
+            </button>
+            <button class="btn-primary" id="skillsDryBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              dry-run 预演
+            </button>
+            <button class="btn-primary" id="skillsSyncBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>
+              执行同步
+            </button>
+          </div>
+        </div>
+        <div class="text-muted" style="font-size:12px;line-height:1.8;margin-bottom:14px">
+          中央技能库内每个含 <span class="mono">SKILL.md</span> 的目录即一个技能，一键分发到
+          <strong style="color:var(--text-primary)">豆包 Doubao / Codex / Claude Code</strong> 各自的技能目录——<strong style="color:var(--text-primary)">装一次，所有 Agent 可用</strong>。
+          <br>幂等：目标一致跳过；不一致先备份 <span class="mono">技能名.bak-时间戳</span> 再替换；绝不删除中央库之外的技能。TRAE 暂不支持自定义技能目录。
+        </div>
+        <div id="skillsCentralInfo"></div>
+        <div id="skillsResult" style="display:none;margin-top:16px">
+          <div id="skillsResultText" style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;line-height:1.8;padding:12px;border:1px solid rgba(65,187,200,0.15);border-radius:10px;background:rgba(255,255,255,0.6)"></div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>分发目标状态</div>
+          <span class="text-muted" style="font-size:12px" id="skillsStatusBadge">加载中…</span>
+        </div>
+        <div id="skillsTargets" style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
+          <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">正在读取…</div>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:16px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>本机 Agent 自动检测（与「工具连接」页同源）</div>
+          <span class="text-muted" style="font-size:12px" id="skillsDetectedBadge">—</span>
+        </div>
+        <div class="text-muted" style="font-size:12px;line-height:1.8;margin-bottom:12px">
+          自动扫描本机已安装的 AI Agent，已连接 MCP 且支持本地 skills 目录的将<strong style="color:var(--text-primary)">自动加入分发目标</strong>；不支持 skills 目录的 Agent 会标注原因。
+        </div>
+        <div id="skillsDetected" style="display:flex;flex-direction:column;gap:8px">
+          <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">正在扫描…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Graph 知识图谱（P6 新增：笔记·记忆·卡片统一图）===== -->
+    <section class="page" id="page-graph">
+      <div class="toolbar">
+        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">知识图谱</span>
+        <span class="text-muted" style="font-size:12px">笔记 · 记忆 · 卡片统一图（双向链接 + 卡片互联）</span>
+        <select id="graphScope" title="节点范围" style="margin-left:auto;padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
+          <option value="all">全部节点</option>
+          <option value="note">仅笔记</option>
+          <option value="memory">仅记忆</option>
+          <option value="card">仅卡片</option>
+        </select>
+        <select id="graphDepth" title="邻居深度" style="padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
+          <option value="1">深度 1</option>
+          <option value="2">深度 2</option>
+          <option value="3">深度 3</option>
+        </select>
+        <button class="btn-ghost" id="graphRefreshBtn">刷新</button>
+      </div>
+      <div id="graphBanner" style="display:none;margin-bottom:12px;padding:8px 14px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:var(--text-primary);font-size:12px"></div>
+      <div class="glass-card" style="height:calc(100vh - 200px);min-height:420px;padding:10px">
+        <div id="graphChart" style="width:100%;height:100%"></div>
+      </div>
+    </section>
+
+    <!-- ===== Page: Tasks 任务看板（v1.1 七态状态机）===== -->
+    <section class="page" id="page-tasks">
+      <div class="toolbar">
+        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">多 Agent 任务看板</span>
+        <span class="text-muted" style="font-size:12px">卡片工作流 · CAS 认领 + 租约 + 依赖提升</span>
+        <div style="margin-left:auto;display:flex;gap:6px" id="tasksViewTabs" role="tablist" aria-label="任务视图">
+          <!-- ★ 2026-09-13：任务地图为唯一任务模块（卡片看板/旧任务视图功能并入地图：状态chips+右键菜单+工具栏） -->
+          <span class="btn-primary" id="tabMap" style="padding:5px 12px;font-size:12px">任务地图</span>
+          <button class="btn-ghost" id="taskMapArchiveBtn" style="padding:5px 12px;font-size:12px" title="已完成任务的归档策略">📦 归档</button>
+        </div>
+        <button class="btn-ghost" id="createCardBtn" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建卡片
+        </button>
+        <button class="btn-ghost" id="dispatchBtn" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          运行派发
+        </button>
+        <button class="btn-ghost" id="importLegacyBtn" style="display:none">导入历史</button>
+        <button class="btn-ghost" id="tasksRefreshBtn">刷新</button>
+      </div>
+      <!-- 系统计划（受限模式：用户只能应用系统下发的计划，不能自行创建/导入） -->
+      <div class="glass-card mb-24" id="sysPlanCard" style="display:none">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>系统计划</div>
+          <span class="text-muted" style="font-size:12px">任务由系统计划统一派发，不支持手动创建或导入</span>
+        </div>
+        <div id="sysPlanList"></div>
+      </div>
+      <!-- 卡片看板（P6 新：/api/cards 10 态列式） -->
+      <div id="cardsBoard" style="display:none"></div>
+      <!-- 任务地图（P1：卡片节点 + 统一连线 + 确定性分层布局） -->
+      <div id="taskMap" style="display:none">
+        <div class="task-map-shell">
+          <div class="task-map-toolbar">
+            <span class="task-map-stats" id="taskMapStats">0 节点 · 0 连线</span>
+            <div class="task-map-chips" id="taskMapChips" aria-label="状态速览"></div>
+            <div class="task-map-legend" aria-label="连线类型">
+              <span class="task-map-legend-item"><i class="task-map-legend-line"></i>派生</span>
+              <span class="task-map-legend-item"><i class="task-map-legend-line depends"></i>依赖</span>
+              <span class="task-map-legend-item"><i class="task-map-legend-line blocks"></i>阻塞</span>
+              <span class="task-map-legend-item"><i class="task-map-legend-line relates"></i>关联</span>
+            </div>
+            <div class="task-map-actions">
+              <button class="btn-ghost" id="taskMapAutoBtn" title="自动连线并补充关联记忆子卡（语义相似；仅展示不落库）">自动关联</button>
+              <button class="btn-ghost" id="taskMapLayoutBtn" title="重新计算节点位置">自动排布</button>
+              <button class="btn-ghost" id="taskMapZoomOutBtn" aria-label="缩小" title="缩小">−</button>
+              <button class="btn-ghost" id="taskMapZoomLabel" title="重置缩放">100%</button>
+              <button class="btn-ghost" id="taskMapZoomInBtn" aria-label="放大" title="放大">＋</button>
+              <button class="btn-ghost" id="taskMapFitBtn" title="适配全部节点">适配全图</button>
+            </div>
+          </div>
+          <div class="task-map-canvas" id="taskMapCanvas">
+            <div class="task-map-world" id="taskMapWorld">
+              <svg class="task-map-edges" id="taskMapEdges" width="1" height="1" aria-hidden="true"></svg>
+              <div class="task-map-nodes" id="taskMapNodes"></div>
+            </div>
+            <div class="task-map-empty" id="taskMapEmpty">暂无卡片</div>
+          </div>
+        </div>
+      </div>
+      <!-- 旧任务视图（/api/tasks 七态，兼容保留） -->
+      <div id="tasksBoard" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== Detail Modal ===== -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">记忆详情</div>
+      <button class="modal-close" id="modalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- 记忆 新建/编辑 表单 -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="editModalTitle">新建记忆</div>
+      <button class="modal-close" id="editModalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field" id="templateField" style="display:none">
+        <label>选择模板（可选）</label>
+        <div class="template-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="template-btn" data-template="decision" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);font-size:12px;cursor:pointer;transition:all 0.15s">🎯 决策模板</button>
+          <button class="template-btn" data-template="pitfall" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);font-size:12px;cursor:pointer;transition:all 0.15s">⚠️ 踩坑模板</button>
+          <button class="template-btn" data-template="experience" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);font-size:12px;cursor:pointer;transition:all 0.15s">💡 经验模板</button>
+          <button class="template-btn" data-template="convention" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);font-size:12px;cursor:pointer;transition:all 0.15s">📏 约定模板</button>
+          <button class="template-btn" data-template="rule" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);font-size:12px;cursor:pointer;transition:all 0.15s">🔧 规则模板</button>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>内容（可多行写长记忆）</label>
+        <textarea id="memContent" rows="6" placeholder="输入记忆正文…"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>类型</label>
+          <select id="memType">
+            <option value="experience">经验</option>
+            <option value="decision">决策</option>
+            <option value="pitfall">踩坑</option>
+            <option value="convention">约定</option>
+            <option value="rule">规则</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>记忆类别（sector，可选）</label>
+          <select id="memSector">
+            <option value="">自动推导</option>
+            <option value="episodic">情景记忆</option>
+            <option value="semantic">语义记忆</option>
+            <option value="procedural">程序记忆</option>
+            <option value="meta">元记忆</option>
+            <option value="social">协作记忆</option>
+            <option value="user">用户记忆</option>
+            <option value="prospective">前瞻记忆</option>
+            <option value="affective">情感记忆</option>
+            <option value="working">工作记忆</option>
+          </select>
+        </div>
+        <div class="form-field" id="projectField">
+          <label>项目 scope</label>
+          <input type="text" id="memProject" value="global" placeholder="global">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-ghost" id="memCancel">取消</button>
+        <button class="btn-primary" id="memSave">保存</button>
+      </div>
+      <div class="form-hint" id="memHint"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Global Loading -->
+<div class="global-loading" id="globalLoading">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">加载中…</div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Context Menu -->
+<div class="context-menu" id="contextMenu">
+  <div class="context-menu-item" data-action="edit">✎ 编辑记忆</div>
+  <div class="context-menu-item" data-action="detail">👁 查看详情</div>
+  <div class="context-menu-item" data-action="copy">📋 复制内容</div>
+  <div class="context-menu-divider"></div>
+  <div class="context-menu-item" data-action="archive">📦 归档记忆</div>
+  <div class="context-menu-item danger" data-action="delete">🗑 删除记忆</div>
+</div>
+<!-- 卡片富右键菜单（任务地图；内容由 app.js showCardCtxMenu 动态填充） -->
+<div class="context-menu" id="cardCtxMenu"></div>
+<!-- 归档策略菜单（任务地图工具栏 📦 按钮；2026-09-13） -->
+<div class="context-menu" id="archiveMenu"></div>
+
+<!-- Hover Preview Tooltip -->
+<div class="preview-tooltip" id="previewTooltip"></div>
+
+<!-- Error Boundary -->
+<div class="error-boundary" id="errorBoundary">
+  <div class="error-icon">⚠️</div>
+  <div class="error-title">页面出错了</div>
+  <div class="error-msg" id="errorMsg"></div>
+  <button class="error-reload" onclick="location.reload()">重新加载</button>
+</div>
+
+<!-- 抽屉菜单遮罩（窄屏点击侧栏外关闭） -->
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+<!-- Command Palette -->
+<div class="modal-overlay" id="commandPalette">
+  <div class="command-palette-modal">
+    <div class="command-palette-input-wrap">
+      <span class="command-palette-icon">⌘</span>
+      <input type="text" id="commandInput" placeholder="输入命令或搜索…" autocomplete="off">
+      <span class="command-palette-hint">ESC 关闭</span>
+    </div>
+    <div class="command-list" id="commandList"></div>
+  </div>
+</div>
+
+<!-- Shortcuts Help -->
+<div class="modal-overlay" id="shortcutsHelp">
+  <div class="modal" style="width:520px">
+    <div class="modal-header">
+      <div class="modal-title">⌨️ 快捷键一览</div>
+      <button class="modal-close" id="shortcutsClose">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="shortcuts-help-grid">
+        <div class="shortcut-help-item"><kbd>Ctrl</kbd>+<kbd>K</kbd><span>聚焦搜索</span></div>
+        <div class="shortcut-help-item"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd><span>命令面板</span></div>
+        <div class="shortcut-help-item"><kbd>N</kbd><span>新建记忆</span></div>
+        <div class="shortcut-help-item"><kbd>?</kbd><span>快捷键帮助</span></div>
+        <div class="shortcut-help-item"><kbd>/</kbd><span>快速搜索</span></div>
+        <div class="shortcut-help-item"><kbd>Esc</kbd><span>关闭弹窗</span></div>
+        <div class="shortcut-help-item"><kbd>←</kbd><span>上一条记忆</span></div>
+        <div class="shortcut-help-item"><kbd>→</kbd><span>下一条记忆</span></div>
+        <div class="shortcut-help-item"><kbd>Ctrl</kbd>+<kbd>E</kbd><span>导出全部</span></div>
+        <div class="shortcut-help-item"><kbd>Ctrl</kbd>+<kbd>,</kbd><span>打开设置</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" style="width:560px;max-height:85vh">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ 设置</div>
+      <button class="modal-close" id="settingsClose">×</button>
+    </div>
+    <div class="modal-body" style="max-height:calc(85vh - 70px)">
+      <!-- 外观设置 -->
+      <div class="settings-section">
+        <div class="settings-section-title">🎨 外观</div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">主题模式</div>
+            <div class="settings-desc">切换亮色/暗色主题</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-option" data-setting="theme" data-value="light">☀️ 亮色</button>
+            <button class="settings-option" data-setting="theme" data-value="dark">🌙 暗色</button>
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">字体大小</div>
+            <div class="settings-desc">调整页面文字大小</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-option" data-setting="fontSize" data-value="small">小</button>
+            <button class="settings-option" data-setting="fontSize" data-value="medium">中</button>
+            <button class="settings-option" data-setting="fontSize" data-value="large">大</button>
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">减少动画</div>
+            <div class="settings-desc">关闭所有过渡动画，提升性能</div>
+          </div>
+          <div class="settings-control">
+            <label class="toggle-switch">
+              <input type="checkbox" id="reduceMotion">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数据设置 -->
+      <div class="settings-section">
+        <div class="settings-section-title">📊 数据</div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">每页显示条数</div>
+            <div class="settings-desc">记忆列表每页显示的数量</div>
+          </div>
+          <div class="settings-control">
+            <select id="pageSizeSelect" style="padding:6px 12px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);font-size:13px;cursor:pointer">
+              <option value="50">50 条</option>
+              <option value="100">100 条</option>
+              <option value="200">200 条</option>
+              <option value="500">500 条</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">导出全部数据</div>
+            <div class="settings-desc">导出所有记忆为 JSON 备份文件</div>
+          </div>
+          <div class="settings-control">
+            <button class="btn-ghost" id="exportAllBtn" style="padding:6px 14px;font-size:12px">导出 JSON</button>
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">重置所有设置</div>
+            <div class="settings-desc">恢复默认设置，不影响记忆数据</div>
+          </div>
+          <div class="settings-control">
+            <button class="btn-ghost" id="resetSettingsBtn" style="padding:6px 14px;font-size:12px;color:var(--danger);border-color:rgba(220,38,38,0.3)">重置</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 快捷键 -->
+      <div class="settings-section">
+        <div class="settings-section-title">⌨️ 快捷键</div>
+        <div class="shortcuts-grid">
+          <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>K</kbd><span>聚焦搜索</span></div>
+          <div class="shortcut-item"><kbd>N</kbd><span>新建记忆</span></div>
+          <div class="shortcut-item"><kbd>Esc</kbd><span>关闭弹窗</span></div>
+          <div class="shortcut-item"><kbd>←</kbd><kbd>→</kbd><span>详情切换</span></div>
+          <div class="shortcut-item"><kbd>?</kbd><span>快捷键帮助</span></div>
+          <div class="shortcut-item"><kbd>/</kbd><span>快速搜索</span></div>
+        </div>
+      </div>
+
+      <!-- 关于 -->
+      <div class="settings-section">
+        <div class="settings-section-title">ℹ️ 关于</div>
+        <div class="about-info">
+          <div class="about-row"><span>版本</span><strong>v0.3.0</strong></div>
+          <div class="about-row"><span>记忆总数</span><strong id="aboutTotal">0</strong></div>
+          <div class="about-row"><span>活跃记忆</span><strong id="aboutActive">0</strong></div>
+          <div class="about-row"><span>数据库</span><strong>memory.db</strong></div>
+        </div>
+      </div>
+
+      <!-- LLM 配置 -->
+      <div class="settings-section">
+        <div class="settings-section-title">🤖 LLM 配置</div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">地址 URL</div>
+            <div class="settings-desc">采集/提炼用的模型接口（写回 config.json，重启生效）</div>
+          </div>
+          <div class="settings-control" style="flex-direction:column;align-items:stretch;width:100%;gap:6px">
+            <input type="text" id="cfgLlmUrl" placeholder="http://127.0.0.1:18900/v1/chat/completions" style="width:100%;padding:7px 10px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);font-family:var(--font-mono);font-size:12px">
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">模型</div>
+            <div class="settings-desc">默认 agnes-2.5-flash</div>
+          </div>
+          <div class="settings-control">
+            <input type="text" id="cfgLlmModel" placeholder="agnes-2.5-flash" style="width:200px;padding:7px 10px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);font-size:13px">
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">密钥（可选）</div>
+            <div class="settings-desc" id="cfgLlmKeyState">未设置</div>
+          </div>
+          <div class="settings-control">
+            <input type="password" id="cfgLlmKey" placeholder="留空不修改" autocomplete="off" style="width:170px;padding:7px 10px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);font-size:12px">
+            <button class="btn-ghost" id="cfgLlmKeyToggle" style="padding:6px 10px;font-size:12px">显示</button>
+          </div>
+        </div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">保存 LLM 配置</div>
+            <div class="settings-desc">写回 config.json，需重启内核生效</div>
+          </div>
+          <div class="settings-control">
+            <button class="btn-primary" id="saveCfgBtn" style="padding:6px 14px;font-size:12px">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 系统 -->
+      <div class="settings-section">
+        <div class="settings-section-title">⚙️ 系统</div>
+        <div class="settings-item">
+          <div class="settings-label">
+            <div class="settings-name">数据目录</div>
+            <div class="settings-desc">config.json / memory.db 所在目录</div>
+          </div>
+          <div class="settings-control">
+            <input type="text" id="cfgDataDir" readonly style="width:240px;padding:7px 10px;border:1px solid var(--border-glass);border-radius:6px;background:rgba(0,0,0,0.03);color:var(--text-muted);font-size:11px">
+            <button class="btn-ghost" id="copyDataDir" style="padding:6px 10px;font-size:12px">复制</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 -->
+      <div class="settings-section">
+        <div class="settings-section-title">📡 状态</div>
+        <div class="about-info">
+          <div class="about-row"><span>服务端口</span><strong id="cfgPort">—</strong></div>
+          <div class="about-row" style="align-items:flex-start"><span>数据库路径</span><strong id="cfgDbPath" style="word-break:break-all;text-align:right;max-width:60%">—</strong></div>
+          <div class="about-row"><span>内核状态</span><strong id="cfgAlive" style="color:#16a34a">运行中</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 接入向导 Modal -->
+<div class="modal-overlay" id="connectModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">接入 memoryhub</div>
+      <button class="modal-close" id="connectModalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="connectBody"></div>
+    <div class="form-actions" style="padding:0 20px 20px;justify-content:flex-end">
+      <button class="btn-ghost" id="connectCancel">关闭</button>
+      <button class="btn-primary" id="connectConfirm" style="display:none">确认写入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 采集消化：添加/编辑自定义源 -->
+<div class="modal-overlay" id="sourceModal" style="display:none">
+  <div class="modal" style="width:580px">
+    <div class="modal-header">
+      <div class="modal-title" id="sourceModalTitle">添加自定义源</div>
+      <button class="modal-close" id="sourceModalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>路径（必填）</label>
+        <input type="text" id="srcPath" placeholder="C:\Users\you\notes 或 ~/notes 或 ~/notes/**/*.md">
+        <div class="form-hint" style="margin-top:6px">支持目录、单个文件、通配符（* / **）；只采集 .md / .txt / .rules / .jsonl</div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>名称（可选）</label>
+          <input type="text" id="srcName" placeholder="留空则取路径末段">
+        </div>
+        <div class="form-field">
+          <label>类型</label>
+          <select id="srcKind">
+            <option value="memory">记忆 memory</option>
+            <option value="rule">规则 rule</option>
+            <option value="convo">对话 convo</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>消化层级</label>
+        <select id="srcLevel">
+          <option value="L2">L2 · 需 LLM 提炼（原始记录 / 会话日志）</option>
+          <option value="L1">L1 · 免 LLM 直读（已是结论：笔记 / 规则 / 画像）</option>
+        </select>
+      </div>
+      <details id="srcAdvanced" style="margin-bottom:14px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);padding:6px 0">高级选项（文件名过滤 / 采集上限）</summary>
+        <div class="form-row" style="margin-top:8px">
+          <div class="form-field">
+            <label>文件名正则 includeFilter</label>
+            <input type="text" id="srcFilter" placeholder="如 \.md$">
+          </div>
+          <div class="form-field">
+            <label>最多文件数 maxFiles（≤200）</label>
+            <input type="number" id="srcMaxFiles" value="50" min="1" max="200">
+          </div>
+        </div>
+        <div class="form-field">
+          <label>最大递归深度 maxDepth（0-6）</label>
+          <input type="number" id="srcMaxDepth" value="3" min="0" max="6">
+        </div>
+      </details>
+      <div id="srcCheck" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:12px;line-height:1.7"></div>
+      <div class="form-hint err" id="srcHint" style="display:none"></div>
+    </div>
+    <div class="form-actions" style="padding:0 20px 20px;justify-content:flex-end">
+      <button class="btn-ghost" id="srcValidateBtn">预检</button>
+      <button class="btn-ghost" id="srcCancelBtn">取消</button>
+      <button class="btn-primary" id="srcSaveBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 任务看板：新建任务 -->
+<div class="modal-overlay" id="taskModal" style="display:none">
+  <div class="modal" style="width:560px">
+    <div class="modal-header">
+      <div class="modal-title">新建任务</div>
+      <button class="modal-close" id="taskModalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>任务标题（必填）</label>
+        <input type="text" id="taskTitle" placeholder="如：核对 8 月 Ozon 结算单差异">
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>接收方 assignee</label>
+          <input type="text" id="taskAssignee" placeholder="如 codex / claude / unassigned">
+        </div>
+        <div class="form-field">
+          <label>状态</label>
+          <select id="taskStatus">
+            <option value="pending">待处理 pending</option>
+            <option value="in_progress">进行中 in_progress</option>
+            <option value="blocked">阻塞 blocked</option>
+            <option value="review">待审核 review</option>
+            <option value="done">已完成 done</option>
+            <option value="failed">失败 failed</option>
+            <option value="cancelled">已取消 cancelled</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>依赖任务 ID（可选）</label>
+        <input type="text" id="taskDepends" placeholder="逗号分隔，如 12,15">
+        <div class="form-hint" style="margin-top:6px">依赖未完成时，看板卡片会显示「⛔ 等待依赖完成」</div>
+      </div>
+      <div class="form-field">
+        <label>描述（可选）</label>
+        <textarea id="taskSummary" rows="4" placeholder="补充背景、验收标准…"></textarea>
+      </div>
+      <div class="form-hint err" id="taskHint" style="display:none"></div>
+    </div>
+    <div class="form-actions" style="padding:0 20px 20px;justify-content:flex-end">
+      <button class="btn-ghost" id="taskCancelBtn">取消</button>
+      <button class="btn-primary" id="taskSaveBtn">创建任务</button>
+    </div>
+  </div>
+</div>
+
+<!-- 任务看板：导入计划（plan.schema.json v1.1） -->
+<div class="modal-overlay" id="planModal" style="display:none">
+  <div class="modal" style="width:660px;max-height:88vh">
+    <div class="modal-header">
+      <div class="modal-title">导入计划</div>
+      <button class="modal-close" id="planModalClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="max-height:calc(88vh - 150px);overflow-y:auto">
+      <div class="form-field">
+        <label>方式一：选择 plans 目录内的计划文件</label>
+        <select id="planFileSelect">
+          <option value="">— 选择计划文件 —</option>
+        </select>
+        <div class="form-hint" style="margin-top:6px">目录：<span class="mono" id="planDirPath">—</span></div>
+      </div>
+      <div class="form-field">
+        <label>方式二：粘贴计划 JSON</label>
+        <textarea id="planJsonInput" rows="7" class="mono" style="font-size:11px" placeholder='{"schema_version":"1.1.0","plan_id":"plan-xxx","plan_status":"active","created_at":"2026-09-11T09:00:00+08:00","tasks":[{"id":"T1","title":"…","assignee":"codex","status":"pending"}],"artifacts":[]}'></textarea>
+      </div>
+      <div id="planCheck" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:12px;line-height:1.7;max-height:180px;overflow:auto"></div>
+      <div class="form-hint err" id="planHint" style="display:none"></div>
+    </div>
+    <div class="form-actions" style="padding:0 20px 20px;justify-content:flex-end">
+      <button class="btn-ghost" id="planValidateBtn">校验</button>
+      <button class="btn-ghost" id="planCancelBtn">取消</button>
+      <button class="btn-primary" id="planImportBtn">导入计划</button>
+    </div>
+  </div>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>

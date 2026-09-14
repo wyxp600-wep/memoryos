@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.1.0",
+  "plan_id": "plan-memoryos-demo",
+  "summary": "梳理共享记忆常用主题，产出一份脉络笔记",
+  "plan_status": "active",
+  "created_at": "2026-09-11T09:00:00+08:00",
+  "updated_at": "2026-09-11T18:45:00+08:00",
+  "context": {
+    "context_id": "ctx-memoryos-demo",
+    "assumptions": ["topics.md 已列主题可信", "session_memory jsonl 对应当日会话"],
+    "out_of_scope": ["全库扫描", "重写 .jsonl"]
+  },
+  "handoff": {
+    "current_owner": "agent:executor-01",
+    "next_action": "wait_user",
+    "resume_hint": "T2 阻塞：需 user 对 [饮食]/[健康偏好] 二选一或合并；T1/T3 可并行。",
+    "last_synced_session": "session_memory_20260911_1845.jsonl",
+    "lease_expires_at": "2026-09-11T19:15:00+08:00",
+    "heartbeat_at": "2026-09-11T18:45:00+08:00",
+    "version": 3,
+    "etag": "a1b2c3"
+  },
+  "next_checkpoint": {
+    "triggers": [
+      { "type": "event", "event": "blocker_resolved", "blocker_id": "B1", "task_ids": ["T2"] },
+      { "type": "time", "at": "2026-09-12T18:45:00+08:00" }
+    ],
+    "action": "resume",
+    "task_ids": ["T2", "T3"],
+    "notify": ["user"]
+  },
+  "permissions": {
+    "can_edit_plan_status": ["user", "agent:planner"],
+    "can_assign_tasks": ["agent:planner"],
+    "can_resolve_blockers": ["user", "agent:reviewer-01"]
+  },
+  "audit_log": [
+    {
+      "at": "2026-09-11T18:45:00+08:00",
+      "actor": "agent:executor-01",
+      "action": "task.status_changed",
+      "target": "T2",
+      "from": "in_progress",
+      "to": "blocked",
+      "reason": "主题边界模糊"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "枚举 topics.md 全部主题",
+      "assignee": "agent:executor-01",
+      "status": "done",
+      "created_at": "2026-09-11T09:00:00+08:00",
+      "steps": [
+        { "id": "S1", "text": "解析 topics.md", "status": "done" },
+        { "id": "S2", "text": "去重合并", "status": "done" }
+      ],
+      "progress": { "percent": 100, "done_steps": 2, "total_steps": 2 },
+      "acceptance_criteria": [
+        {
+          "id": "AC1",
+          "text": "≥3 个主题各产出 1 条脉络",
+          "evidence_refs": ["attempt-001"],
+          "verified": true,
+          "verified_by": "agent:reviewer-01",
+          "verified_at": "2026-09-11T18:00:00+08:00"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "attempt-001",
+          "timestamp": "2026-09-11T15:10:00+08:00",
+          "actor": "agent:executor-01",
+          "result": "success",
+          "notes": "完成全部主题枚举",
+          "evidence_refs": ["threads.md#L1"],
+          "duration_ms": 1820
+        }
+      ],
+      "outputs": { "artifact_refs": ["A-threads"] }
+    },
+    {
+      "id": "T2",
+      "title": "产出 [饮食]/[健康偏好] 脉络",
+      "assignee": "agent:executor-01",
+      "status": "blocked",
+      "created_at": "2026-09-11T09:00:00+08:00",
+      "steps": [
+        { "id": "S1", "text": "搜集素材", "status": "done" },
+        { "id": "S2", "text": "初稿", "status": "in_progress" }
+      ],
+      "progress": { "percent": 50, "done_steps": 1, "total_steps": 2 },
+      "blockers": [
+        {
+          "id": "B1",
+          "reason": "topics.md 中 [饮食] 与 [健康偏好] 边界模糊",
+          "needed_from": "user",
+          "status": "open",
+          "severity": "high",
+          "raised_at": "2026-09-11T17:20:00+08:00",
+          "resolution_hint": "建议 user 勾选或合并两主题"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "attempt-001",
+          "timestamp": "2026-09-11T17:20:00+08:00",
+          "actor": "agent:executor-01",
+          "result": "partial",
+          "notes": "完成主题枚举，第 2 步在[饮食]主题处中断",
+          "evidence_refs": ["topics.md#L12"],
+          "duration_ms": 1820
+        }
+      ],
+      "outputs": { "artifact_refs": [] }
+    },
+    {
+      "id": "T3",
+      "title": "更新 AGENTS.md 引用",
+      "status": "pending",
+      "created_at": "2026-09-11T09:00:00+08:00",
+      "steps": [{ "id": "S1", "text": "写入 AGENTS.md", "status": "pending" }],
+      "progress": { "percent": 0, "done_steps": 0, "total_steps": 1 },
+      "acceptance_criteria": [
+        { "id": "AC1", "text": "AGENTS.md 含脉络引用", "evidence_refs": [], "verified": false }
+      ],
+      "review": { "required": true, "status": "pending", "reviewer": "agent:reviewer-01" },
+      "outputs": { "artifact_refs": [] }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "A-threads",
+      "path": "memory/projects/memoryos/threads.md",
+      "produced_by": "T1",
+      "status": "final",
+      "version": 1,
+      "sha256": "",
+      "media_type": "text/markdown",
+      "created_at": "2026-09-11T15:10:00+08:00",
+      "verified": true
+    }
+  ]
+}

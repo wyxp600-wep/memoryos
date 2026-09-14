@@ -1,0 +1,31 @@
+{
+  "name": "memoryos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MemoryOS v0.1 shared memory (SQLite + FTS5) MCP server",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "obsidian:import": "node dist/obsidian-sync.js import",
+    "obsidian:export": "node dist/obsidian-sync.js export",
+    "obsidian:status": "node dist/obsidian-sync.js status",
+    "obsidian:vaults": "node dist/obsidian-sync.js list-vaults",
+    "skills:status": "node dist/skill-sync.js status",
+    "skills:sync": "node dist/skill-sync.js sync",
+    "skills:dry": "node dist/skill-sync.js sync --dry-run",
+    "skills:adopt": "node dist/skill-sync.js adopt"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "echarts": "^5.6.0",
+    "fastify": "^5.12.3",
+    "fastmcp": "^3.2.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

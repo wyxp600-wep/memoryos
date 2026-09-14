@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryos.local/plans/plan.schema.json",
+  "schema_version": "1.1.0",
+  "title": "MemoryOS 多 Agent 任务计划文件（v1.1.0）",
+  "description": "智能体或用户输出的未完成任务计划。标准：可落盘、可机读、可调度。核心：未完成不是缺陷，但未完成必须可验证、可追责、可恢复。\n\n回写协议（PROMISE 约定，机器读 plan 落盘后必须回写）：\n  PLANUPD: plan_id=... task_id=... from=... to=... reason=... at=ISO8601\n  (计划文件有改动时回写一行，跟随文件末尾)\n  CONFLICT: plan_id=... task_id=... 冲突解决后必须记 decisions_log，并把 plan_status 从 paused 恢复为 active。\n\n状态机硬规则（任务级合法迁移，禁止跳跃）：\n  pending -> in_progress / cancelled\n  in_progress -> blocked / review / done / failed / cancelled\n  blocked -> in_progress / cancelled / failed\n  review -> done / in_progress / failed\n  done 为终态，重开须新增 reopened 事件，不可直接改回\n  failed -> in_progress / cancelled\n  cancelled 必须写 cancel_reason\n\n置 done 前置条件（全部满足）：\n  1. progress.percent == 100\n  2. 所有 acceptance_criteria[].verified == true\n  3. 无 blockers[].status == \"open\"\n  4. 若 review.required == true，则 review.status == \"approved\"\n  5. 至少一条 attempts 证据或 evidence_refs",
+  "type": "object",
+  "required": ["schema_version", "plan_id", "plan_status", "created_at", "tasks", "artifacts"],
+  "properties": {
+    "schema_version": { "const": "1.1.0", "description": "破坏性变更递增主版本" },
+    "status_transitions": {
+      "type": "object",
+      "description": "任务级状态机·合法迁移白名单（机器可读契约，对应 TAKEOVER-GUIDE.md §七）。src 状态 → 允许的 dst 数组；缺失即非法迁移（禁止跳跃）。done/cancelled 为终态（无允许 dst）。重开终态任务须新增 reopened 事件，不可直接改回。cancelled 必须写 cancel_reason。",
+      "const": {
+        "pending": ["in_progress", "cancelled"],
+        "in_progress": ["blocked", "review", "done", "failed", "cancelled"],
+        "blocked": ["in_progress", "cancelled", "failed"],
+        "review": ["done", "in_progress", "failed"],
+        "done": [],
+        "failed": ["in_progress", "cancelled"],
+        "cancelled": []
+      }
+    },
+    "plan_id": { "type": "string", "minLength": 1, "description": "计划唯一 id，建议 plan-<项目>-<序号>" },
+    "summary": { "type": "string", "description": "一句话人类摘要，可选" },
+    "plan_status": {
+      "enum": ["active", "paused", "completed", "abandoned"],
+      "description": "计划级状态。一致性：completed=所有任务 done/cancelled 且无 open blocker；paused=handoff.next_action 必须为 wait_user/replan/wait_dependency/review"
+    },
+    "created_at": { "type": "string", "format": "date-time", "description": "ISO8601 带时区" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "context": {
+      "type": "object",
+      "properties": {
+        "context_id": { "type": "string" },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "out_of_scope": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "description": "交接喉舌。让陌生 Agent 明白现在谁在做、下一步做什么",
+      "required": ["next_action"],
+      "properties": {
+        "current_owner": { "type": "string", "description": "如 agent:executor-01" },
+        "next_action": {
+          "enum": ["resume", "retry", "replan", "wait_user", "wait_dependency", "review", "handoff", "complete", "abort"],
+          "description": "机读枚举（原规范 resume 未定义枚举，此修订补齐）"
+        },
+        "resume_hint": { "type": "string", "maxLength": 200, "description": "≤2 句，含当前阻塞点" },
+        "last_synced_session": { "type": "string" },
+        "lease_expires_at": { "type": "string", "format": "date-time", "description": "并发租约：过期后其他 Agent 可接管" },
+        "heartbeat_at": { "type": "string", "format": "date-time" },
+        "version": { "type": "integer", "minimum": 1, "description": "乐观并发：每次写 +1" },
+        "etag": { "type": "string", "description": "内容哈希，防覆盖写" }
+      }
+    },
+    "next_checkpoint": {
+      "type": "object",
+      "description": "机器可解析的检查点触发器（原 when 散文不可机读，此改为 triggers 数组）",
+      "properties": {
+        "triggers": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "object", "required": ["type", "event"], "properties": { "type": { "const": "event" }, "event": { "enum": ["blocker_resolved", "task_done", "review_approved", "timeout"] }, "blocker_id": { "type": "string" }, "task_ids": { "type": "array", "items": { "type": "string" } } } },
+              { "type": "object", "required": ["type", "at"], "properties": { "type": { "const": "time" }, "at": { "type": "string", "format": "date-time" } } }
+            ]
+          }
+        },
+        "action": { "enum": ["resume", "review", "handoff"] },
+        "task_ids": { "type": "array", "items": { "type": "string" } },
+        "notify": { "type": "array", "items": { "type": "string", "description": "任意 agent:<名> 或 user" } }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "description": "谁可改 plan_status/assignee/blockers",
+      "properties": {
+        "can_edit_plan_status": { "type": "array", "items": { "type": "string" } },
+        "can_assign_tasks": { "type": "array", "items": { "type": "string" } },
+        "can_resolve_blockers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "audit_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["at", "actor", "action", "target"],
+        "properties": {
+          "at": { "type": "string", "format": "date-time" },
+          "actor": { "type": "string" },
+          "action": { "type": "string", "description": "如 task.status_changed / blocker.resolved / plan.status_changed" },
+          "target": { "type": "string" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "单计划任务数 ≤15，否则应拆子计划并互链",
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" },
+      "description": "计划级工件清单（统一对象，带 sha256/version/status）"
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "任务依赖映射：task_id -> [依赖的 task_id]，无环、无悬空引用",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["id", "title", "status", "progress", "created_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "assignee": { "type": ["string", "null"], "description": "如 agent:executor-01；未分配可为 null" },
+        "status": {
+          "enum": ["pending", "in_progress", "blocked", "review", "done", "failed", "cancelled"],
+          "description": "状态机：合法迁移见本 schema 顶层 status_transitions；done/cancelled 为终态，重开须新增 reopened 事件，不可直接改回；cancelled 必须写 cancel_reason"
+        },
+        "cancel_reason": { "type": "string", "description": "status=cancelled 时必须写" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "timeout_at": { "type": "string", "format": "date-time" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "status": { "enum": ["pending", "in_progress", "done"] } }
+          }
+        },
+        "progress": {
+          "type": "object",
+          "required": ["percent"],
+          "properties": {
+            "percent": { "type": "number", "minimum": 0, "maximum": 100, "description": "校验：应等于 round(done_steps/total_steps*100)，若手动填须一致" },
+            "done_steps": { "type": "integer", "minimum": 0 },
+            "total_steps": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "evidence_refs": { "type": "array", "items": { "type": "string" } },
+              "verified": { "type": "boolean", "default": false },
+              "verified_by": { "type": "string" },
+              "verified_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "reason", "needed_from", "status"],
+            "properties": {
+              "id": { "type": "string" },
+              "reason": { "type": "string" },
+              "needed_from": { "type": "string", "description": "如 user / agent:reviewer-01" },
+              "status": { "enum": ["open", "resolved"] },
+              "severity": { "enum": ["low", "medium", "high"] },
+              "raised_at": { "type": "string", "format": "date-time" },
+              "resolution_hint": { "type": "string" },
+              "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+              "resolution": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "timestamp", "actor", "result"],
+            "properties": {
+              "id": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "actor": { "type": "string" },
+              "result": { "enum": ["success", "partial", "failed"] },
+              "notes": { "type": "string" },
+              "evidence_refs": { "type": "array", "items": { "type": "string" } },
+              "duration_ms": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "required": { "type": "boolean", "default": false },
+            "status": { "enum": ["pending", "approved", "rejected"] },
+            "reviewer": { "type": "string" },
+            "comments": { "type": ["string", "null"] },
+            "reviewed_at": { "type": ["string", "null"], "format": "date-time" }
+          },
+          "description": "review_required=true 的任务完成后不能直接 done，须先进入 review"
+        },
+        "retry_policy": {
+          "type": "object",
+          "properties": {
+            "max_retries": { "type": "integer", "minimum": 0 },
+            "backoff": { "enum": ["linear", "exponential"] }
+          }
+        },
+        "decisions_log": {
+          "type": "array",
+          "description": "冲突/关键决策记录（CONFLICT 解决后必须追加）",
+          "items": {
+            "type": "object",
+            "required": ["id", "decision", "reason"],
+            "properties": {
+              "id": { "type": "string" },
+              "scope": { "type": "string" },
+              "task_id": { "type": "string" },
+              "decision": { "type": "string" },
+              "reason": { "type": "string" },
+              "alternatives": { "type": "array", "items": { "type": "string" } },
+              "impact": { "type": "string" },
+              "status": { "enum": ["open", "decided"] }
+            }
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "artifact_refs": { "type": "array", "items": { "type": "string" }, "description": "引用计划级 artifacts[].id，不写路径" }
+          }
+        },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "can_edit": { "type": "array", "items": { "type": "string" } },
+            "can_review": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["id", "path", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "统一用 / 分隔，文件须真实存在" },
+        "produced_by": { "type": "string", "description": "task id" },
+        "status": { "enum": ["in_progress", "final", "superseded"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string" },
+        "media_type": { "type": "string", "description": "如 text/markdown" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "verified": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}

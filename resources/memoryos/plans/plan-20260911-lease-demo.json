@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.1.0",
+  "plan_id": "plan-memoryos-lease-demo",
+  "summary": "并发租约示例：executor-01 持 T1 租约临近过期，executor-02 可接管；演示 version/etag/heartbeat 乐观并发",
+  "plan_status": "active",
+  "created_at": "2026-09-11T18:00:00+08:00",
+  "updated_at": "2026-09-11T18:50:00+08:00",
+  "context": {
+    "context_id": "ctx-lease-demo",
+    "assumptions": ["租约过期前 current_owner 须续约 heartbeat", "过期后任何可调度 Agent 可接管并 bump version"],
+    "out_of_scope": ["重写既有计划", "跨项目接管"]
+  },
+  "handoff": {
+    "current_owner": "agent:executor-01",
+    "next_action": "resume",
+    "resume_hint": "T1 完成 80%，剩余重写结论段；租约 18:55 到期，未续约则 executor-02 可接管。",
+    "last_synced_session": "session_memory_20260911_1845.jsonl",
+    "lease_expires_at": "2026-09-11T18:55:00+08:00",
+    "heartbeat_at": "2026-09-11T18:50:00+08:00",
+    "version": 3,
+    "etag": "sha256:3f9c2ab1d4e8"
+  },
+  "next_checkpoint": {
+    "triggers": [
+      { "type": "time", "at": "2026-09-11T18:55:00+08:00", "task_ids": ["T1"] },
+      { "type": "event", "event": "task_done", "task_ids": ["T1"] }
+    ],
+    "action": "resume",
+    "task_ids": ["T1", "T2"],
+    "notify": ["agent:executor-02", "user"]
+  },
+  "permissions": {
+    "can_edit_plan_status": ["user", "agent:planner"],
+    "can_assign_tasks": ["agent:planner"],
+    "can_resolve_blockers": ["user", "agent:reviewer-01"],
+    "can_takeover_expired": ["agent:executor-01", "agent:executor-02"]
+  },
+  "audit_log": [
+    {
+      "at": "2026-09-11T18:30:00+08:00",
+      "actor": "agent:executor-01",
+      "action": "lease.renewed",
+      "target": "T1",
+      "from": "lease_expires_at=18:40",
+      "to": "lease_expires_at=18:55",
+      "reason": "任务进行中，续约"
+    },
+    {
+      "at": "2026-09-11T18:35:00+08:00",
+      "actor": "agent:executor-01",
+      "action": "lease.heartbeat",
+      "target": "T1",
+      "reason": "heartbeat_at 更新（version 2→3）"
+    },
+    {
+      "at": "2026-09-11T18:45:00+08:00",
+      "actor": "agent:executor-02",
+      "action": "lease.peek",
+      "target": "T1",
+      "from": "heartbeat=18:50",
+      "to": "待 18:55 判定是否接管",
+      "reason": "task_next 探测可接管集"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "重写 threads.md 结论段（exclusive 任务，持租约）",
+      "assignee": "agent:executor-01",
+      "status": "in_progress",
+      "created_at": "2026-09-11T18:00:00+08:00",
+      "timeout_at": "2026-09-11T19:00:00+08:00",
+      "steps": [
+        { "id": "S1", "text": "梳理结论段大纲", "status": "done" },
+        { "id": "S2", "text": "初稿", "status": "done" },
+        { "id": "S3", "text": "重写并落盘", "status": "in_progress" },
+        { "id": "S4", "text": "自检 + 证据回填", "status": "pending" }
+      ],
+      "progress": { "percent": 80, "done_steps": 2, "total_steps": 4 },
+      "acceptance_criteria": [
+        {
+          "id": "AC1",
+          "text": "threads.md 结论段完整，含决策依据",
+          "evidence_refs": ["attempt-001", "attempt-002"],
+          "verified": false
+        }
+      ],
+      "attempts": [
+        {
+          "id": "attempt-001",
+          "timestamp": "2026-09-11T18:20:00+08:00",
+          "actor": "agent:executor-01",
+          "result": "partial",
+          "notes": "完成大纲与初稿",
+          "evidence_refs": ["threads.md#L20"],
+          "duration_ms": 12000
+        },
+        {
+          "id": "attempt-002",
+          "timestamp": "2026-09-11T18:40:00+08:00",
+          "actor": "agent:executor-01",
+          "result": "partial",
+          "notes": "重写进行中，续约一次",
+          "evidence_refs": [],
+          "duration_ms": 8000
+        }
+      ],
+      "review": { "required": true, "status": "pending", "reviewer": "agent:reviewer-01" },
+      "outputs": { "artifact_refs": ["A-threads-final"] }
+    },
+    {
+      "id": "T2",
+      "title": "复核 A-threads 各引用路径（只读，不持租约）",
+      "assignee": "agent:executor-02",
+      "status": "blocked",
+      "created_at": "2026-09-11T18:00:00+08:00",
+      "steps": [{ "id": "S1", "text": "核对引用", "status": "pending" }],
+      "progress": { "percent": 0, "done_steps": 0, "total_steps": 1 },
+      "blockers": [
+        {
+          "id": "B1",
+          "reason": "T1 结论段未落盘，复核目标不完整",
+          "needed_from": "T1",
+          "status": "open",
+          "severity": "medium",
+          "raised_at": "2026-09-11T18:30:00+08:00",
+          "resolution_hint": "T1 done 后自动解除"
+        }
+      ],
+      "outputs": { "artifact_refs": [] }
+    },
+    {
+      "id": "T3",
+      "title": "汇总并发租约观察（审计 + version 轨迹）",
+      "assignee": null,
+      "status": "pending",
+      "created_at": "2026-09-11T18:00:00+08:00",
+      "steps": [{ "id": "S1", "text": "写观察报告", "status": "pending" }],
+      "progress": { "percent": 0, "done_steps": 0, "total_steps": 1 },
+      "acceptance_criteria": [
+        { "id": "AC1", "text": "报告含 lease 续约/接管时序", "evidence_refs": [], "verified": false }
+      ],
+      "review": { "required": true, "status": "pending", "reviewer": "agent:reviewer-01" },
+      "outputs": { "artifact_refs": [] }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "A-threads-final",
+      "path": "memory/projects/memoryos/threads.md",
+      "produced_by": "T1",
+      "status": "in_progress",
+      "version": 2,
+      "sha256": "",
+      "media_type": "text/markdown",
+      "created_at": "2026-09-11T18:40:00+08:00",
+      "verified": false
+    }
+  ]
+}

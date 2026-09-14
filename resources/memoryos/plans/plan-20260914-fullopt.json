@@ -1,0 +1,1132 @@
+{
+  "schema_version": "1.1.0",
+  "status_transitions": {
+    "pending": [
+      "in_progress",
+      "cancelled"
+    ],
+    "in_progress": [
+      "blocked",
+      "review",
+      "done",
+      "failed",
+      "cancelled"
+    ],
+    "blocked": [
+      "in_progress",
+      "cancelled",
+      "failed"
+    ],
+    "review": [
+      "done",
+      "in_progress",
+      "failed"
+    ],
+    "done": [],
+    "failed": [
+      "in_progress",
+      "cancelled"
+    ],
+    "cancelled": []
+  },
+  "plan_id": "plan-20260914-fullopt",
+  "summary": "MemoryOS 全维度优化计划（安全4/性能3/代码质量1/可维护性3/架构3，共14项，全部带实证与验收证据链）",
+  "plan_status": "active",
+  "created_at": "2026-09-14T18:23:36+08:00",
+  "updated_at": "2026-09-14T18:32:00+08:00",
+  "context": {
+    "context_id": "ctx-20260914-fullopt",
+    "project": "MemoryOS",
+    "assumptions": [
+      "分析对象为 C:\\Users\\WYX\\Desktop\\MemoryOS（Electron 壳 + 内置 Node 内核 + node:sqlite + Fastify/FastMCP + 零构建前端）。",
+      "所有结论均基于可复现实证（命令 / 文件行号 / PRAGMA 读数），未做无证据归因。",
+      "性能维度沿用 MemoryOS-架构与性能分析.md 的 B1-B8 编号，已闭环项不重复立项。",
+      "开发库当前记忆 905 条（active 515 / merged 282 / rejected 97 / trial 9 / archived 2），主库 55.6MB。",
+      "默认建议先完成 T10（git 版本控制），为其余改动提供 diff/回滚可信链；T10 未完成前各任务仍按「改前 VACUUM INTO + 文件备份」纪律执行。",
+      "改动纪律：最小改动；改前说明涉及文件与原因，改后给出可复现验收命令；禁止无实证声称已落地。"
+    ],
+    "out_of_scope": [
+      "写者收敛为单权威（5 写者 → 1 写者 + N 读者）：WAL + busy_timeout(5s) + withTx×3 + 工具层锁提示已够用，单机单用户收益低于风险，待实测 busy 冲突再立项。",
+      "向量 ANN / 去重 top-k 改造：已定标，active 515 条为亚毫秒级，触发线 1 万条 / 5 千条。",
+      "ONNX 嵌入收敛单侧车：已核算为 YAGNI，模型为按需驻留而非常驻。",
+      "SQLite 替换为多机数据库：WAL 单写者不跨机，属边界条件而非缺陷。",
+      "前端 app.js 引入构建/框架：零构建属分发策略，待 T8 稳定后再评估。"
+    ]
+  },
+  "handoff": {
+    "current_owner": "agent:workbuddy",
+    "next_action": "resume",
+    "resume_hint": "计划已生成并通过零依赖校验器校验，14 项任务已推送至任务池（project=MemoryOS）等待各 Agent 认领。建议优先执行 T10 建立 git 回滚链，再并行推进安全四项。",
+    "last_synced_session": "session-20260914-fullopt",
+    "lease_expires_at": "2026-09-14T19:32:00+08:00",
+    "heartbeat_at": "2026-09-14T18:32:00+08:00",
+    "version": 3,
+    "etag": "sha256:pending-recompute"
+  },
+  "next_checkpoint": {
+    "triggers": [
+      {
+        "type": "event",
+        "event": "task_done",
+        "task_ids": [
+          "T1",
+          "T2",
+          "T3",
+          "T4",
+          "T5",
+          "T6",
+          "T7",
+          "T8",
+          "T9",
+          "T10",
+          "T11",
+          "T12",
+          "T13",
+          "T14"
+        ]
+      },
+      {
+        "type": "time",
+        "at": "2026-09-21T10:00:00+08:00"
+      }
+    ],
+    "action": "review",
+    "task_ids": [
+      "T1",
+      "T2",
+      "T3",
+      "T5",
+      "T8",
+      "T10"
+    ],
+    "notify": [
+      "user"
+    ]
+  },
+  "permissions": {
+    "can_edit_plan_status": [
+      "user",
+      "agent:workbuddy"
+    ],
+    "can_assign_tasks": [
+      "user"
+    ],
+    "can_resolve_blockers": [
+      "user",
+      "agent:workbuddy"
+    ]
+  },
+  "audit_log": [
+    {
+      "at": "2026-09-14T18:23:36+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.created",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "全维度分析完成（安全/性能/代码质量/可维护性/架构），14 项优化点均带实证"
+    },
+    {
+      "at": "2026-09-14T18:23:36+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.status_changed",
+      "target": "plan:plan-20260914-fullopt",
+      "from": "draft",
+      "to": "active",
+      "reason": "计划通过 plan-validate.mjs 校验，任务推送至 MemoryOS 任务池供多 Agent 认领"
+    },
+    {
+      "at": "2026-09-14T18:30:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.tasks_pushed",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "14 项任务经 MCP task_assign 写入任务池（project=MemoryOS），memory_id 映射见各任务 memory_id 字段；T8 依赖 4165/4166/4167"
+    },
+    {
+      "at": "2026-09-14T18:31:00+08:00",
+      "actor": "human:user",
+      "action": "legacy_tasks.archived",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "用户授权归档全部存量旧任务（范围 A+B+C+D）：40 条任务记忆 status->archived（POST /api/archive，40 条 daemon_log 审计）；卡片 32 张 done->archived（CAS done->archived）、23 张非终态->cancelled（状态机不允许非 done 直达 archived）。改前快照 data/backup/memory.db.pre-archive-20260914-183059（41.4MB）。归档后任务池仅剩本计划 14 项 active。"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "加固热更新链路：清单路径穿越校验 + 签名信任链",
+      "description": "【问题】services/updater.js 直接使用远端清单字段拼路径且只做同源哈希比对：① path.join(getKernel(), f.path) 未规范化，f.path 含 .. 即可越出内核目录；② path.join(tmp, ...f.rel.split('/')) 无越界断言；③ sha256Buf(buf) !== f.hash 的哈希与清单同源（都来自 updateUrl），不构成信任链。【影响】updateUrl 被劫持/DNS 污染/中间人 → 可向内核目录之外任意路径写文件（Windows 下可覆盖用户目录、启动项），随后 restartCore() 以用户权限拉起被替换的 dashboard.js；触发路径为托盘「检查更新」与每 30 分钟的 updater.auto()。【建议】① path.resolve 后断言结果必须位于 getKernel()/临时目录前缀内，且拒绝含 ..、绝对路径、盘符、UNC 的 rel；② 清单引入 Ed25519 签名（公钥内置于壳层）或至少强制 https + 域名白名单；③ 落地前把旧文件 sha256 清单写入 backup/hotupdate-*/manifest.sha256 供回滚审计。【涉及文件】services/updater.js",
+      "dimension": "security",
+      "severity": "critical",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-17T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T1-S1",
+          "text": "补越界断言：rel/path 规范化后必须落在 getKernel()/tmp 前缀内，拒绝 ..、绝对路径、盘符、UNC",
+          "status": "pending"
+        },
+        {
+          "id": "T1-S2",
+          "text": "引入清单签名校验（Ed25519 公钥内置）或强制 https + 域名白名单",
+          "status": "pending"
+        },
+        {
+          "id": "T1-S3",
+          "text": "写入 backup/hotupdate-*/manifest.sha256 供回滚审计",
+          "status": "pending"
+        },
+        {
+          "id": "T1-S4",
+          "text": "构造恶意清单（f.path=../../evil.txt）验证拒绝，正常清单验证仍可更新",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T1-A1",
+          "text": "构造 f.path=\"../../evil.txt\" 的清单 → 更新被拒绝，且文件系统内无任何越界产物",
+          "verified": false
+        },
+        {
+          "id": "T1-A2",
+          "text": "正常清单（合法路径 + 正确哈希）仍能完成更新并重启内核",
+          "verified": false
+        },
+        {
+          "id": "T1-A3",
+          "text": "更新后 backup/hotupdate-*/manifest.sha256 存在且与覆盖前文件哈希一致",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4169
+    },
+    {
+      "id": "T2",
+      "title": "修复 obsidian_write_note 的 folder 参数路径穿越",
+      "description": "【问题】dist/obsidian-sync.js 中 writeNoteToVault()：title 已用 replace(/[\\\\/:*?\"<>|#]+/g,'_') 清洗，但 folder 未清洗即 path.join(vaultRoot, folder) 后 mkdirSync + writeFileSync。folder 来自 MCP 工具入参（server.js 的 obsidian_write_note）与 HTTP 路由。【影响】任意 MCP 客户端或同机 HTTP 调用方可将 .md 写到 vault 之外任意可写目录（内容可控 → 等价任意文件写），属受限模式未覆盖的旁路。【建议】对 folder 复用 title 的清洗思路（禁 ..、绝对路径、盘符、UNC），并对最终 filePath 做 vaultRoot 前缀断言；server.js 侧用 zod 收紧为「单层相对目录名」。【涉及文件】resources/memoryos/dist/obsidian-sync.js（writeNoteToVault，约 543 行）、resources/memoryos/dist/server.js（obsidian_write_note 工具定义）",
+      "dimension": "security",
+      "severity": "critical",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-17T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T2-S1",
+          "text": "writeNoteToVault 内新增 folder 清洗 + filePath 的 vaultRoot 前缀断言",
+          "status": "pending"
+        },
+        {
+          "id": "T2-S2",
+          "text": "server.js 的 obsidian_write_note folder 参数加 zod 约束（单层目录名，禁 .. 与分隔符）",
+          "status": "pending"
+        },
+        {
+          "id": "T2-S3",
+          "text": "构造 folder=\"../../pwn\" 与 folder=\"子目录\" 两个用例验证",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 3
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T2-A1",
+          "text": "folder=\"../../pwn\" → 明确报错拒绝，且 vault 外无文件产生",
+          "verified": false
+        },
+        {
+          "id": "T2-A2",
+          "text": "folder=\"子目录\" → 正常写入 vaultRoot/子目录/xxx.md，obsidian_sync 元表映射正确",
+          "verified": false
+        },
+        {
+          "id": "T2-A3",
+          "text": "smoke-mcp.js 全绿（回归未破）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4170
+    },
+    {
+      "id": "T3",
+      "title": "敏感凭据加固：API Key 与访问令牌的落盘、权限与比较",
+      "description": "【问题】四处：① dist/dashboard.js:236-241 把 cfg.llmKey（LLM API Key）写入 config.json，writeDiskConfig() 未收紧文件权限；services/core-process.js:55 再经环境变量 INGEST_KEY 传给子进程（实测当前 %APPDATA%\\MemoryOS\\config.json 仅 58 字节、未含 key，属代码路径风险而非既成泄露）；② security/token.js 写 data/token 未指定 mode，而同目录 dashboard 侧自举分支用了 mode:0o600（不一致）；③ dist/dashboard.js:110 令牌比较用 ===（非常量时间）；④ window/main-window.js 以 ?token= 形式 loadURL，令牌留在窗口 URL 中。【影响】同机其它进程/用户/备份链可读凭据；URL 令牌可经日志、截图、浏览器扩展泄漏。与「严格保护 API Key / Token」的项目约定直接冲突。【建议】① llmKey 走 Electron safeStorage(DPAPI) 加密存储，或改为仅内存/仅 env 不落盘；② data/token 统一 0o600 并用 safeStorage 包装（security/token.js 注释已自认此属未完成的 P0 路线图）；③ 比较改 crypto.timingSafeEqual；④ 前端首访种 cookie 后 history.replaceState 抹掉 ?token=。【涉及文件】resources/memoryos/dist/dashboard.js、security/token.js、services/core-process.js、resources/memoryos/memoryos-dashboard-redesign/app.js",
+      "dimension": "security",
+      "severity": "high",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-18T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T3-S1",
+          "text": "llmKey 改 safeStorage 加密存储或改为不落盘（仅 env/内存）",
+          "status": "pending"
+        },
+        {
+          "id": "T3-S2",
+          "text": "security/token.js 写盘统一 mode 0o600，与 dashboard 自举分支对齐",
+          "status": "pending"
+        },
+        {
+          "id": "T3-S3",
+          "text": "令牌比较改 crypto.timingSafeEqual（长度不等先短路）",
+          "status": "pending"
+        },
+        {
+          "id": "T3-S4",
+          "text": "前端首访种 cookie 后 history.replaceState 去掉 ?token=",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T3-A1",
+          "text": "设置 API Key 后 config.json 中不含明文 key（或该字段不再落盘）",
+          "verified": false
+        },
+        {
+          "id": "T3-A2",
+          "text": "data/token 文件权限已收紧，且 /api/summary 仍正常鉴权（200）",
+          "verified": false
+        },
+        {
+          "id": "T3-A3",
+          "text": "错误令牌返回 401，正确令牌返回 200，鉴权链未破（smoke-dashboard ALL PASS）",
+          "verified": false
+        },
+        {
+          "id": "T3-A4",
+          "text": "首次带 ?token= 访问后，浏览器地址栏不再保留令牌",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4171
+    },
+    {
+      "id": "T4",
+      "title": "修复 CSP 拦截内联事件导致的 3 处 UI 功能失效",
+      "description": "【问题】dashboard.js 下发 Content-Security-Policy: script-src 'self'（无 unsafe-inline），但页面存在内联事件处理器：① memoryos-dashboard-redesign/index.html:3766 <button class=\"error-reload\" onclick=\"location.reload()\">；② app.js:1713 审计日志记忆跳转 <a href=\"#all\" onclick=\"setTimeout(...)\">；③ app.js:3047 代码块「复制」按钮 onclick=\"...navigator.clipboard.writeText(...)\"。【影响】内核未就绪时的「重新加载」按钮、记忆详情代码块「复制」、审计日志记忆跳转点击无效（浏览器拒绝执行内联 handler，控制台报 CSP 违规）——安全策略与实现不一致导致的用户可见功能缺失。【建议】改为 data-* 属性 + 统一 addEventListener 事件委托，彻底移除内联 handler；并把这三处行为写入 smoke-dashboard 断言防回归。【涉及文件】resources/memoryos/memoryos-dashboard-redesign/index.html、resources/memoryos/memoryos-dashboard-redesign/app.js、resources/memoryos/dist/smoke-dashboard.js",
+      "dimension": "security",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-18T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T4-S1",
+          "text": "index.html 的 error-reload 按钮改 data-* + addEventListener",
+          "status": "pending"
+        },
+        {
+          "id": "T4-S2",
+          "text": "app.js 的记忆跳转与代码块复制按钮改事件委托，移除全部内联 onclick",
+          "status": "pending"
+        },
+        {
+          "id": "T4-S3",
+          "text": "grep 断言 app.js/index.html 内 onclick=/onchange= 为 0 处",
+          "status": "pending"
+        },
+        {
+          "id": "T4-S4",
+          "text": "三处行为补入 smoke-dashboard 断言",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T4-A1",
+          "text": "点击「重新加载」触发 location.reload；点击代码块「复制」写入剪贴板；点击审计日志记忆号跳转到记忆页",
+          "verified": false
+        },
+        {
+          "id": "T4-A2",
+          "text": "浏览器控制台无 CSP 违规报错",
+          "verified": false
+        },
+        {
+          "id": "T4-A3",
+          "text": "grep -c \"onclick=\" app.js index.html 均为 0",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4172
+    },
+    {
+      "id": "T5",
+      "title": "主库空间回收：空闲页 72% 未回收（VACUUM + 治理项）",
+      "description": "【实证】只读连接读数：page_size=4096、page_count=13580（55.6MB）、freelist_count=9818、auto_vacuum=0 → 空闲 40,214,528 字节（72.3%）。对照 data/memory.db.pre-perfopt3-*（VACUUM 后）仅 15MB，即真实数据约 15MB。【问题】daemon 每日只做 VACUUM INTO 备份，从不回收主库；auto_vacuum=0，删除（merged 282 / rejected 97 条、gram 表重建等）产生的空闲页永久滞留。【影响】页缓存/mmap 有效命中率下降；全表扫与 VACUUM INTO 备份成本约 3.6 倍；SSD 与热更新分发体积。【建议】① 先 VACUUM INTO 备份，再一次性 VACUUM；② daemon 增加「空闲页比 >30% 且非高峰」触发的 VACUUM 治理项（幂等 + config 标记）；③ 评估 auto_vacuum=INCREMENTAL + 定期 incremental_vacuum 的折中（模式变更需一次 VACUUM 才生效）。【涉及文件】resources/memoryos/dist/daemon.js、resources/memoryos/data/memory.db",
+      "dimension": "performance",
+      "severity": "high",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-19T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T5-S1",
+          "text": "VACUUM INTO 生成改前快照，记录 freelist/page_count 基线",
+          "status": "pending"
+        },
+        {
+          "id": "T5-S2",
+          "text": "真实库执行一次性 VACUUM，记录改后 freelist/page_count",
+          "status": "pending"
+        },
+        {
+          "id": "T5-S3",
+          "text": "daemon 增加空闲页比阈值触发的 VACUUM 治理项（config 标记幂等）",
+          "status": "pending"
+        },
+        {
+          "id": "T5-S4",
+          "text": "scratch 库 daemon --once --dry-run / --once 验证治理项走通",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T5-A1",
+          "text": "VACUUM 后 freelist_count/page_count < 10%（改前 72.3%）",
+          "verified": false
+        },
+        {
+          "id": "T5-A2",
+          "text": "pragma integrity_check = ok 且 memories 行数仍为 905（与改前一致）",
+          "verified": false
+        },
+        {
+          "id": "T5-A3",
+          "text": "daemon 治理项在 scratch 库 --once 跑通，且幂等（二次执行跳过）",
+          "verified": false
+        },
+        {
+          "id": "T5-A4",
+          "text": "改前快照文件存在（VACUUM INTO 产物）可用于回滚",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 1,
+        "backoff": "linear"
+      },
+      "memory_id": 4173
+    },
+    {
+      "id": "T6",
+      "title": "补证并修复：ANALYZE 从未在真实库生效",
+      "description": "【问题】MemoryOS-架构与性能分析.md 附一称「每日一次 ANALYZE（config 标记 maintenance.analyze_ts 幂等）」已落地并「✅ 已验证」，但真实库实测：sqlite_stat1 不存在（0 条）、config 表仅 migration.vectors_split_v1 / migration.sectors_v1 / type.deprecated。即该路径从未在真实库执行，此前验证仅在 scratch 库 --once 完成。【影响】查询规划器缺统计信息，索引选择继续依赖手工 EXPLAIN；库增长后执行计划漂移风险（该报告 §2.3 自己列为待办）。【建议】① 真实库手动触发一次 ANALYZE 并确认 sqlite_stat1 生成；② 补齐「首次运行即 ANALYZE」逻辑（当前仅依赖每日 tick，daemon 未长跑则不触发）；③ 把「ANALYZE 时间戳 + stat1 行数」纳入 /api/health 输出，使已落地可被机读验证。【涉及文件】resources/memoryos/dist/daemon.js、resources/memoryos/dist/dashboard.js（health）",
+      "dimension": "performance",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-19T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T6-S1",
+          "text": "真实库执行 ANALYZE，确认 sqlite_stat1 生成且行数 > 0",
+          "status": "pending"
+        },
+        {
+          "id": "T6-S2",
+          "text": "daemon 补齐首次运行即 ANALYZE 的逻辑（不依赖每日 tick）",
+          "status": "pending"
+        },
+        {
+          "id": "T6-S3",
+          "text": "/api/health 暴露 maintenance.analyze_ts 与 sqlite_stat1 行数",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 3
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T6-A1",
+          "text": "select count(*) from sqlite_master where name='sqlite_stat1' = 1，且 sqlite_stat1 行数 > 0",
+          "verified": false
+        },
+        {
+          "id": "T6-A2",
+          "text": "config 表出现 maintenance.analyze_ts 标记",
+          "verified": false
+        },
+        {
+          "id": "T6-A3",
+          "text": "/api/health 返回可读的 ANALYZE 时间戳与 stat1 行数",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4174
+    },
+    {
+      "id": "T7",
+      "title": "静态资源缓存：内存驻留 + ETag/304（当前 no-store + 每请求同步读盘）",
+      "description": "【问题】dist/dashboard.js:1158-1160：/ 与 /app.js 每次请求都 fs.readFileSync 全量读（index.html 172KB、app.js 272KB）并设 Cache-Control: no-store；/echarts.min.js（1.0MB）无缓存头。【影响】合计约 1.45MB 静态资源，每次刷新/切页重复全量传输 + 重复同步读盘（阻塞单线程事件循环）；与 /api/* 已实现的 ETag/304 优化形成明显不一致。【建议】① 启动时一次性读入内存（或按 mtime 失效）；② 加 ETag/Last-Modified + 304；③ index.html/app.js 用 no-cache（协商）替代 no-store；echarts.min.js 加长缓存 + immutable。【涉及文件】resources/memoryos/dist/dashboard.js",
+      "dimension": "performance",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-20T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T7-S1",
+          "text": "静态资源改启动时读入内存（mtime 变化失效）",
+          "status": "pending"
+        },
+        {
+          "id": "T7-S2",
+          "text": "三条静态路由加 ETag/Last-Modified + 304 协商",
+          "status": "pending"
+        },
+        {
+          "id": "T7-S3",
+          "text": "缓存策略分级：html/js 用 no-cache，echarts 用长缓存 immutable",
+          "status": "pending"
+        },
+        {
+          "id": "T7-S4",
+          "text": "写 tmp 验证脚本：二次请求 304、body 为空、无重复 readFileSync",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T7-A1",
+          "text": "对 / 与 /app.js 的二次请求返回 304 且响应体为空",
+          "verified": false
+        },
+        {
+          "id": "T7-A2",
+          "text": "静态资源不再每请求 readFileSync（计数或耗时断言可证）",
+          "verified": false
+        },
+        {
+          "id": "T7-A3",
+          "text": "改文件后（mtime 变化）能拿到新内容 200 + 新 ETag",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4165
+    },
+    {
+      "id": "T8",
+      "title": "拆分 dashboard.js 的 buildApp() 巨函数（2246 行 / 96 路由）",
+      "description": "【问题】dist/dashboard.js 共 2431 行，其中 buildApp() 占 155-2401 行（2246 行），内部顺序注册 96 个路由（grep -c \"app\\.(get|post|put|delete|patch)(\" = 96），且无 setErrorHandler。【影响】全项目最大协作瓶颈：任何后端改动都落在同一函数内，多 Agent 并行开发必然冲突（仓库已有 22 个 dashboard.js.bak-* 版本佐证）；无法按域单测、无法按需加载、IDE 索引与认知负荷高。【建议】按域拆为 routes/{memory,task,card,plan,obsidian,ingest,rules,settings,static}.js，buildApp() 仅做装配（app.register）；保持路由路径与响应体逐字节不变，用现有 smoke-dashboard + /api/* 响应快照对比验证。【依赖】T7/T13/T14（同文件先做小改动，避免重构期冲突）。【涉及文件】resources/memoryos/dist/dashboard.js",
+      "dimension": "architecture",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-22T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T8-S1",
+          "text": "拆前采集 96 条路由路径集合 + 各 /api/* 响应快照作为等价基线",
+          "status": "pending"
+        },
+        {
+          "id": "T8-S2",
+          "text": "按域拆分为 routes/*.js，buildApp 改为装配（app.register）",
+          "status": "pending"
+        },
+        {
+          "id": "T8-S3",
+          "text": "路由路径集合与拆分前 diff 为空；响应快照一致",
+          "status": "pending"
+        },
+        {
+          "id": "T8-S4",
+          "text": "smoke-dashboard ALL PASS + 内核重启后真实路由可用",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T8-A1",
+          "text": "buildApp() 行数 ≤ 150",
+          "verified": false
+        },
+        {
+          "id": "T8-A2",
+          "text": "拆分前后路由路径集合完全一致（脚本 diff 为空）",
+          "verified": false
+        },
+        {
+          "id": "T8-A3",
+          "text": "smoke-dashboard ALL PASS，且 /api/* 关键响应体与基线逐字节一致",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4168
+    },
+    {
+      "id": "T9",
+      "title": "澄清构建链：package.json 声明 tsc 但无 src/tsconfig",
+      "description": "【问题】resources/memoryos/package.json 声明 \"build\": \"tsc\" 且 devDependencies 含 typescript/tsx，但仓库内无 src/*.ts、无 tsconfig.json；dist/*.js 实为手工编辑的产物（dashboard.js 22 个备份、server.js 7 个备份）。注释仍引用不存在的 .ts 文件名（dashboard.js 头注释「复用 report.ts 五查询 + db.ts 治理原语」、「smoke-dashboard.ts」）。【影响】无源码真相源 → 无法类型检查、无法从源重建；热更新目录与人工编辑目录混同；新人/新 Agent 误以为可 npm run build。【建议】二选一并写进文档：① 恢复 src/，把 dist/ 明确标为构建产物（.gitignore + build 脚本真实可用）；② 承认 dist/ 即源码，删除 build/tsx/typescript 声明，并把注释里的 .ts 引用全部改为 .js。【涉及文件】resources/memoryos/package.json、resources/memoryos/dist/*.js（注释）",
+      "dimension": "maintainability",
+      "severity": "high",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-19T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T9-S1",
+          "text": "决策并记录：恢复 src/ 构建链，或承认 dist/ 即源码",
+          "status": "pending"
+        },
+        {
+          "id": "T9-S2",
+          "text": "按决策调整 package.json（scripts/dependencies 与仓库内容一致）",
+          "status": "pending"
+        },
+        {
+          "id": "T9-S3",
+          "text": "清理 dist/*.js 注释中残留的 .ts 文件名引用",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 3
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T9-A1",
+          "text": "npm run build 要么真实可用（能重建 dist），要么该 script 不存在",
+          "verified": false
+        },
+        {
+          "id": "T9-A2",
+          "text": "package.json 声明的依赖与脚本与实际仓库内容一致（无幽灵 typescript/tsconfig）",
+          "verified": false
+        },
+        {
+          "id": "T9-A3",
+          "text": "grep 确认 dist/*.js 注释内无 .ts 文件名残留",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4175
+    },
+    {
+      "id": "T10",
+      "title": "建立版本控制并治理历史包袱（93 个 .bak / 11 个一次性脚本 / _old 1567 文件）",
+      "description": "【问题】项目非 git 仓库（git rev-parse --is-inside-work-tree → fatal: not a git repository）；历史靠 93 个 *.bak* 文件承载（dashboard.js 22 个、app.js 20+ 个）、根目录 11 个一次性脚本（_p0_*.py / _db_patch*.py / tmp-*.mjs）、_old/ 1567 文件、resources/ 下 10 个 app.asar.bak*。【影响】无 diff/无 bisect/无可信回滚链；.bak 混入热更新目录（可能被误打包下发）；磁盘与检索噪声。【建议】① git init + .gitignore（dist 产物、*.bak*、node_modules、data/*.db*、tmp-*、_old/）；② 一次性归档：.bak 与一次性脚本移入 archive/ 或删除；③ 后续改动一律走提交，禁止再用 .bak 命名。【涉及文件】项目根（新增 .gitignore）、resources/memoryos/dist/、resources/",
+      "dimension": "maintainability",
+      "severity": "high",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-18T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T10-S1",
+          "text": "git init + .gitignore（dist 产物、*.bak*、node_modules、data/*.db*、tmp-*、_old/）",
+          "status": "pending"
+        },
+        {
+          "id": "T10-S2",
+          "text": "首次提交并打 tag 作为回滚基线",
+          "status": "pending"
+        },
+        {
+          "id": "T10-S3",
+          "text": "归档 .bak 与一次性脚本（移入 archive/ 或删除，保留最近一份）",
+          "status": "pending"
+        },
+        {
+          "id": "T10-S4",
+          "text": "确认热更新目录（resources/memoryos/dist）不含 .bak",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T10-A1",
+          "text": "git status 可正常执行且工作区可提交（无致命错误）",
+          "verified": false
+        },
+        {
+          "id": "T10-A2",
+          "text": "工作区 *.bak* 文件数（归档目录除外）为 0",
+          "verified": false
+        },
+        {
+          "id": "T10-A3",
+          "text": "resources/memoryos/dist/ 内无 .bak 文件",
+          "verified": false
+        },
+        {
+          "id": "T10-A4",
+          "text": "存在可用于回滚的基线提交（tag 或首提交）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 1,
+        "backoff": "linear"
+      },
+      "memory_id": 4176
+    },
+    {
+      "id": "T11",
+      "title": "补齐测试门禁：npm test 一键回归 + 最小 lint",
+      "description": "【问题】resources/memoryos/package.json 无 test script；无测试框架、无 CI、无覆盖率。存在 15 个 smoke-*.js + golden-regress.js，但全靠手工执行——历史已出现 smoke-dashboard.js 因 09-13 fail-closed 令牌变更而整体失效却无人察觉（见 MemoryOS-架构与性能分析.md 附二）。【影响】回归靠人记；多 Agent 并行改动缺统一验收门，容易出现「各自跑通、合起来崩」。【建议】① 增加 npm test 串行跑 smoke 套件，输出 PASS/FAIL 汇总与非零退出码；② 关键断言纳入 golden（含 /api/* 响应形状快照）；③ 最小 lint（全量 node --check + eslint 仅开 no-undef/no-unused-vars）。【涉及文件】resources/memoryos/package.json、resources/memoryos/dist/smoke-*.js",
+      "dimension": "maintainability",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-21T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T11-S1",
+          "text": "新增 npm test：串行执行 smoke 套件，汇总 PASS/FAIL 并以非零码退出",
+          "status": "pending"
+        },
+        {
+          "id": "T11-S2",
+          "text": "关键断言纳入 golden（含 /api/* 响应形状快照）",
+          "status": "pending"
+        },
+        {
+          "id": "T11-S3",
+          "text": "最小 lint：全量 node --check + eslint（no-undef / no-unused-vars）",
+          "status": "pending"
+        },
+        {
+          "id": "T11-S4",
+          "text": "故意破坏一处断言，验证 npm test 非零退出",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T11-A1",
+          "text": "npm test 一条命令可复现全绿，并输出各项 PASS/FAIL 汇总",
+          "verified": false
+        },
+        {
+          "id": "T11-A2",
+          "text": "故意破坏一处断言后 npm test 退出码非 0",
+          "verified": false
+        },
+        {
+          "id": "T11-A3",
+          "text": "lint 可执行且对现有代码无致命报错（或已知清单化）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4177
+    },
+    {
+      "id": "T12",
+      "title": "内核进程自愈与调度锁超时",
+      "description": "【问题】三处：① services/core-process.js 子进程 exit 仅 dialog.showMessageBox 提示、不自动重启，coreChildren 不清理已退出项，restartCore() 会对 stale pid 调 taskkill；② services/scheduler.js 用布尔锁 __syncing/__ingesting 防重入但无超时，子进程 hang（ONNX 加载/网络）则锁永久为 true → 调度静默停摆；同时 out += String(d) 累积 stdout 无上限；③ dist/*.js 内无 process.on('uncaughtException'/'unhandledRejection')，dashboard.js 无 setErrorHandler（grep 全无命中）。【影响】daemon.js 挂死 → 治理/备份/检查点/衰减静默停止（无人感知）；dashboard.js 崩溃 → 桌面白屏需人工重启。与「托盘常驻、无人值守」定位冲突。【建议】① 内核退出按指数退避自动重启（限次 + 熔断）并清理 coreChildren；② 布尔锁加超时（超时 kill 子进程并释放）；③ 内核加全局异常兜底 + Fastify setErrorHandler（结构化错误体，不泄漏路径）。【涉及文件】services/core-process.js、services/scheduler.js、resources/memoryos/dist/dashboard.js、resources/memoryos/dist/daemon.js",
+      "dimension": "architecture",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-21T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T12-S1",
+          "text": "core-process 增加指数退避自动重启（限次 + 熔断）并清理 coreChildren",
+          "status": "pending"
+        },
+        {
+          "id": "T12-S2",
+          "text": "scheduler 布尔锁加超时（超时 kill 子进程并释放），stdout 缓冲加上限",
+          "status": "pending"
+        },
+        {
+          "id": "T12-S3",
+          "text": "内核加全局异常兜底 + Fastify setErrorHandler",
+          "status": "pending"
+        },
+        {
+          "id": "T12-S4",
+          "text": "kill 内核进程验证 30s 内自愈；伪造 hang 子进程验证锁超时释放",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T12-A1",
+          "text": "手动 kill 内核进程后 30s 内内核恢复可访问（无需人工重启应用）",
+          "verified": false
+        },
+        {
+          "id": "T12-A2",
+          "text": "伪造 hang 子进程后调度锁在超时时间内释放，后续轮次正常执行",
+          "verified": false
+        },
+        {
+          "id": "T12-A3",
+          "text": "人为触发内核未捕获异常，进程不静默死亡且错误可观测",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4178
+    },
+    {
+      "id": "T13",
+      "title": "统一输入校验：limit 参数无上限（含 Fastify schema 化）",
+      "description": "【问题】同一文件内规则不一致：dashboard.js:326 /api/top → Number(req.query.limit) 无 clamp；:331 /api/cross-tool → 无 clamp；:460 /api/rules → Number(req.query.limit ?? 500) 无 clamp；而 :484 /api/tasks 用 Math.min(Math.max(...,1),500)、:819 /api/all 用 Math.min(Math.max(...,1),2000)。limit=1e9、abc（NaN）、?limit=1&limit=2（数组）均可直达 SQL LIMIT。【影响】单请求可触发全表扫/超大结果集；叠加 node:sqlite 同步阻塞 + 单线程事件循环 → 本机 DoS（门槛低，仅需持令牌）。【建议】抽 clampLimit(raw, def, max) 助手全量替换；统一给 GET 路由加 Fastify schema（querystring/params/body）做类型与范围校验，替代散落的手工 Number()。【涉及文件】resources/memoryos/dist/dashboard.js",
+      "dimension": "architecture",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-20T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T13-S1",
+          "text": "新增 clampLimit(raw, def, max) 助手并替换全部 limit 解析点",
+          "status": "pending"
+        },
+        {
+          "id": "T13-S2",
+          "text": "GET 路由统一加 Fastify schema 做类型/范围校验",
+          "status": "pending"
+        },
+        {
+          "id": "T13-S3",
+          "text": "grep 断言无裸 Number(req.query.limit)",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 3
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T13-A1",
+          "text": "/api/top、/api/cross-tool、/api/rules 传 limit=1e9 / abc / 数组均返回 400 或按上限截断",
+          "verified": false
+        },
+        {
+          "id": "T13-A2",
+          "text": "grep 确认无裸 Number(req.query.limit) 残留",
+          "verified": false
+        },
+        {
+          "id": "T13-A3",
+          "text": "smoke-dashboard ALL PASS（既有合法请求行为不变）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4166
+    },
+    {
+      "id": "T14",
+      "title": "补齐可观测性：慢查询采样、耗时分位与锁等待",
+      "description": "【问题】无慢查询日志、无请求耗时直方图、无错误率统计；可观测手段仅 console.log 文本（skill-sync.js 21 处、merge-db.js 20 处、daemon.js 18 处、obsidian-sync.js 16 处）与 daemon_log 表（3740 行）。【影响】性能退化只能靠用户感知——历史上 B 系列瓶颈全部靠人工 EXPLAIN/实测发现，不可持续。【建议】① 包一层 db.prepare 计时采样（>50ms 记入内存环形缓冲 + 落 daemon_log）；② /api/health 暴露 p50/p95 请求耗时、慢查询 Top10、busy_timeout 重试次数；③ 日志统一 level 前缀，收敛散落的 console。【涉及文件】resources/memoryos/dist/dashboard.js、resources/memoryos/dist/db.js、resources/memoryos/dist/daemon.js",
+      "dimension": "architecture",
+      "severity": "medium",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "timeout_at": "2026-09-20T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T14-S1",
+          "text": "db.prepare 计时采样（>50ms 记入环形缓冲 + 落 daemon_log）",
+          "status": "pending"
+        },
+        {
+          "id": "T14-S2",
+          "text": "/api/health 暴露 p50/p95 耗时、慢查询 Top10、busy_timeout 重试次数",
+          "status": "pending"
+        },
+        {
+          "id": "T14-S3",
+          "text": "日志统一 level 前缀，收敛散落 console",
+          "status": "pending"
+        },
+        {
+          "id": "T14-S4",
+          "text": "注入一条慢查询验证可在 health 中观察到",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 4
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T14-A1",
+          "text": "/api/health 返回慢查询 Top 与请求耗时分位（p50/p95）",
+          "verified": false
+        },
+        {
+          "id": "T14-A2",
+          "text": "注入一条慢查询后可在 health 输出中观察到该查询",
+          "verified": false
+        },
+        {
+          "id": "T14-A3",
+          "text": "采样对正常请求的额外开销可忽略（不改变既有 smoke 结果）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": false,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "linear"
+      },
+      "memory_id": 4167
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "A-PLAN",
+      "path": "resources/memoryos/plans/plan-20260914-fullopt.json",
+      "status": "final",
+      "version": 1,
+      "media_type": "application/json",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "verified": true
+    },
+    {
+      "id": "A-REPORT",
+      "path": "MemoryOS-全维度优化分析-20260914.md",
+      "status": "final",
+      "version": 1,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-14T18:23:36+08:00",
+      "verified": true
+    },
+    {
+      "id": "A-PRIOR-REPORT",
+      "path": "MemoryOS-架构与性能分析.md",
+      "status": "final",
+      "version": 1,
+      "media_type": "text/markdown",
+      "verified": true
+    },
+    {
+      "id": "A-SCHEMA",
+      "path": "resources/memoryos/plans/plan.schema.json",
+      "status": "final",
+      "version": 1,
+      "media_type": "application/json",
+      "verified": true
+    },
+    {
+      "id": "A-VALIDATOR",
+      "path": "resources/memoryos/plans/plan-validate.mjs",
+      "status": "final",
+      "version": 1,
+      "media_type": "application/javascript",
+      "verified": true
+    },
+    {
+      "id": "A-BASELINE-DB",
+      "path": "resources/memoryos/data/memory.db.pre-perfopt3-20260914-174547",
+      "status": "final",
+      "version": 1,
+      "sha256": "b51026c5e4fbafccf1295f62fe03085c3a912c832e29409ca353cabff233aeca",
+      "media_type": "application/vnd.sqlite3",
+      "verified": true
+    }
+  ],
+  "dependencies": {
+    "T8": [
+      "T7",
+      "T13",
+      "T14"
+    ]
+  }
+}
