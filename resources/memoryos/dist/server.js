@@ -1038,12 +1038,18 @@ server.addTool({
 
 /* ── P0 执行工具面注册（方案 A：单 MCP 平面 + 模块分离）────────────
    只有 3 个工具 P0 上线；均自动被上面的 addTool 覆写包裹（try/catch + 风险前缀）。
-   执行面可用 MEMORYOS_EXEC_OFF=1 整体熔断（默认开启，逐工具 opt-in 见下发文档）。 */
+   默认值（★ P0-2，用户拍板「决策1 (a)」）：**默认关闭执行面**，显式 MEMORYOS_EXEC_ON=1 才启用。
+   与方案「P0 上线默认关闭、逐工具 opt-in」一致，也同向 B1「写操作先获同意」。
+   既有 MEMORYOS_EXEC_OFF=1 作为显式熔断兜底，优先级最高（只要它=1 一律不启用）。 */
 const _KERNEL_DIR = path.dirname(fileURLToPath(import.meta.url));            // .../resources/memoryos/dist
 const _WORKSPACE_ROOT = path.resolve(process.env.MEMORYOS_WORKSPACE || path.join(_KERNEL_DIR, "..", "..", ".."));
 const _DATA_DIR = path.dirname(DB_PATH);
-if (process.env.MEMORYOS_EXEC_OFF === "1") {
-    console.error("[exec] MEMORYOS_EXEC_OFF=1 —— 执行面已熔断，本次仅暴露记忆/任务工具");
+const _EXEC_OFF = process.env.MEMORYOS_EXEC_OFF === "1";
+const _EXEC_ON = process.env.MEMORYOS_EXEC_ON === "1";
+if (_EXEC_OFF) {
+    console.error("[exec] MEMORYOS_EXEC_OFF=1 —— 执行面已显式熔断，本次仅暴露记忆/任务工具");
+} else if (!_EXEC_ON) {
+    console.error("[exec] 执行面默认关闭（未设 MEMORYOS_EXEC_ON=1）—— 本次仅暴露记忆/任务工具；显式置 MEMORYOS_EXEC_ON=1 以启用 file_read/file_write/exec_run");
 } else {
     for (const t of createExecTools({
         workspaceRoot: _WORKSPACE_ROOT,

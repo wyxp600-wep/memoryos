@@ -1714,7 +1714,7 @@
     body.innerHTML = rows.length ? rows.map((r, i) =>
       `<tr><td class="mono text-muted">${String(i + 1).padStart(2, '0')}</td>
        <td style="color:var(--text-primary);font-family:var(--font-mono);font-size:11px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.note_path)}">${esc(r.note_path)}</td>
-       <td><a href="#all" onclick="setTimeout(()=>document.getElementById('memSearchInput')?.focus(),100)" style="color:var(--accent-cyan)">#${r.memory_id}</a></td>
+       <td><a href="#all" data-action="focus-mem-search" style="color:var(--accent-cyan)">#${r.memory_id}</a></td>
        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.note_hash)}</td>
        <td class="mono" style="font-size:11px;color:var(--text-secondary)">${esc((r.created_at || '').slice(0, 19).replace('T', ' '))}</td></tr>`).join('')
       : '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">暂无已导入笔记</div><div class="empty-desc">选择 Obsidian vault 后点击"导入笔记"开始同步</div></div></td></tr>';
@@ -3045,12 +3045,31 @@
     return esc(content).replace(/#(\d+)/g, '<a href="#" class="memory-link" data-id="$1" style="color:var(--accent-cyan);text-decoration:underline;cursor:pointer">#$1</a>');
   }
 
+  // ===== CSP 合规的 data-action 委托（替代内联 onclick，支持 T4 三处） =====
+  function initDataActions() {
+    document.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-action]');
+      if (!el) return;
+      const action = el.getAttribute('data-action');
+      if (action === 'reload') { location.reload(); return; }
+      if (action === 'focus-mem-search') {
+        // 原语义：跳 #all 后再聚焦搜索框
+        setTimeout(() => document.getElementById('memSearchInput')?.focus(), 100);
+        return;
+      }
+      if (action === 'copy-code') {
+        const code = el.closest('.code-block-wrapper')?.querySelector('code')?.textContent;
+        if (code && navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
+      }
+    });
+  }
+
   // ===== 内容渲染（支持代码块、行内代码、记忆链接、Markdown表格） =====
   function renderContent(content) {
     let html = esc(content);
     // 代码块 ```...```
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-      return `<div class="code-block-wrapper" style="margin:12px 0"><div class="code-block-header"><span>${lang || 'code'}</span><button class="code-copy-btn" onclick="this.closest('.code-block-wrapper').querySelector('code').textContent && navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').textContent)">复制</button></div><pre><code>${code}</code></pre></div>`;
+      return `<div class="code-block-wrapper" style="margin:12px 0"><div class="code-block-header"><span>${lang || 'code'}</span><button class="code-copy-btn" data-action="copy-code">复制</button></div><pre><code>${code}</code></pre></div>`;
     });
     // Markdown 表格
     html = html.replace(/((?:\|[^\n]+\|\n){2,})/g, (match) => {
@@ -4754,6 +4773,7 @@
   initTableSort();
   initFilterTags();
   initMemoryLinks();
+  initDataActions();
   initSidebarCollapse();
   initConnectScan();
   initAgent();
