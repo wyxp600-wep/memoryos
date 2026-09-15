@@ -1,12 +1,20 @@
 /**
- * MemoryOS — app.asar 重打包器（最小改动：只替换 /main.js，其余文件字节级保留）
+ * MemoryOS — app.asar 重打包器（最小改动：只替换 SYNC_FILES，其余文件字节级保留）
  *
  * 用法：node pack-asar.js            # 备份旧 asar → 写入新 asar → 反解逐文件校验
- *      node pack-asar.js --check    # 只校验当前 asar 与根目录 main.js 是否一致
+ *      node pack-asar.js --check    # 只校验当前 asar 与工作树副本是否一致
+ *      node pack-asar.js --extract-only  # 把「asar-only」条目补到工作树（P2-7，幂等）
  *
  * asar 文件布局（与 Electron @electron/asar 一致）：
  *   [uint32 4][uint32 headerBuf.length][uint32 headerPayloadSize][uint32 jsonLen][json][file data...]
  *   file.offset 相对数据区起点 base = 8 + headerBuf.length = 16 + jsonLen
+ *
+ * ★ P2-7（2026-09-15）：`preload.js` / `welcome.html` / `assets/*` 原本**只存在于 asar**（不在工作树、不在 git）
+ *   ⇒ 要改 IPC / 审批 UI 时「改不动且无 git 回滚」，只能从 asar 反向提取。现把这些路径纳入 SYNC_FILES
+ *   并在工作树落副本，使其进入 git 纳管（改完 `node pack-asar.js` 即回写 asar）。
+ *   有意**不纳入**：`/package.json`、`/release-settings.json` —— 前者落仓库根会改变根目录 npm 语义
+ *   （根上已有 pack-asar.js 等工具脚本，误触 `npm test/install` 会作用到错误位置），后者属发布元数据、
+ *   由发布流程生成。这两项要保持同步请单独处理，勿盲目加进 SYNC_FILES。
  */
 "use strict";
 const fs = require("node:fs");
@@ -14,7 +22,12 @@ const path = require("node:path");
 
 const ROOT = __dirname;
 const ASAR = path.join(ROOT, "resources", "app.asar");
-const SYNC_FILES = ["/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js"]; // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
+const SYNC_FILES = [
+  "/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js", // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
+  "/preload.js", "/welcome.html", "/assets/icon-512.png", "/assets/icon.ico", "/assets/tray.png", // ★ P2-7：asar-only → 落树纳管
+];
+/** 有意留在 asar-only 的条目（见文件头说明），--extract-only 不会提取它们 */
+const EXTRACT_EXCLUDE = ["/package.json", "/release-settings.json"];
 
 function sourceFile(asarPath) {
   return path.join(ROOT, asarPath.replace(/^\//, ""));
@@ -113,7 +126,31 @@ function packAsar(entries, oldHeader) {
 
 function main() {
   const checkOnly = process.argv.includes("--check");
+  const extractOnly = process.argv.includes("--extract-only");
   const old = readAsar(ASAR);
+
+  /* ── P2-7：把 asar-only 条目补到工作树（幂等；已存在且字节相同的跳过） ── */
+  if (extractOnly) {
+    let wrote = 0, same = 0;
+    for (const f of old.files) {
+      if (EXTRACT_EXCLUDE.includes(f.p)) { console.log(`跳过（有意保持 asar-only）: ${f.p}`); continue; }
+      const target = sourceFile(f.p);
+      if (fs.existsSync(target)) {
+        const eq = fs.readFileSync(target).equals(extract(old, f));
+        console.log(`${eq ? "已一致" : "⚠ 内容不同（保留工作树版本，未覆盖）"}: ${f.p}`);
+        if (eq) same++; else wrote += 0;
+        continue;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, extract(old, f));
+      console.log(`已提取: ${f.p} → ${path.relative(ROOT, target)}`);
+      wrote++;
+    }
+    console.log(`\n提取 ${wrote} 个、已存在一致 ${same} 个；SYNC_FILES 现有 ${SYNC_FILES.length} 条。`);
+    console.log("提示：新增条目请同步加入 pack-asar.js 的 SYNC_FILES 并 `git add`，否则仍在 asar-only 无回滚区。");
+    process.exit(0);
+  }
+
   if (checkOnly) {
     let ok = true;
     for (const p of SYNC_FILES) {
