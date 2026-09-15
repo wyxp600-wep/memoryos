@@ -74,7 +74,20 @@ try {
     proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
     const lst = (await send("tools/list", {}));
     const tools = lst.result?.tools ?? [];
-    check("tools/list 工具齐全（write/search/ask/read/context/projects/cite/feedback/report/health + task×4 + obsidian×3）", tools.length === 17 && tools.every((t) => ["memory_write", "memory_search", "memory_read", "memory_context", "memory_projects", "memory_cite", "memory_feedback", "memory_report", "memory_health", "memory_ask", "task_assign", "task_claim", "task_done", "task_next", "obsidian_import", "obsidian_export", "obsidian_write_note"].includes(t.name)), `names=${tools.map((t) => t.name).join(",")}`);
+    // ★ P0 修复（F16）：原断言 tools.length === 17 且白名单漏 task_supersede（与自身标题「task×4」也矛盾），
+    //   且 `&&` 短路使「只改计数」仍然 FAIL。改为：显式期望清单 + 分别报告缺项，避免计数与名单互相掩盖。
+    const EXPECT_TOOLS = [
+        "memory_write", "memory_search", "memory_read", "memory_context", "memory_projects",
+        "memory_cite", "memory_feedback", "memory_report", "memory_health", "memory_ask",
+        "task_assign", "task_claim", "task_done", "task_next", "task_supersede",
+        "obsidian_import", "obsidian_export", "obsidian_write_note",
+    ];
+    const missing = EXPECT_TOOLS.filter((n) => !tools.some((t) => t.name === n));
+    check(
+        `tools/list 记忆/任务/obsidian 工具齐全（必备 ${EXPECT_TOOLS.length} 个全部在列）`,
+        missing.length === 0, // ★ 超集断言：不锁死总数——执行面工具上线是增量，精确计数会让套件一上线就变红（F16 病根）
+        `count=${tools.length}${missing.length ? " missing=" + missing.join(",") : ""}`,
+    );
     const w = (await send("tools/call", {
         name: "memory_write",
         arguments: {

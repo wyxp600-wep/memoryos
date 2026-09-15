@@ -5,7 +5,8 @@
  */
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, } from "./db.js";
+import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, logExecAudit, } from "./db.js";
+import { createExecTools, riskPrefix } from "./exec-tools.js";
 import { hybridSearch } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
@@ -48,6 +49,12 @@ const server = new FastMCP({
  */
 const _origAddTool = server.addTool.bind(server);
 server.addTool = (def) => {
+    // ★ P0 执行面（修 F1）：把风险级/审批策略前缀注入工具描述 —— 单一真相源在 exec-tools.js 的 TOOL_RISK。
+    //   agent-core 从 tools/list 解析该前缀决定是否过 writeGate；解析不到则 fail-closed（一律需审批）。
+    const _pfx = riskPrefix(def.name);
+    if (_pfx && !String(def.description || "").startsWith("⟨risk:")) {
+        def.description = _pfx + (def.description || "");
+    }
     const orig = def.execute;
     def.execute = async (...a) => {
         try {
@@ -1028,6 +1035,27 @@ server.addTool({
         return out;
     },
 });
+
+/* ── P0 执行工具面注册（方案 A：单 MCP 平面 + 模块分离）────────────
+   只有 3 个工具 P0 上线；均自动被上面的 addTool 覆写包裹（try/catch + 风险前缀）。
+   执行面可用 MEMORYOS_EXEC_OFF=1 整体熔断（默认开启，逐工具 opt-in 见下发文档）。 */
+const _KERNEL_DIR = path.dirname(fileURLToPath(import.meta.url));            // .../resources/memoryos/dist
+const _WORKSPACE_ROOT = path.resolve(process.env.MEMORYOS_WORKSPACE || path.join(_KERNEL_DIR, "..", "..", ".."));
+const _DATA_DIR = path.dirname(DB_PATH);
+if (process.env.MEMORYOS_EXEC_OFF === "1") {
+    console.error("[exec] MEMORYOS_EXEC_OFF=1 —— 执行面已熔断，本次仅暴露记忆/任务工具");
+} else {
+    for (const t of createExecTools({
+        workspaceRoot: _WORKSPACE_ROOT,
+        dataDir: _DATA_DIR,
+        agent: AGENT,
+        logAudit: (row) => logExecAudit(db, row),
+    })) {
+        server.addTool(t);
+    }
+    console.error(`[exec] 执行面已启用：file_read / file_write / exec_run（工作区 ${_WORKSPACE_ROOT}；artifact 落 ${path.join(_DATA_DIR, "artifacts")}）`);
+}
+
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
     // 连接心跳：每次 server 被某个客户端 stdio 拉起时留痕（op=connect）。MEMORY_AGENT 由 MCP 配置 env 注入 → 可精确到"哪个 agent 连上了"

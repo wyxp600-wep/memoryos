@@ -308,6 +308,23 @@ CREATE TABLE IF NOT EXISTS memory_usage_archive (
   created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_archive_ts ON memory_usage_archive(created_at);
+
+-- ★ P0 执行面：工具调用审计（append-only）。任何执行类工具的每次调用都留痕，
+--   审批结论（auto / preauth / gate-allowed / gate-denied / off）在此可查 —— B1 的审计证据链。
+--   纪律：args_digest / detail 由调用方截断后写入，**绝不写入凭据或大文本全文**（大输出走 artifact 文件）。
+CREATE TABLE IF NOT EXISTS exec_audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool        TEXT    NOT NULL,                   -- file_read / file_write / exec_run ...
+  agent       TEXT    NOT NULL DEFAULT 'unknown',
+  risk        TEXT    NOT NULL DEFAULT '',        -- L0..L4
+  approval    TEXT    NOT NULL DEFAULT 'auto',    -- auto / preauth / gate-allowed / gate-denied / off
+  args_digest TEXT,                               -- 参数摘要（已截断）
+  detail      TEXT,                               -- 结果/错误摘要（已截断）
+  duration_ms INTEGER,
+  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exec_audit_agent_ts ON exec_audit(agent, created_at);
+CREATE INDEX IF NOT EXISTS idx_exec_audit_tool_ts  ON exec_audit(tool, created_at);
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -1137,6 +1154,20 @@ export function usageCount(db, event) {
 /** 审计留痕（daemon/人工归档共用同一通道） */
 export function logDaemon(db, t) {
     db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run(t.task, t.op, t.memory_id ?? null, t.detail ?? null, t.operator ?? "daemon");
+}
+/**
+ * 执行面工具调用审计（append-only，P0 exec-audit）。
+ * 调用方负责截断：argsDigest/detail 均不得写入凭据或大文本全文（大输出走 artifact 文件）。
+ * 审计写入失败绝不阻断工具执行本身 —— 由调用方 try/catch 包裹。
+ */
+export function logExecAudit(db, r) {
+    db.prepare(`INSERT INTO exec_audit(tool,agent,risk,approval,args_digest,detail,duration_ms) VALUES (?,?,?,?,?,?,?)`)
+        .run(r.tool, r.agent ?? "unknown", r.risk ?? "", r.approval ?? "auto", r.argsDigest ?? null, r.detail ?? null, r.durationMs ?? null);
+}
+/** 读最近 N 条执行审计（看板/CLI 查证用） */
+export function recentExecAudit(db, limit = 20) {
+    return db.prepare(`SELECT id,tool,agent,risk,approval,args_digest,detail,duration_ms,created_at
+                       FROM exec_audit ORDER BY id DESC LIMIT ?`).all(Math.max(1, Math.min(200, Number(limit) || 20)));
 }
 export function daemonLogCount(db, task, op) {
     const where = [];

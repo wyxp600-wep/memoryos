@@ -11,12 +11,28 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/* ── 写类工具门禁（读类工具永放行为 auto）──────────────────────── */
-export const WRITE_TOOLS = new Set([
+/* ── 写类工具门禁（修 F1：改为「工具自声明」驱动，不再硬编码名单）──────
+ *  风险前缀由 server.js 在注册期注入工具描述（单一真相源 = exec-tools.js 的 TOOL_RISK）：
+ *    ⟨risk:L1|gate:required⟩  → 必须过 writeGate
+ *    ⟨risk:L0|gate:auto⟩      → 自动放行
+ *  未声明风险级的工具由 server.js 注入 fail-closed 前缀（L4/required），故此集合仅用于
+ *  **兼容未打前缀的旧 server.js**（升级期回落），不是主判据。                        */
+export const LEGACY_WRITE_TOOLS = new Set([
     "memory_write", "memory_feedback", "memory_cite",
     "obsidian_import", "obsidian_export", "obsidian_write_note",
     "task_assign", "task_claim", "task_done", "task_supersede",
 ]);
+/** 解析风险前缀；无前缀返回 null（旧服务端） */
+export function parseRiskPrefix(desc) {
+    const m = /^⟨risk:(L[0-4])\|gate:(required|auto)⟩/.exec(String(desc ?? ""));
+    return m ? { risk: m[1], gate: m[2] === "required" } : null;
+}
+/** 该工具是否需要过 writeGate。tool = tools/list 里的定义对象 */
+export function needsGate(tool) {
+    const p = parseRiskPrefix(tool?.description);
+    if (p) return p.gate;
+    return LEGACY_WRITE_TOOLS.has(tool?.name); // 旧服务端回落
+}
 
 /** 组装系统提示词（工具用法约定 + 记忆纪律） */
 export function buildSystemPrompt(agentName, extra = "") {
@@ -132,17 +148,15 @@ export async function createMcpClient({ serverPath, agentName, agentFpath, cwd, 
     };
 }
 
-/** MCP 工具（JSON Schema inputSchema）→ OpenAI tools 格式 */
+/** MCP 工具（JSON Schema inputSchema）→ OpenAI tools 格式
+ *  修 F2：除 properties/required/description 外，**透传其余顶层关键字**
+ *  （additionalProperties / $defs / oneOf / anyOf 等），避免复杂 schema 降级；
+ *  仅剔除 $schema（OpenAI 兼容端不需要，部分端会因它报错）。 */
 export function mcpToolsToOpenai(mcpTools) {
     return mcpTools.map((t) => {
         const schema = t.inputSchema || { type: "object", properties: {} };
-        const parameters = {
-            type: "object",
-            properties: schema.properties || {},
-        };
-        if (schema.required?.length) parameters.required = schema.required;
-        // 透传 enum/默认值描述（对工具调用质量有帮助）
-        if (schema.description) parameters.description = schema.description;
+        const { $schema, ...rest } = schema;
+        const parameters = { ...rest, type: "object", properties: rest.properties || {} };
         return {
             type: "function",
             function: {
@@ -155,8 +169,35 @@ export function mcpToolsToOpenai(mcpTools) {
 }
 
 /* ── Agent 循环 ───────────────────────────────────────────────── */
-const MAX_TOOL_RESULT = 3000; // 工具结果截断：护本地小模型上下文
+const TOOL_RESULT_BUDGET = 3000; // 工具结果预算（护本地小模型上下文）
+const TRUNC_HEAD = 1200;         // 截断时保留的头部字符数
+const TRUNC_TAIL = 1500;         // 截断时保留的尾部字符数（★ 修 F3：错误信息在尾部，绝不能只留头部）
 const MAX_SAME_CALL = 2;      // 同工具同参数最多真跑几次；超出的重复不再执行（弱模型常见死循环）
+
+/** 修 F3：超预算时保留「头 + 尾 + 中间省略标记」，避免丢掉尾部的报错与栈信息 */
+export function truncateToolResult(text) {
+    const s = String(text ?? "");
+    if (s.length <= TOOL_RESULT_BUDGET) return s;
+    const head = s.slice(0, TRUNC_HEAD);
+    const tail = s.slice(-TRUNC_TAIL);
+    return `${head}\n\n…（中间省略 ${s.length - TRUNC_HEAD - TRUNC_TAIL} 字，原长 ${s.length} 字；完整输出见工具返回的 artifact 路径或调小 limit）…\n\n${tail}`;
+}
+
+/** 修 F17：toolsFilter 语义反转 + 静默失败。
+ *  undefined = 全量；[] = 明确零工具；含未知名 = 抛错；过滤后为空 = 抛错。
+ *  原实现 `o.toolsFilter?.length ? filter : allTools` 会让 [] 回落成全量（想收窄权限反而全暴露），
+ *  且名字拼错时静默退化成"不给模型任何工具"（模型不再调工具且无任何报错）。 */
+export function pickTools(allTools, filter) {
+    if (filter === undefined || filter === null) return allTools;
+    if (!Array.isArray(filter)) throw new Error(`toolsFilter 必须是数组（收到 ${typeof filter}）`);
+    if (filter.length === 0) return [];
+    const known = new Set(allTools.map((t) => t.function.name));
+    const unknown = filter.filter((n) => !known.has(n));
+    if (unknown.length) throw new Error(`toolsFilter 含未知工具：${unknown.join(", ")}（可用：${[...known].join(", ")}）`);
+    const picked = allTools.filter((t) => filter.includes(t.function.name));
+    if (!picked.length) throw new Error(`toolsFilter 过滤后为空（${filter.join(", ")}）`);
+    return picked;
+}
 
 /**
  * 跑一轮 agent（用户消息已置于 messages 末尾）。
@@ -175,8 +216,13 @@ export async function runAgent(o) {
     const { llm, mcp, messages, signal } = o;
     const maxSteps = o.maxSteps ?? 12;
     const onStep = o.onStep || (() => {});
-    const allTools = mcpToolsToOpenai(await mcp.tools());
-    const tools = o.toolsFilter?.length ? allTools.filter((t) => o.toolsFilter.includes(t.function.name)) : allTools;
+    // 未提供门禁 = 一律拒绝（fail-closed）——B1「写操作先获同意」的循环级兜底，杜绝静默放行
+    const writeGate = typeof o.writeGate === "function" ? o.writeGate : () => false;
+    const rawTools = await mcp.tools();
+    const gateByName = new Map(rawTools.map((t) => [t.name, needsGate(t)]));
+    const allTools = mcpToolsToOpenai(rawTools);
+    const tools = pickTools(allTools, o.toolsFilter);
+    onStep({ type: "tool_face", exposed: tools.map((t) => t.function.name), total: allTools.length });
     const seen = new Map(); // 调用签名 → 次数（死循环护栏）
     let steps = 0;
     let toolCalls = 0;
@@ -211,14 +257,15 @@ export async function runAgent(o) {
                 continue;
             }
             allRepeats = false;
-            // 写门禁：写类工具且 writeGate 提供时过审
-            if (WRITE_TOOLS.has(name) && o.writeGate) {
+            // 写门禁：判定改由「工具自声明风险级」驱动（修 F1）；gateByName 取不到 → 按需审批（fail-closed）。
+            // 未提供 writeGate 时上面已兜底为「一律拒绝」，故此处不存在静默放行路径（修 F7 的循环级兜底）。
+            if (gateByName.get(name) !== false) {
                 let ok = false;
-                try { ok = !!(await o.writeGate(name, args)); }
+                try { ok = !!(await writeGate(name, args)); }
                 catch { ok = false; }
                 if (!ok) {
                     onStep({ type: "write_denied", tool: name, args });
-                    messages.push({ role: "tool", tool_call_id: tc.id, content: "⚠ 用户拒绝了该写操作。不要重试，基于已有信息完成回答或改为只读建议。" });
+                    messages.push({ role: "tool", tool_call_id: tc.id, content: "⚠ 该操作未获同意（被拒绝或无审批通道）。不要重试，基于已有信息完成回答，或改为只读方式继续。" });
                     continue;
                 }
             }
@@ -233,8 +280,7 @@ export async function runAgent(o) {
                 res = { text: `⚠ ${name} 调用失败：${e instanceof Error ? e.message : String(e)}` };
                 onStep({ type: "tool_result", tool: name, ok: false, error: res.text });
             }
-            let content = res.text;
-            if (content.length > MAX_TOOL_RESULT) content = content.slice(0, MAX_TOOL_RESULT) + `\n…（结果截断，原长 ${res.text.length} 字）`;
+            const content = truncateToolResult(res.text); // 修 F3：头尾双端保留
             messages.push({ role: "tool", tool_call_id: tc.id, content });
         }
         // 整轮都在重复 → 直接把下一轮变成末轮（无工具）逼出文本答案，避免空转到 maxSteps

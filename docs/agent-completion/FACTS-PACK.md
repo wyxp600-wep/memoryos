@@ -47,7 +47,7 @@ MemoryOS（Windows，`C:\Users\WYX\Desktop\MemoryOS`）：本地记忆中枢 + �
   ⇒ `preload.js`(253B)、`welcome.html`(3791B)、`assets/{icon-512.png,icon.ico,tray.png}` **不在工作树、也不在 git**（`git ls-files` 只匹配到 `window/welcome-window.js`）**属于设计使然，不是文件丢失/树不完整**；不要据此判断「树不完整」或「rebuild 会打坏包」（已收回该推断）。**改动它们的唯一正确路径 = 把路径加进 `pack-asar.js:17` 的 `SYNC_FILES` 并落一份工作树副本**（外加 `git add -f`，因 `.gitignore` 未忽略但从未纳管）。此结论修正了安全专家的早期同步项①。
 - **F18（新发现，开工前置阻断）** git 纳管缺口：`git status --porcelain` 实测 `?? resources/memoryos/dist/agent-core.js`、`?? agent.js`、`?? smoke-agent.js` **均未纳入 git**（仅 `server.js` 为 ` M`），全仓 9 项 untracked，tag 只有 `baseline-20260914-pre-fullopt` 一个 ⇒ **B2/B3 承诺的「代码回滚走 git 提交/tag」对 P0 要改的目标文件不成立**。P0 开工顺序不可颠倒：`git add` 全部改动（含 agent-core.js/agent.js/smoke-agent.js）→ checkpoint commit → 打新 tag → 按 B2 建 `data/memory.db.pre-exec-<ts>`（VACUUM INTO，严禁复制 .db）。
 - **环境实测**：Node **v24.9.0**，`node:sqlite` 可用（带 ExperimentalWarning）；默认库 `resources/memoryos/data/memory.db` 健康（memories=907 / active=517 / projects=7 / grams=82143）；`initialize` + `tools/list` 直连握手正常。
-- **EXIT=13 已定论（撤回先前的"无法确认"）**：本 DSH 会话内直跑 `smoke-mcp.js` 得到 EXIT=13（`:68` 顶层 await 未落定，spawn + 管道 stdio 受限），属 **harness 环境因素**；代码审查专家在不受该限制的环境实跑同一脚本得 **13 PASS / 1 FAIL、exit 1**（失败项即 F16 的 :77）⇒ 产品侧无此问题，此类「spawn 管道」型脚本在本会话内不可作为判据，须在普通终端复跑。
+- **EXIT=13 已定论（修正我自己的误判）**：早前直跑得到 EXIT=13 并非 harness 管道限制，而是**我用错了 cwd**——`smoke-mcp.js:18` 用 `path.join(process.cwd(),"dist","server.js")`，从仓库根运行会导致子进程找不到 server.js 而退出（顶层 await 悬空 → Node exit 13）。**正确跑法：`cd resources/memoryos && node dist/smoke-mcp.js`**。已按此复跑：**15 PASS / 0 FAIL，`== MCP ALL PASS ==`，exit 0**（`:77` 断言修复后）。
 
 ## 备份与运行时纪律（用户硬性约束）
 - **B1** 写操作先获同意；改版只改呈现不改功能；改代码前按时间戳备份。
