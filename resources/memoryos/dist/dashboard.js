@@ -11,7 +11,7 @@
 import Fastify from "fastify";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import os from "node:os";
-import { openDb, archiveMemory, logUsage, logDaemon, withTx, writeMemory, updateMemory, queryByType, rejectMemory, pendingConflicts, applyArbitration, markMerged, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory } from "./db.js";
+import { openDb, archiveMemory, logUsage, logDaemon, withTx, writeMemory, updateMemory, queryByType, rejectMemory, pendingConflicts, applyArbitration, markMerged, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, queryStats } from "./db.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,6 +62,18 @@ function resolveUiDir() {
     return fileURLToPath(new URL("../../memoryos-dashboard-redesign", import.meta.url));
 }
 const UI_DIR = resolveUiDir();
+/* ★ P1-1 / T7：静态资源内存驻留缓存（key = mtimeMs:size，文件变则失效）。
+ *   原实现每请求 fs.readFileSync（index.html 172KB + app.js 272KB + echarts 1.0MB）
+ *   且 Cache-Control: no-store → 每次刷新全量重传 + 阻塞单线程事件循环。 */
+const _staticCache = new Map();
+/* ★ P1-2 / T13：limit 统一钳制。原实现散落裸 Number(req.query.limit)，limit=1e9 / abc(NaN)
+ *   / ?limit=1&limit=2(数组) 均可直达 SQL LIMIT → 单请求可触发全表扫（本机 DoS）。 */
+function clampLimit(raw, def = 100, max = 500) {
+    const n = Array.isArray(raw) ? Number(raw[0]) : Number(raw);
+    if (!Number.isFinite(n) || n <= 0)
+        return def;
+    return Math.min(Math.floor(n), max);
+}
 /** 计划文件目录（plan.schema.json + plan-*.json）。与 UI 同源解析：dist 上一级 plans */
 function resolvePlansDir() {
     for (const rel of ["../plans", "../../plans"]) {
@@ -123,6 +135,18 @@ function installAccessControl(app, token) {
         }
         if (safeEqual(fromQuery, token)) {
             reply.header("set-cookie", `${TOKEN_COOKIE}=${token}; Path=/; SameSite=Strict; HttpOnly; Max-Age=31536000`);
+            // ★ P1-6 / T3 收尾：首次带 ?token= 的「浏览器导航」→ 302 到去掉 token 的同一 URL，
+            //   使令牌不再停留在地址栏（可经历史、截图、浏览器扩展泄漏）。
+            //   仅对 GET/HEAD 且 Accept 含 text/html 的导航生效：API 调用（curl / 冒烟脚本 /
+            //   带 x-memory-token 的调用）行为逐字节不变，不会被重定向。
+            const isNav = (req.method === "GET" || req.method === "HEAD") && String(req.headers.accept ?? "").includes("text/html");
+            if (isNav) {
+                const qs = new URLSearchParams(url.includes("?") ? url.slice(url.indexOf("?") + 1) : "");
+                qs.delete("token");
+                const rest = qs.toString();
+                const base = url.split("?")[0] || "/";
+                return reply.code(302).header("location", rest ? `${base}?${rest}` : base).send();
+            }
         }
     });
     app.addHook("onSend", async (_req, reply, payload) => {
@@ -394,12 +418,12 @@ export function buildApp(db, opts = {}) {
     // —— 复用周报五查询（仅 active 过滤已内置于 top/zombies）——
     app.get("/api/funnel", async () => funnel(db, {}));
     app.get("/api/trend", async (req) => trend(db, { days: req.query.days ? Number(req.query.days) : 14 }));
-    app.get("/api/top", async (req) => topMemories(db, { limit: req.query.limit ? Number(req.query.limit) : 10 }));
+    app.get("/api/top", async (req) => topMemories(db, { limit: clampLimit(req.query.limit, 10, 500) }));
     app.get("/api/zombies", async (req) => zombies(db, {
         days: req.query.days ? Number(req.query.days) : 30,
-        limit: req.query.limit ? Number(req.query.limit) : 20,
+        limit: clampLimit(req.query.limit, 20, 500),
     }));
-    app.get("/api/cross-tool", async (req) => crossTool(db, { limit: req.query.limit ? Number(req.query.limit) : 20 }));
+    app.get("/api/cross-tool", async (req) => crossTool(db, { limit: clampLimit(req.query.limit, 20, 500) }));
     // —— 仲裁队列：pending-conflict 列表（含旧记忆内容） ——
     app.get("/api/conflicts", async () => {
         const conflicts = pendingConflicts(db);
@@ -528,7 +552,7 @@ export function buildApp(db, opts = {}) {
     });
     // —— 规则列表：type='rule'，默认只列 active（删除即消失，审计留痕另查） ——
     app.get("/api/rules", async (req) => {
-        const limit = Number(req.query.limit ?? 500) || 500;
+        const limit = clampLimit(req.query.limit, 500, 2000);
         const status = (req.query.status ?? "").trim() || "active"; // 默认 active
         const rows = queryByType(db, "rule", { limit, status }).map((r) => ({
             id: r.id,
@@ -1162,6 +1186,43 @@ export function buildApp(db, opts = {}) {
             hygiene: loadHygieneConfig(db), // 生效阈值（含可调旋钮），便于排查"为什么 trial 不动"
         };
     });
+    /* ★ P1-3 / P1-5：统一健康面（新增，只读、不改变任何既有路由）。
+     *  T6 的验收要求「ANALYZE 时间戳 + stat1 行数」可机读 —— 原方案写 /api/health，
+     *  但该路由此前不存在（只有 write/usage/daemon-health 三条），故此处补齐。
+     *  同时暴露 T14 的查询耗时 p50/p95、慢查询 Top10 与 busy 重试次数。 */
+    app.get("/api/health", async () => {
+        const pragma = (name) => {
+            const row = db.prepare(`PRAGMA ${name}`).get();
+            return row ? Object.values(row)[0] : null;
+        };
+        const pageCount = Number(pragma("page_count")) || 0;
+        const freelist = Number(pragma("freelist_count")) || 0;
+        const hasStat1 = db.prepare(`SELECT COUNT(*) c FROM sqlite_master WHERE name='sqlite_stat1'`).get().c > 0;
+        const stat1Rows = hasStat1 ? db.prepare(`SELECT COUNT(*) c FROM sqlite_stat1`).get().c : 0;
+        const analyzeTs = readConfig(db, "maintenance.analyze_ts", null);
+        const vacuumTs = readConfig(db, "maintenance.vacuum_ts", null);
+        const last = db.prepare(`SELECT created_at FROM daemon_log ORDER BY id DESC LIMIT 1`).get();
+        const hours = last?.created_at ? (Date.now() - new Date(last.created_at).getTime()) / 3600000 : null;
+        return {
+            ok: true,
+            db: {
+                pageCount,
+                freelist,
+                freelistPct: pageCount ? Number(((freelist / pageCount) * 100).toFixed(1)) : null,
+                sizeMb: Number(((pageCount * 4096) / 1048576).toFixed(1)),
+                autoVacuum: Number(pragma("auto_vacuum")),
+            },
+            analyze: {
+                ts: analyzeTs,
+                stat1Exists: hasStat1,
+                stat1Rows,
+                fresh: analyzeTs ? (Date.now() - new Date(analyzeTs).getTime()) < 86400000 * 1.5 : false,
+            },
+            vacuum: { ts: vacuumTs, enabled: String(process.env.MEMORYOS_AUTOVACUUM ?? "") === "1" || readConfig(db, "maintenance.autovacuum", false) === true },
+            queries: queryStats(),
+            daemon: { lastRun: last?.created_at ?? null, hoursSince: hours === null ? null : Number(hours.toFixed(1)), stale: hours === null || hours > 26 },
+        };
+    });
     // —— Obsidian 同步：vault 探测 / 状态 / 导入 / 导出（复用 obsidian-sync.ts，逻辑不重写）——
     app.get("/api/obsidian/vaults", async () => ({ vaults: detectVaults() }));
     app.get("/api/obsidian/status", async (req, reply) => {
@@ -1225,10 +1286,32 @@ export function buildApp(db, opts = {}) {
             return reply.code(500).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
         }
     });
-    // —— 新版重设计 UI：/ 与 /echarts.min.js（读取文件，同源 /api/* 免 CORS；no-store 防缓存旧版）——
-    app.get("/", async (_req, reply) => reply.header("Cache-Control", "no-store").type("text/html; charset=utf-8").send(fs.readFileSync(path.join(UI_DIR, "index.html"), "utf8")));
-    app.get("/echarts.min.js", async (_req, reply) => reply.type("application/javascript").send(fs.readFileSync(path.join(UI_DIR, "echarts.min.js"))));
-    app.get("/app.js", async (_req, reply) => reply.header("Cache-Control", "no-store").type("application/javascript").send(fs.readFileSync(path.join(UI_DIR, "app.js"), "utf8")));
+    // —— 新版重设计 UI：/ 与 /echarts.min.js（读取文件，同源 /api/* 免 CORS）——
+    //   ★ P1-1 / T7：改为内存驻留 + ETag/304。mtime/size 变化自动失效。
+    //   html/js 用 no-cache（协商缓存，改完即生效）；echarts 版本固定用 immutable 长缓存。
+    const staticAsset = (name) => {
+        const full = path.join(UI_DIR, name);
+        const st = fs.statSync(full);
+        const key = `${st.mtimeMs}:${st.size}`;
+        const hit = _staticCache.get(name);
+        if (hit && hit.key === key)
+            return hit;
+        const buf = fs.readFileSync(full);
+        const entry = { key, buf, etag: `"${createHash("sha256").update(buf).digest("hex").slice(0, 16)}"` };
+        _staticCache.set(name, entry);
+        return entry;
+    };
+    const sendStatic = (name, type, cacheControl) => (req, reply) => {
+        const a = staticAsset(name);
+        reply.header("Cache-Control", cacheControl).header("ETag", a.etag).type(type);
+        const inm = String(req.headers["if-none-match"] ?? "");
+        if (inm.split(",").map((s) => s.trim()).includes(a.etag))
+            return reply.code(304).send();
+        return reply.send(a.buf);
+    };
+    app.get("/", sendStatic("index.html", "text/html; charset=utf-8", "no-cache"));
+    app.get("/echarts.min.js", sendStatic("echarts.min.js", "application/javascript", "public, max-age=31536000, immutable"));
+    app.get("/app.js", sendStatic("app.js", "application/javascript", "no-cache"));
     // ═══════════════════════════════════════════════════════════════════════════
     // ★ P3 卡片看板 + 知识图谱 + 记忆模块 API（第四轮评审 H1-H6 / M1-M8 合入）
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1578,6 +1661,10 @@ export function buildApp(db, opts = {}) {
             where.push("lane=?");
             params.push(req.query.lane);
         }
+        // ★ P1-7：默认不返回终态卡（archived/cancelled）。实测 76 张卡中 46 张为终态，
+        //   原实现无默认过滤 → 看板与统计被归档噪声填满。显式 ?status= 或 ?include_terminal=1 可绕过。
+        if (!req.query.status && String(req.query.include_terminal ?? "") !== "1")
+            where.push(`status NOT IN ('archived','cancelled')`);
         const rows = (where.length
             ? db.prepare(`SELECT * FROM cards WHERE ${where.join(" AND ")} ORDER BY priority DESC, id DESC`).all(...params)
             : db.prepare(`SELECT * FROM cards ORDER BY priority DESC, id DESC`).all());

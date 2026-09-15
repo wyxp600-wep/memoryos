@@ -358,8 +358,90 @@ export function setIngestState(db, path, size, mtime_ms) {
     db.prepare(`INSERT INTO ingest_state(path, size, mtime_ms, last_at) VALUES(?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
      ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime_ms = excluded.mtime_ms, last_at = excluded.last_at`).run(path, size, mtime_ms);
 }
+/* ── P1-5 / T14：查询可观测性（进程内，零依赖，不改任何语义）──────────────
+ *  背景：全仓无慢查询日志、无耗时分位、无锁等待统计；性能退化只能靠人工 EXPLAIN
+ *  发现（历史 B 系列瓶颈全部靠实测）。本模块补最小可观测面。
+ *  ① 执行耗时采样：包装 db.prepare() 返回语句的 all/get/run，单次耗时写入定长
+ *     环形缓冲（默认 500 条）→ 供 p50/p95/max；≥50ms 额外记入慢查询环（默认 200 条）。
+ *  ② busy 重试计数：withTx 在 busy_timeout 溢出后的自动重试次数（锁竞争真实水位）。
+ *  安装点：openDb() 内自动安装 → 调用方（server/dashboard/daemon/smoke）零改动。
+ *  开销：每次执行 +2 次 hrtime 调用 +1 次数组写；无字符串拼接、无 I/O。
+ *  关闭：MEMORYOS_QT_OFF=1。 */
+const _QT_OFF = process.env.MEMORYOS_QT_OFF === "1";
+const _QT = { total: 0, slow: 0, busyRetry: 0, slowMs: 50, durMax: 500, ringMax: 200, n: 0, idx: 0, durs: null, slowRing: [] };
+const _QT_EXEC_METHODS = new Set(["all", "get", "run"]);
+
+/** 安装查询计时采样（幂等；已安装则直接返回）。opts: {slowMs, ringMax, durMax} */
+export function installQueryTiming(db, opts = {}) {
+    if (!db || db.__qtInstalled || _QT_OFF)
+        return db;
+    if (Number(opts.slowMs) > 0)
+        _QT.slowMs = Number(opts.slowMs);
+    if (Number(opts.ringMax) > 0)
+        _QT.ringMax = Number(opts.ringMax);
+    if (Number(opts.durMax) > 0)
+        _QT.durMax = Number(opts.durMax);
+    _QT.durs = new Float64Array(_QT.durMax);
+    const orig = db.prepare.bind(db);
+    db.prepare = (sql) => {
+        const stmt = orig(sql);
+        return new Proxy(stmt, {
+            get(target, prop, recv) {
+                const v = Reflect.get(target, prop, recv);
+                if (typeof v !== "function")
+                    return v;
+                if (!_QT_EXEC_METHODS.has(prop))
+                    return v.bind(target); // 其余方法（columns/sourceSQL 等）原样透传
+                return (...args) => {
+                    const t0 = process.hrtime.bigint();
+                    try {
+                        return v.apply(target, args);
+                    }
+                    finally {
+                        const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+                        _QT.total++;
+                        _QT.durs[_QT.idx] = ms;
+                        _QT.idx = (_QT.idx + 1) % _QT.durMax;
+                        if (_QT.n < _QT.durMax)
+                            _QT.n++;
+                        if (ms >= _QT.slowMs) {
+                            _QT.slow++;
+                            _QT.slowRing.push({ ms: Number(ms.toFixed(1)), sql: String(sql).replace(/\s+/g, " ").trim().slice(0, 160), at: new Date().toISOString() });
+                            if (_QT.slowRing.length > _QT.ringMax)
+                                _QT.slowRing.shift();
+                        }
+                    }
+                };
+            },
+        });
+    };
+    db.__qtInstalled = true;
+    return db;
+}
+/** busy_timeout 溢出后的自动重试计数（由 withTx 调用） */
+export function noteBusyRetry() {
+    _QT.busyRetry++;
+}
+/** 查询耗时快照：p50/p95/max + 慢查询 Top10 + 锁重试次数 */
+export function queryStats() {
+    const d = _QT.durs ? Array.from(_QT.durs.slice(0, _QT.n)).sort((a, b) => a - b) : [];
+    const pick = (p) => (d.length ? Number(d[Math.min(d.length - 1, Math.floor(d.length * p))].toFixed(1)) : null);
+    return {
+        enabled: !_QT_OFF,
+        total: _QT.total,
+        slow: _QT.slow,
+        sampled: d.length,
+        slowMs: _QT.slowMs,
+        busyRetry: _QT.busyRetry,
+        p50: pick(0.5),
+        p95: pick(0.95),
+        max: d.length ? Number(d[d.length - 1].toFixed(1)) : null,
+        slowTop: _QT.slowRing.slice(-10).reverse(),
+    };
+}
 export function openDb(dbPath) {
     const db = new DatabaseSync(dbPath);
+    installQueryTiming(db); // ★ P1-5：先装采样，后续所有 prepare 都被覆盖
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA busy_timeout = 5000");
     // ★ P1-1.2 PRAGMA 调优（不改语义，只调性能；均为跨版本安全的选项）
@@ -875,6 +957,7 @@ export function withTx(db, fn, retries = 3) {
             const locked = msg.includes("database is locked") || msg.includes("busy");
             if (locked && attempt < retries) {
                 // 锁竞争：让出后重试（busy_timeout 已让锁释放，多试几次竞争窗口很小）
+                noteBusyRetry(); // ★ P1-5：锁竞争真实水位（/api/health 可见）
                 continue;
             }
             throw e;
