@@ -73,7 +73,10 @@ export { daysSince };
 export function computeDecay(rows) {
     const ops = [];
     for (const r of rows) {
-        if (r.pinned) {
+        // ★ 2026-09-15 回归修复（与 computeArchives 同一处丢失的豁免）：decision 不衰减。
+        //   sector/salience 重构把旧式 `r.type === "decision" ? r.confidence : …` 统一成 salience×e^(-λΔt)，
+        //   漏掉了 decision 分支，导致 D1 断言（eff=conf=0.9）失败、且头部 ① 的既定语义失效。
+        if (r.pinned || r.type === "decision") {
             ops.push({ id: r.id, eff: r.salience, previous: r.eff_confidence, type: r.type });
             continue;
         }
@@ -90,8 +93,11 @@ export function computeDecay(rows) {
 export function computeArchives(rows, decayMap, cfg = DEFAULT_HYGIENE_CONFIG) {
     const out = [];
     for (const r of rows) {
-        if (r.pinned)
-            continue; // pinned 免衰减 + 不自动归档
+        // ★ 2026-09-15 回归修复：decision「永不衰减 + 不自动归档」的豁免在 sector/salience 重构时
+        //   被 pinned 判断取代而丢失（旧版为 `if (r.type === "decision") continue;`），
+        //   导致超期 decision 被 stale 规则归档 —— 与本文件头部 ①/② 的既定语义冲突。
+        if (r.pinned || r.type === "decision")
+            continue;
         const last = r.last_seen_at ?? r.last_hit_at ?? r.created_at;
         const days = daysSince(last);
         const eff = decayMap.get(r.id) ?? r.confidence;
@@ -524,6 +530,75 @@ export function housekeepBoard(db, opts = {}) {
     }
     return out;
 }
+/* ── P1-3 / T6：ANALYZE 治理项（补「首次运行即执行」+ 24h 幂等）────────────
+ *  背景：原实现只在每日 tick 触发，且真实库实测 sqlite_stat1 从未生成
+ *  （config 无 maintenance.analyze_ts）→ 查询规划器缺统计信息，索引选择只能靠手工 EXPLAIN。
+ *  本项：首次运行立即执行，此后按 minHours 幂等节流；时间戳写 config，供 /api/health 机读。 */
+export function ensureAnalyze(db, { force = false, minHours = 24 } = {}) {
+    const last = String(readConfig(db, "maintenance.analyze_ts", "") ?? "");
+    const hours = last ? (Date.now() - new Date(last).getTime()) / 3600000 : Infinity;
+    if (!force && hours < minHours)
+        return { ok: true, skipped: true, last, hours: Number(hours.toFixed(1)) };
+    try {
+        db.exec("ANALYZE");
+        const has = db.prepare(`SELECT COUNT(*) c FROM sqlite_master WHERE name='sqlite_stat1'`).get().c > 0;
+        const rows = has ? db.prepare(`SELECT COUNT(*) c FROM sqlite_stat1`).get().c : 0;
+        const ts = new Date().toISOString();
+        writeConfig(db, "maintenance.analyze_ts", ts);
+        logDaemon(db, { task: "analyze", op: "stats", detail: `ANALYZE 完成：sqlite_stat1 ${rows} 行` });
+        return { ok: true, skipped: false, ts, stat1Rows: rows };
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logDaemon(db, { task: "analyze", op: "stats", detail: `ANALYZE 失败：${msg}` });
+        return { ok: false, error: msg };
+    }
+}
+/* ── P1-4 / T5：主库空闲页治理（阈值触发 + 默认关闭）──────────────────────
+ *  背景变更：T5 原报「空闲页 72% 未回收」，2026-09-15 复测实为 13.2%
+ *  —— 空闲页被新增数据吃掉（memories 905→1856），并非 VACUUM 的功劳。
+ *  一次性 VACUUM 收益 ≈7MB，不抵「独占写锁 + 全库重写」成本 ⇒ 降级为阈值治理项。
+ *  三重触发（全满足才执行）：① 显式开启 ② freelist/page_count > ratio ③ 距上次 ≥ minDays。
+ *  执行前先 VACUUM INTO 快照（B2：WAL 下严禁复制 .db）。被其他连接占用时失败即放弃，下轮重试。 */
+export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}) {
+    const enabled = String(process.env.MEMORYOS_AUTOVACUUM ?? "") === "1" || readConfig(db, "maintenance.autovacuum", false) === true;
+    if (!enabled)
+        return { ok: true, skipped: true, reason: "未开启（设 MEMORYOS_AUTOVACUUM=1 或 config['maintenance.autovacuum']=true）" };
+    const one = (sql) => Number(Object.values(db.prepare(sql).get())[0]) || 0;
+    const pageCount = one("PRAGMA page_count");
+    const freelist = one("PRAGMA freelist_count");
+    const pct = pageCount ? freelist / pageCount : 0;
+    if (pct <= ratio)
+        return { ok: true, skipped: true, reason: `空闲页 ${(pct * 100).toFixed(1)}% ≤ 阈值 ${(ratio * 100).toFixed(0)}%`, pageCount, freelist };
+    const last = String(readConfig(db, "maintenance.vacuum_ts", "") ?? "");
+    const days = last ? (Date.now() - new Date(last).getTime()) / 86400000 : Infinity;
+    if (days < minDays)
+        return { ok: true, skipped: true, reason: `距上次 VACUUM ${days.toFixed(1)} 天 < ${minDays} 天`, pageCount, freelist };
+    let snapshot = null;
+    if (dbPath) {
+        const dir = dbPath.replace(/[^\\/]+$/, "") + "backup";
+        snapshot = `${dir}/memory.db.pre-vacuum-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+            db.exec(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`); // 目标文件必须不存在；单引号转义
+        }
+        catch (e) {
+            return { ok: false, error: `快照失败，已放弃 VACUUM：${e instanceof Error ? e.message : String(e)}` };
+        }
+    }
+    try {
+        db.exec("VACUUM");
+    }
+    catch (e) {
+        return { ok: false, error: `VACUUM 失败（可能被其他连接占用，下轮重试）：${e instanceof Error ? e.message : String(e)}`, snapshot };
+    }
+    const afterFreelist = one("PRAGMA freelist_count");
+    const afterPages = one("PRAGMA page_count");
+    const ts = new Date().toISOString();
+    writeConfig(db, "maintenance.vacuum_ts", ts);
+    logDaemon(db, { task: "vacuum", op: "reclaim", detail: `空闲页 ${(pct * 100).toFixed(1)}% → ${afterFreelist}/${afterPages}；快照 ${snapshot ?? "无"}` });
+    return { ok: true, skipped: false, ts, before: Number((pct * 100).toFixed(1)), afterFreelist, afterPages, snapshot };
+}
 // —— CLI ——
 const mainFile = (process.argv[1] ?? "").split(/[\\/]/).pop() ?? "";
 if (mainFile === "daemon.js") {
@@ -537,6 +612,15 @@ if (mainFile === "daemon.js") {
         const out = applyPlan(db, plan, dryRun);
         console.log(`[${new Date().toISOString()}] ${out}`);
         if (!dryRun) {
+            // ★ P1-3 / T6：ANALYZE 置于治理链首位 —— 首次运行即执行，此后 24h 幂等；
+            //   让后续 plan/housekeep 的查询在本轮就吃到统计信息。
+            try {
+                const an = ensureAnalyze(db);
+                console.log(`[analyze] ${an.skipped ? `跳过（上次 ${an.last || "从未"}）` : `完成：sqlite_stat1 ${an.stat1Rows} 行 @ ${an.ts}`}`);
+            }
+            catch (e) {
+                console.error(`[analyze] 失败（不阻断治理）: ${e instanceof Error ? e.message : String(e)}`);
+            }
             // ★ R4 长期治理：看板运维 + 保留策略 + working 清理 + waypoint 预计算（异常不阻断主治理）
             try {
                 const hk = housekeepBoard(db);
@@ -580,6 +664,14 @@ if (mainFile === "daemon.js") {
             //   若有其他连接在读，SQLite 只做部分合并并返回 busy —— 不算失败，下轮自然重试。
             const ck = checkpointWal(db);
             console.log(`[wal] ${ck.ok ? "checkpoint 完成" : "checkpoint 部分完成（下轮重试）"} :: ${ck.detail}`);
+            // ★ P1-4 / T5：空闲页治理放最后（最重，需独占写锁）。默认关闭，三重阈值触发。
+            try {
+                const vc = maybeVacuum(db, { dbPath });
+                console.log(`[vacuum] ${vc.skipped ? `跳过：${vc.reason}` : vc.ok ? `完成：空闲页 ${vc.before}% → ${vc.afterFreelist}/${vc.afterPages}；快照 ${vc.snapshot}` : `未执行：${vc.error}`}`);
+            }
+            catch (e) {
+                console.error(`[vacuum] 失败（不阻断治理）: ${e instanceof Error ? e.message : String(e)}`);
+            }
         }
         if (dryRun)
             process.exit(0);
