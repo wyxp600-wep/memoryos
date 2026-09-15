@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { vecToBuf, bufToVec, cosine } from "./embed.js";
-const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned";
+const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent";
 function joinPrefix(s) {
     return s ? `[${s.replace(/"/g, '""')}]` : "";
 }
@@ -325,6 +325,30 @@ CREATE TABLE IF NOT EXISTS exec_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_exec_audit_agent_ts ON exec_audit(agent, created_at);
 CREATE INDEX IF NOT EXISTS idx_exec_audit_tool_ts  ON exec_audit(tool, created_at);
+
+/* ── ★ P2-5（E-1 / MACP 资源锁）：跨 agent 互斥资源占用 ─────────────────────
+ * 目的：让「同一份资源同一时刻只有一个写者」由**数据库**保证，而非靠 agent 自觉。
+ * 关键设计：idx_resource_locks_active 是**部分唯一索引**（仅约束 released_at IS NULL 的行）
+ *   ⇒ 同一 resource 同时最多存在一把活跃锁；重复获取会被 SQLite 直接拒绝（而不是"约定上不该"）。
+ * 租约语义（与 P2-6 的 heartbeat/release 配套）：
+ *   expires_at 到期即视为可被接管（接管方写新行 + 旧行补 released_at，fencing_token 递增）；
+ *   因此**过期的锁不会永久阻塞**，但会留下可追溯的历史行。 */
+CREATE TABLE IF NOT EXISTS resource_locks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  resource      TEXT    NOT NULL,                 -- 资源标识，如 file:<abs> / port:8787 / db:memory
+  holder        TEXT    NOT NULL,                 -- 持有者 agent
+  session_id    TEXT,
+  purpose       TEXT,
+  fencing_token INTEGER NOT NULL DEFAULT 0,       -- 同一 resource 的获取序号（接管时递增，用于拒过期写）
+  acquired_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  heartbeat_at  TEXT,
+  expires_at    TEXT    NOT NULL,                 -- 租约到期时间
+  released_at   TEXT,                             -- 显式释放时间（NULL = 活跃）
+  meta          TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_locks_active ON resource_locks(resource) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_resource_locks_holder ON resource_locks(holder, released_at);
+CREATE INDEX IF NOT EXISTS idx_resource_locks_expiry ON resource_locks(expires_at) WHERE released_at IS NULL;
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -486,10 +510,41 @@ export function openDb(dbPath) {
         ["source_ref", "TEXT"],
         ["sensitivity", "TEXT NOT NULL DEFAULT 'normal'"],
         ["pinned", "INTEGER NOT NULL DEFAULT 0"],
+        // ★ P2-5（E-1 / MACP 强一致字段）：多 agent 并发下的「过期写 / 重复写 / 因果乱序」治理基础。
+        //   version/fencing_token/epoch 由 P2-6 的生命周期工具维护；idempotency_key 供重试去重；
+        //   causal_parent 记录因果前驱（同一结论的修订链）。均为附加列 → 老库可读、旧 dist 不受影响。
+        ["version", "INTEGER NOT NULL DEFAULT 1"],
+        ["fencing_token", "INTEGER NOT NULL DEFAULT 0"],
+        ["epoch", "TEXT"],
+        ["idempotency_key", "TEXT"],
+        ["causal_parent", "INTEGER"],
     ];
     for (const [name, def] of add) {
         if (!cols.includes(name))
             db.exec(`ALTER TABLE memories ADD COLUMN ${name} ${def}`);
+    }
+    // ★ P2-5（E-1）：cards 表同样补强一致字段（与 memories 同名同义，便于双层对账）
+    const cardCols = db.prepare(`PRAGMA table_info(cards)`).all().map((c) => c.name);
+    const addCards = [
+        ["version", "INTEGER NOT NULL DEFAULT 1"],
+        ["fencing_token", "INTEGER NOT NULL DEFAULT 0"],
+        ["epoch", "TEXT"],
+        ["idempotency_key", "TEXT"],
+        ["causal_parent", "INTEGER"],
+    ];
+    if (cardCols.length) {
+        for (const [name, def] of addCards) {
+            if (!cardCols.includes(name))
+                db.exec(`ALTER TABLE cards ADD COLUMN ${name} ${def}`);
+        }
+    }
+    // 幂等键唯一化：**部分唯一索引**（NULL 不受约束，故存量行与"不带幂等键"的写入都不受影响）
+    db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_idem ON memories(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_memories_fencing ON memories(epoch, fencing_token);
+  `);
+    if (cardCols.length) {
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_idem ON cards(idempotency_key) WHERE idempotency_key IS NOT NULL;`);
     }
     // ★ M12（R4 裁决）：老库 links 表补 vault_root 列（多 vault 隔离域）。SCHEMA 的 CREATE IF NOT EXISTS 只对新库生效。
     const linkCols = db.prepare(`PRAGMA table_info(links)`).all().map((c) => c.name);
@@ -865,6 +920,12 @@ export function rowOf(r) {
         source_ref: r.source_ref ?? null,
         sensitivity: String(r.sensitivity ?? "normal"),
         pinned: Number(r.pinned ?? 0),
+        // ★ P2-5（E-1）：MACP 字段（未迁移的老库读到 undefined → 此处给安全默认值）
+        version: Number(r.version ?? 1),
+        fencing_token: Number(r.fencing_token ?? 0),
+        epoch: r.epoch ?? null,
+        idempotency_key: r.idempotency_key ?? null,
+        causal_parent: r.causal_parent == null ? null : Number(r.causal_parent),
     };
 }
 /**
@@ -887,9 +948,13 @@ export function writeMemory(db, args) {
         .prepare(`INSERT INTO memories(
          content,type,agent,agent_fpath,project,confidence,status,
          sector,form,salience,decay_lambda,valid_from,valid_until,
-         trigger_cond,trigger_kind,trigger_action,valence,arousal,source_ref,sensitivity,pinned
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(args.content, args.type, args.agent, args.agent_fpath, args.project, args.confidence ?? 0.8, status, sector, String(args.form ?? "textual"), args.salience ?? 1.0, lambda, args.valid_from ?? null, args.valid_until ?? null, args.trigger_cond ?? null, String(args.trigger_kind ?? "pattern"), args.trigger_action ?? null, args.valence ?? null, args.arousal ?? null, args.source_ref ?? null, String(args.sensitivity ?? "normal"), args.pinned ?? 0);
+         trigger_cond,trigger_kind,trigger_action,valence,arousal,source_ref,sensitivity,pinned,
+         epoch,idempotency_key,causal_parent
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(args.content, args.type, args.agent, args.agent_fpath, args.project, args.confidence ?? 0.8, status, sector, String(args.form ?? "textual"), args.salience ?? 1.0, lambda, args.valid_from ?? null, args.valid_until ?? null, args.trigger_cond ?? null, String(args.trigger_kind ?? "pattern"), args.trigger_action ?? null, args.valence ?? null, args.arousal ?? null, args.source_ref ?? null, String(args.sensitivity ?? "normal"), args.pinned ?? 0,
+            // ★ P2-5（E-1）：MACP 可写字段。version/fencing_token 走 DDL 默认值（1/0），只在接管/修订时由工具递增，
+            //   故此处不接受外部传值，避免调用方伪造版本号破坏单调性。
+            args.epoch ?? null, args.idempotency_key ?? null, args.causal_parent ?? null);
     const newId = Number(info.lastInsertRowid);
     try {
         if (args.embedding)

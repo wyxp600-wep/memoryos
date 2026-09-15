@@ -14,12 +14,17 @@ export function funnel(db, p) {
         .get().c;
     const rawCited = db.prepare(`SELECT COUNT(*) c FROM memory_usage u WHERE u.event='cited'${sc}`).get().c;
     // inferred-cited：同 session 内(同项目)该记忆 returned 后又发生 write
+    // ★ 2026-09-15 修正：原判据 `w.created_at > r.created_at` 是**字符串比较**，同毫秒并列即漏计
+    //   （实测同一代码约 1/3 次运行 inferred=0 → cite 冒烟间歇失败）。本文件第 5 行已写明
+    //   「字符串比较不可靠 → 一律用 julianday」，此处漏改。改为按**追加式主键**比较：
+    //   memory_usage.id 是 AUTOINCREMENT，插入序即事件序（归档表 memory_usage_archive 亦保留 id），
+    //   杜绝时间戳并列歧义。语义不变：仍是"returned 之后发生了 write"。
     const inferred = db
         .prepare(`SELECT COUNT(DISTINCT r.memory_id) c
          FROM memory_usage r
          JOIN memory_usage w
            ON w.event='write' AND w.session_id = r.session_id AND w.project = r.project
-            AND w.created_at > r.created_at AND w.id != r.id
+            AND w.id > r.id
          WHERE r.event='returned'${scR}`)
         .get().c;
     const adopted = rawCited + inferred; // 采用 = raw + inferred（近似）
