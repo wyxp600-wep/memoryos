@@ -81,9 +81,17 @@ await app.ready();
  * 真实格式（Fastify v5 实测）：
  *   └── / (GET, HEAD)
  *       ├── api/summary (GET, HEAD)
- *       └── api/cards (GET, HEAD, POST)
- *           └── /archive (GET, HEAD, POST)      ← 子段带前导 /，父路径需拼接
- * 每层缩进 4 字符（`│   ` / `    `），据缩进还原层级，再按父路径拼接成完整路径。 */
+ *       ├── api/cards (GET, HEAD, POST)
+ *       │   └── /archive (GET, HEAD, POST)      ← 子段自带前导 /
+ *       ├── api/task (POST)
+ *       │   └── s (GET, HEAD)                   ← ★ 公共前缀被上提到父节点：真实路径是 /api/tasks
+ *       ├── api/rules/sync (POST)
+ *       │   └── -targets (GET, HEAD)            ← ★ 真实 /api/rules/sync-targets
+ * 两种子段形态都会出现，因此拼接规则是**纯字符串相接**（不插 `/`）：
+ *   full = parent === "/" ? "/" + seg去前导斜杠 : parent + seg
+ * ★ 此处原实现无条件插 `/`，导致 4 条路由误拼（其中 2 条以 404 幻影计入覆盖）——
+ *   该缺陷由独立会话复核发现（见 T8-验收门禁独立验证-20260915.md §三），已修正。
+ * 每层缩进 4 字符（`│   ` / `    `），据缩进还原层级。 */
 function parseRouteTree(tree) {
     const out = [];
     const stack = [];                       // depth → 完整路径
@@ -97,8 +105,7 @@ function parseRouteTree(tree) {
         if (seg === "/") full = "/";
         else {
             const parent = stack[depth - 1] ?? "/";
-            const clean = seg.replace(/^\/+/, "");
-            full = parent === "/" ? `/${clean}` : `${parent}/${clean}`;
+            full = parent === "/" ? `/${seg.replace(/^\/+/, "")}` : `${parent}${seg}`;
         }
         stack[depth] = full;
         stack.length = depth + 1;
@@ -107,9 +114,19 @@ function parseRouteTree(tree) {
     return out;
 }
 const tree = app.printRoutes({ commonPrefix: false });
-const routes = parseRouteTree(tree);
+const routeTable = parseRouteTree(tree);                 // 全部 method+path（结构契约）
+const routes = routeTable;
 const gettable = routes.filter((r) => r.method === "GET" && !r.path.includes(":"));
 const dynamic = routes.filter((r) => r.method === "GET" && r.path.includes(":"));
+const nonGet = routes.filter((r) => r.method !== "GET");
+/* ★ 覆盖口径（独立复核后补强）：
+ *  ① routes   —— 无参 GET：记录 status/contentType/sha256/body（逐字节可比）；
+ *  ② probes   —— 动态段 GET：把 `:xxx` 用真实夹具 id 代入后请求，记录 status+body 摘要
+ *                （不代入则无从触发，等于零覆盖）；
+ *  ③ routeTable —— **全部** method+path 的结构契约（含 100 条非 GET）：T8 拆分最常见的事故是
+ *                路由漏注册/改名，结构契约可直接判定，且**不对非 GET 发起真实请求**（避免副作用，
+ *                如 POST /api/skills/sync 会真的写盘）。这一条是本门禁对"仅 GET 覆盖"缺口的补齐。
+ *  明确不做的：非 GET 的**响应体**比对（需要构造合法 payload，且副作用不可控）——见输出提示。 */
 /* ★ 防空转守卫：解析失败会让快照"0 条全一致"从而假绿 —— 低于下限一律判失败 */
 const MIN_EXPECTED_GET = 20;
 if (gettable.length < MIN_EXPECTED_GET) {
@@ -119,7 +136,13 @@ if (gettable.length < MIN_EXPECTED_GET) {
     process.exit(1);
 }
 
-const snapshot = { token: TOKEN, routes: [], skipped: { dynamic: dynamic.map((r) => r.path), nonGet: routes.filter((r) => r.method !== "GET").map((r) => `${r.method} ${r.path}`) } };
+const snapshot = {
+    token: TOKEN,
+    routeTable: routes.map((r) => `${r.method} ${r.path}`).sort(),
+    routes: [],
+    probes: [],
+    skipped: { nonGetPaths: nonGet.map((r) => `${r.method} ${r.path}`) },
+};
 for (const r of gettable) {
     const res = await app.inject({ method: "GET", url: r.path, headers: { "x-memory-token": TOKEN } });
     const ct = String(res.headers["content-type"] ?? "");
@@ -136,6 +159,20 @@ for (const r of gettable) {
         body: bodyStr.length <= 4000 ? bodyStr : bodyStr.slice(0, 4000) + "«truncated»",
     });
 }
+// ② 动态段 GET：以真实夹具 id 代入（保证至少一条是 200，其余为确定性的 404）
+for (const r of dynamic) {
+    const url = r.path.replace(/:[A-Za-z_][\w]*/g, String(m1.id));
+    const res = await app.inject({ method: "GET", url, headers: { "x-memory-token": TOKEN } });
+    let payload = res.body;
+    try { payload = JSON.stringify(maskVolatile(JSON.parse(res.body))); } catch { /* 非 JSON */ }
+    snapshot.probes.push({
+        path: r.path,
+        probedUrl: url,
+        status: res.statusCode,
+        sha256: crypto.createHash("sha256").update(String(payload)).digest("hex").slice(0, 16),
+        body: String(payload).length <= 2000 ? String(payload) : String(payload).slice(0, 2000) + "«truncated»",
+    });
+}
 // 鉴权面：无令牌应 401（fail-closed 也是行为契约的一部分，纳入快照）
 const noTok = await app.inject({ method: "GET", url: "/api/summary" });
 snapshot.auth = { noTokenStatus: noTok.statusCode };
@@ -143,7 +180,7 @@ await app.close();
 try { db.close(); } catch { /* 已关 */ }
 try { fs.rmSync(WS, { recursive: true, force: true }); } catch { /* Windows 句柄未即时释放 */ }
 
-console.log(`发现路由 ${routes.length} 条：快照 ${gettable.length} 条（无参 GET）｜跳过 动态段 ${dynamic.length} 条、非 GET ${routes.length - gettable.length - dynamic.length} 条`);
+console.log(`发现路由 ${routes.length} 条：无参 GET 快照 ${gettable.length} 条｜动态段 GET 探针 ${dynamic.length} 条｜结构契约覆盖全部 ${routes.length} 条（含非 GET ${nonGet.length} 条，不发起请求）`);
 console.log(`鉴权契约：无令牌 /api/summary → ${snapshot.auth.noTokenStatus}`);
 
 if (!CHECK) {
@@ -153,19 +190,40 @@ if (!CHECK) {
     process.exit(0);
 }
 
-/* ── --check：逐条比对 ── */
+/* ── --check：结构契约 + 无参 GET 响应体 + 动态段探针 + 鉴权，逐条比对 ── */
 if (!fs.existsSync(OUT)) { console.log(`❌ 找不到基线快照：${OUT}（先不带 --check 跑一次生成）`); process.exit(1); }
 const base = JSON.parse(fs.readFileSync(OUT, "utf8"));
+let diff = 0;
+
+// ① 结构契约：路由漏注册/改名/新增（含 100 条非 GET）
+const baseTable = new Set(base.routeTable ?? []);
+const curTable = new Set(snapshot.routeTable);
+for (const k of baseTable) if (!curTable.has(k)) { console.log(`❌ 路由消失：${k}`); diff++; }
+for (const k of curTable) if (!baseTable.has(k)) { console.log(`❌ 新增路由（需确认是否有意为之）：${k}`); diff++; }
+
+// ② 无参 GET 响应体
 const baseMap = new Map(base.routes.map((r) => [r.path, r]));
 const curMap = new Map(snapshot.routes.map((r) => [r.path, r]));
-let diff = 0;
 for (const [p, b] of baseMap) {
     const c = curMap.get(p);
-    if (!c) { console.log(`❌ 路由消失：GET ${p}`); diff++; continue; }
+    if (!c) { console.log(`❌ GET 路由消失：${p}`); diff++; continue; }
     if (c.status !== b.status) { console.log(`❌ ${p} status ${b.status} → ${c.status}`); diff++; }
     else if (c.sha256 !== b.sha256) { console.log(`❌ ${p} 响应体变化（${b.contentLength}B/${b.sha256} → ${c.contentLength}B/${c.sha256}）`); diff++; }
 }
-for (const p of curMap.keys()) if (!baseMap.has(p)) { console.log(`❌ 新增路由（需确认是否有意为之）：GET ${p}`); diff++; }
+
+// ③ 动态段 GET 探针
+const baseProbe = new Map((base.probes ?? []).map((r) => [r.path, r]));
+for (const r of snapshot.probes) {
+    const b = baseProbe.get(r.path);
+    if (!b) { console.log(`❌ 新增动态段 GET：${r.path}`); diff++; continue; }
+    if (r.status !== b.status || r.sha256 !== b.sha256) { console.log(`❌ ${r.path} 探针变化（${b.status}/${b.sha256} → ${r.status}/${r.sha256}）`); diff++; }
+}
+
+// ④ 鉴权契约
 if (snapshot.auth.noTokenStatus !== base.auth.noTokenStatus) { console.log(`❌ 鉴权契约变化：无令牌 ${base.auth.noTokenStatus} → ${snapshot.auth.noTokenStatus}`); diff++; }
-console.log(diff ? `\n== 快照比对：${diff} 处差异（拆分必须 0 差异）==` : `\n== 快照比对：${baseMap.size} 条路由逐字节一致 ✅ ==`);
+
+console.log(diff
+    ? `\n== 快照比对：${diff} 处差异（T8 拆分必须 0 差异）==`
+    : `\n== 快照比对：结构契约 ${baseTable.size} 条 + 无参 GET ${baseMap.size} 条 + 动态段探针 ${snapshot.probes.length} 条 + 鉴权 逐项一致 ✅ ==`);
+console.log("提示：非 GET 仅做结构契约（不比对响应体）—— 其响应需构造合法 payload 且部分端点有副作用（如 skills/sync 写盘），故不纳入自动比对。");
 process.exit(diff ? 1 : 0);
