@@ -3,7 +3,7 @@
  * 走完: initialize -> notifications/initialized -> tools/list
  *     -> tools/call memory_write -> tools/call memory_search
  * 验证 "MCP 工具可被 Agent 真实验证调用"（非仅 db 层可用）
- * 用法：npx tsx src/smoke-mcp.ts
+ * 用法：node dist/smoke-mcp.js
  */
 import { spawn } from "node:child_process";
 import path from "node:path";

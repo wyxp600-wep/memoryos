@@ -6,7 +6,7 @@
  *  U3 project 隔离：A 项目查不到 B 项目记忆（global 除外）
  *  U4 trigram 中文检索命中 + fts 视图与主表同步
  * 检索统一走 v0.2 hybridSearch（fake embed 降级纯词法，不引入真实语义）
- * 用法：npx tsx src/smoke.ts
+ * 用法：node dist/smoke.js
  */
 import { openDb, writeMemory, ftsCount } from "./db.js";
 import { hybridSearch } from "./search.js";

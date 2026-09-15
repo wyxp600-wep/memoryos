@@ -5,7 +5,7 @@
  *   高价值 TOP（被 returned/cited + hit 高）、decision、pitfall/convention、
  *   僵尸（0 命中、超期）、一对 possible-conflict（待仲裁）、
  *   近 14 天跨工具埋点（趋势三线 + 漏斗 + 跨工具矩阵）、跑一次 daemon 产生 eff/归档。
- * 用法：npx tsx src/seed.ts            （写入默认库，幂等）
+ * 用法：node dist/seed.js            （写入默认库，幂等）
  */
 import { openDb, writeMemory, logUsage } from "./db.js";
 import { buildPlan, applyPlan } from "./daemon.js";

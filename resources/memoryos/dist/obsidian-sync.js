@@ -7,7 +7,7 @@
  *   内容不变 → 跳过；内容变化 → 更新（content + type + embedding + FTS）；新增 → 写入（embed + 去重预检）
  * 写方向（export）：active 记忆 → Markdown 笔记（带溯源 frontmatter），写入 vault/MemoryOS 导出/
  *
- * 设计约束：本地优先、零新依赖（node:crypto / node:fs / node:path / node:sqlite 复用 db.ts），
+ * 设计约束：本地优先、零新依赖（node:crypto / node:fs / node:path / node:sqlite 复用 db.js），
  * 不需要 Obsidian 插件或网络。vault 路径可直接指定，也可从 obsidian.json 自动探测。
  */
 import fs from "node:fs";
@@ -25,7 +25,7 @@ export const WRITE_DIR = "MemoryOS 写入";
 const SKIP_DIRS = new Set([".obsidian", ".git", ".trash", ".smart-env", "node_modules", EXPORT_DIR, WRITE_DIR]);
 /** 单轮扫描文件数上限（超大 vault 保护） */
 const MAX_FILES = Number(process.env.OBSIDIAN_MAX_FILES ?? 5000) || 5000;
-/* ========== 元表（自建，不侵入 db.ts SCHEMA） ========== */
+/* ========== 元表（自建，不侵入 db.js SCHEMA） ========== */
 /** 复合主键 (vault_root, note_path)：支持多 vault 独立增量同步，同名笔记互不串扰 */
 const META_SCHEMA = `
 CREATE TABLE IF NOT EXISTS obsidian_sync (

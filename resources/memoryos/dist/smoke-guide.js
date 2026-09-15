@@ -4,7 +4,7 @@
  * G2 zcode（未实证载体）：canAutoWrite=false + 手动步骤非空，绝不自动写
  * G3 applyConnectWrite dry-run：可自动写的 agent 返回 ok，但 fsx.write 未被调用（不落盘）
  * G4 applyConnectWrite 实际写：备份 + 追加片段 + 返回 backupPath；未实证 agent 返回 error
- * 用法：npx tsx src/smoke-guide.ts
+ * 用法：node dist/smoke-guide.js
  */
 import { connectGuideFor, applyConnectWrite } from "./scan.js";
 let failed = 0;

@@ -67,7 +67,7 @@ function daysSince(iso) {
     return Math.max(0, (now - then) / 86400000);
 }
 export { daysSince };
-/** 对全部 active 记忆计算衰减 eff（★ R4-5/M9：sector-λ 惰性公式，与 search.ts 检索口径一致：
+/** 对全部 active 记忆计算衰减 eff（★ R4-5/M9：sector-λ 惰性公式，与 search.js 检索口径一致：
  *   eff = salience × e^(-λ·Δt)，Δt 以天计，基准 = last_seen_at ?? last_hit_at ?? created_at；
  *   pinned=1 免衰减；λ = decay_lambda ?? 类默认。daemon 刷写仅供归档判定，检索已改查询时现算。） */
 export function computeDecay(rows) {

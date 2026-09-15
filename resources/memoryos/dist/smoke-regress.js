@@ -62,7 +62,7 @@ try {
     const o5 = await w("端口 80 常被 IIS 占用：查 W3SVC 服务");
     const n5 = await w("端口 80 被 IIS 霸占，先查 W3SVC 状态");
     setConflict(n5, o5);
-    // 模拟 arbitrate.ts：key=1 保留新 —— 先 record 再 apply（读仲裁前快照）
+    // 模拟 arbitrate.js：key=1 保留新 —— 先 record 再 apply（读仲裁前快照）
     recordRegression(db, jsonl, n5, "1");
     db.prepare(`UPDATE memories SET status='superseded', superseded_by=? WHERE id=?`).run(n5, o5); // apply 语义等价
     db.prepare(`UPDATE memories SET conflict_with=NULL WHERE id=?`).run(n5);

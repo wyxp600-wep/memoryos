@@ -4,7 +4,7 @@
  *  O1 同向量两条 → 第二条贡献≈0（同质重复被压）
  *  O2 正交向量两条 → 各有独立贡献，均不归零
  *  O3 0.95 相似两条 → 相似的那条贡献被压（正交剥离后无独立分量）
- * 用法：npx tsx src/smoke-orthogonal.ts
+ * 用法：node dist/smoke-orthogonal.js
  */
 import { orthogonalContrib } from "./search.js";
 let failed = 0;

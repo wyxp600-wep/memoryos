@@ -5,7 +5,7 @@
  *  B2 相似度分散 → logicDepth 低（≈0，发散）
  *  B3 空/全零 → 中性 0.5
  *  B4 权重方向：聚焦 semW>lexW；发散 semW<lexW；中性≈等权；语义路失败→纯词法(semW=0,lexW=1)
- * 用法：npx tsx src/smoke-boost.ts
+ * 用法：node dist/smoke-boost.js
  */
 import { intentDepth } from "./search.js";
 let failed = 0;
@@ -14,7 +14,7 @@ function check(name, cond, detail = "") {
     if (!cond)
         failed++;
 }
-// 映射公式与 search.ts 同源，避免口径漂移
+// 映射公式与 search.js 同源，避免口径漂移
 function weights(depth) {
     return { semW: depth === null ? 0 : 0.7 + 0.7 * depth, lexW: depth === null ? 1 : 1.3 - 0.7 * depth };
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * skill-sync.ts — 技能中央库 + 一键分发（MemoryOS 功能模块）
+ * skill-sync.js — 技能中央库 + 一键分发（MemoryOS 功能模块）
  *
  * 中央库：<项目根>/skills/<技能名>/SKILL.md
  * 分发目标（默认映射）：
@@ -75,7 +75,7 @@ const AGENT_SKILL_PROFILES = {
 };
 /**
  * 扫描本机所有 Agent（与「工具连接」页同源），返回技能分发视角的检测结果。
- * 豆包不在 scan.ts 列表中（无标准 exe 探测），在此按 skills 目录存在性追加。
+ * 豆包不在 scan.js 列表中（无标准 exe 探测），在此按 skills 目录存在性追加。
  */
 export function detectSkillTargets() {
     const { agents } = scanAgents();
@@ -94,7 +94,7 @@ export function detectSkillTargets() {
             alreadyTarget: skillsDir ? existingDirs.has(path.resolve(skillsDir)) : false,
         };
     });
-    // 追加豆包（scan.ts 不探测豆包 exe，按 skills 目录存在性判断）
+    // 追加豆包（scan.js 不探测豆包 exe，按 skills 目录存在性判断）
     const doubaoDir = doubaoUserSkillsDir();
     if (fs.existsSync(doubaoDir)) {
         result.push({

@@ -7,7 +7,7 @@
  *   D4 dry-run：applyPlan(dryRun=true) 不落库（无归档/无 daemon_log/去重不生效）
  *   D5 once：applyPlan(dryRun=false) 落库 → 归档 + daemon_log + merged
  *   D6 M-2.2：eff≤0.15 的 active 记忆不再被 hybridSearch 召回
- * 用法：npx tsx src/smoke-daemon.ts
+ * 用法：node dist/smoke-daemon.js
  */
 import { openDb, writeMemory, daemonLogCount, writeConfig } from "./db.js";
 import { buildPlan, applyPlan, loadHygieneConfig, DEFAULT_HYGIENE_CONFIG } from "./daemon.js";

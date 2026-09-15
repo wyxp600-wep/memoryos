@@ -1,12 +1,12 @@
 /**
  * MemoryOS v0.3 — Dashboard（M-2.3）
  * Fastify + 内嵌零构建前端（单 HTML 字符串，无静态资源/无构建）。
- * 监听 127.0.0.1:8787；复用 report.ts 五查询 + db.ts 治理原语。
+ * 监听 127.0.0.1:8787；复用 report.js 五查询 + db.js 治理原语。
  * 人工归档走 daemon_log 同一审计通道，operator=`human:dashboard`（14章 v0.3 [3]）。
  * 用法：
  *   node dist/dashboard.js                （默认 8787，MEMORY_DB 指定库）
  *   MEMORY_PORT=9000 node dist/dashboard.js
- * 冒烟：buildApp(db) 交给 smoke-dashboard.ts 用 app.inject() 端到端测试。
+ * 冒烟：buildApp(db) 交给 smoke-dashboard.js 用 app.inject() 端到端测试。
  */
 import Fastify from "fastify";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -210,6 +210,23 @@ export function buildApp(db, opts = {}) {
     installAccessControl(app, opts.token ?? process.env.MEMORY_TOKEN ?? null);
     // 本机 Dashboard，仅 loopback，禁用默认错误体（避免泄漏路径）
     app.setNotFoundHandler((_req, reply) => reply.type("text/html; charset=utf-8").code(404).send("Not Found"));
+    /* ★ P2-1（T12）：统一错误处理器。
+     * 缺口：原实现只有 setNotFoundHandler，**未注册 setErrorHandler** —— Fastify 默认错误体在
+     *   非生产模式下带 message，且未捕获异常会以原始堆栈形式回给客户端（内部路径/SQL 细节外泄）。
+     * 本处理器：① 一律结构化 JSON {ok:false,error,code}，不回堆栈；② 5xx 才写 stderr（4xx 属客户端问题，不刷日志）；
+     *   ③ 保留 Fastify 自带的 statusCode（如 401/403/404 仍按原码返回，避免把鉴权失败改成 500）。
+     * 说明：非法 JSON 体由 Fastify 抛 statusCode=400，此处只做脱敏不改码。 */
+    app.setErrorHandler((err, req, reply) => {
+        const status = Number(err?.statusCode ?? err?.status ?? 500) || 500;
+        const code = status >= 500 ? "INTERNAL" : (err?.code ?? "BAD_REQUEST");
+        if (status >= 500) {
+            const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+            console.error(`[err] ${req?.method ?? "?"} ${req?.url ?? "?"} → ${status}\n${msg}`);
+        }
+        // 5xx 只回通用文案（不泄漏内部信息）；4xx 回自身 message（Fastify 校验错误对调用方有用）
+        const message = status >= 500 ? "内部错误（详见服务端日志）" : String(err?.message ?? "请求无效");
+        return reply.code(status).type("application/json; charset=utf-8").send({ ok: false, error: message, code });
+    });
     // —— 概览：status 分布 + 总条数 + 类别分布 + secret 计数（R4：H4 仅计数不含内容）——
     app.get("/api/summary", async () => {
         const statusRows = db
@@ -569,7 +586,7 @@ export function buildApp(db, opts = {}) {
         return { total: rows.length, rows };
     });
     // —— 任务看板：解码 type='task' 记忆约定头 → 结构化七态（v1.1 状态机：多 Agent 协同可视化）——
-    // 解码与 server.ts taskHead 同源：`[task][assignee:X][status:<七态>]`；存量 open/claimed/done 归一
+    // 解码与 server.js taskHead 同源：`[task][assignee:X][status:<七态>]`；存量 open/claimed/done 归一
     const TASK_HEAD_RE_STATES = "pending|in_progress|blocked|review|done|failed|cancelled";
     const TASK_HEAD_RE = new RegExp(`^\\[task\\]\\[assignee:[^\\]]*\\]\\[status:(${TASK_HEAD_RE_STATES}|open|claimed)\\]`);
     const TASK_NORMALIZE = { open: "pending", claimed: "in_progress", done: "done" };
@@ -1223,7 +1240,7 @@ export function buildApp(db, opts = {}) {
             daemon: { lastRun: last?.created_at ?? null, hoursSince: hours === null ? null : Number(hours.toFixed(1)), stale: hours === null || hours > 26 },
         };
     });
-    // —— Obsidian 同步：vault 探测 / 状态 / 导入 / 导出（复用 obsidian-sync.ts，逻辑不重写）——
+    // —— Obsidian 同步：vault 探测 / 状态 / 导入 / 导出（复用 obsidian-sync.js，逻辑不重写）——
     app.get("/api/obsidian/vaults", async () => ({ vaults: detectVaults() }));
     app.get("/api/obsidian/status", async (req, reply) => {
         const vault = req.query.vault;
@@ -1275,7 +1292,7 @@ export function buildApp(db, opts = {}) {
             return reply.code(500).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
         }
     });
-    // —— 技能同步：中央库状态 / 一键分发（复用 skill-sync.ts，纯文件操作不依赖 db）——
+    // —— 技能同步：中央库状态 / 一键分发（复用 skill-sync.js，纯文件操作不依赖 db）——
     app.get("/api/skills/status", async () => ({ ...computeStatus(), detected: detectSkillTargets() }));
     app.post("/api/skills/sync", async (req, reply) => {
         try {

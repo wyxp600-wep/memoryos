@@ -1,0 +1,439 @@
+{
+  "token": "snapshot-token-fixed",
+  "routes": [
+    {
+      "path": "/",
+      "status": 200,
+      "contentType": "text/html",
+      "contentLength": 205837,
+      "sha256": "78f649af932f25d1",
+      "body": "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<meta http-equiv=\"Cache-Control\" content=\"no-store, no-cache, must-revalidate, max-age=0\">\n<meta http-equiv=\"Pragma\" content=\"no-cache\">\n<meta http-equiv=\"Expires\" content=\"0\">\n<title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>\n<link rel=\"stylesheet\" href=\"https://miaoda.feishu.cn/fonts/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap\">\n<script src=\"./echarts.min.js\"></script>\n<style>\n/* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */\n:root {\n  --bg-deep: #FCF9E8;\n  --bg-base: #F5F1E0;\n  --bg-card: rgba(255, 255, 255, 0.72);\n  --bg-card-hover: rgba(255, 255, 255, 0.92);\n  --border-glass: rgba(65, 187, 200, 0.2);\n  --border-glow: rgba(65, 187, 200, 0.45);\n  --text-primary: #1a2e35;\n  --text-secondary: #4a6570;\n  --text-muted: #8aa0aa;\n  --accent-cyan: #41BBC8;\n  --accent-purple: #2a9daf;\n  --accent-blue: #5ec9d6;\n  --success: #16a34a;\n  --warning: #d97706;\n  --danger: #dc2626;\n  --archived: #6b7280;\n  --merged: #7c3aed;\n  --superseded: #d97706;\n  --radius-lg: 20px;\n  --radius-md: 14px;\n  --radius-sm: 8px;\n  --sidebar-w: 260px;\n  --font-display: 'Space Grotesk', 'Noto Sans SC', sans-serif;\n  --font-body: 'Noto Sans SC', 'Space Grotesk', sans-serif;\n  --font-mono: 'JetBrains Mono', monospace;\n}\n\n/* ===== Dark Theme ===== */\n[data-theme=\"dark\"] {\n  --bg-deep: #0a0f14;\n  --bg-base: #0f1620;\n  --bg-card: rgba(20, 30, 42, 0.85);\n  --bg-card-hover: rgba(28, 40, 56, 0.95);\n  --border-glass: rgba(65, 187, 200, 0.15);\n  --border-glow: rgba(65, 187, 200, 0.4);\n  --text-primary: #e2e8f0;\n  --text-secondary: #94a3b8;\n  --text-muted: #64748b;\n  --accent-cyan: #22d3ee;\n  --accent-purple: #a78bfa;\n  --accent-blue: #38bdf8;\n  --success: #34d399;\n  --warning: #fbbf24;\n  --danger: #f87171;\n  --archived: #64748b;\n  --merged: #c084fc;\n  --superseded: #fbbf24;\n}\n[data-theme=\"dark\"] body {\n  background: linear-gradient(160deg, #0a0f14 0%, #0f1620 45%, #0c1420 100%);\n}\n[data-theme=\"dark\"] .glass-card { background: rgba(20, 30, 42, 0.85); }\n[data-theme=\"dark\"] .modal { background: rgba(15, 22, 32, 0.98); }\n[data-theme=\"dark\"] .form-field textarea,\n[data-theme=\"dark\"] .form-field input,\n[data-theme=\"dark\"] .form-field select { background: rgba(15, 22, 32, 0.8); color: #e2e8f0; }\n[data-theme=\"dark\"] .status-bar-track { background: rgba(255,255,255,0.06); }\n[data-theme=\"dark\"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }\n[data-theme=\"dark\"] .global-loading { background: rgba(10,15,20,0.85); }\n[data-theme=\"dark\"] .sidebar { background: rgba(15, 22, 32, 0.85); border-right-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .nav-item { color: rgba(226,232,240,0.7); }\n[data-theme=\"dark\"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }\n[data-theme=\"dark\"] .nav-item.active { background: rgba(65,187,200,0.15); color: #41bbc8; }\n[data-theme=\"dark\"] .nav-group-title { color: rgba(226,232,240,0.4); }\n[data-theme=\"dark\"] .logo-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .logo-sub { color: rgba(226,232,240,0.5); }\n[data-theme=\"dark\"] .page-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .card-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .data-table th { color: rgba(226,232,240,0.6); border-bottom-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .data-table td { color: rgba(226,232,240,0.85); border-bottom-color: rgba(255,255,255,0.05); }\n[data-theme=\"dark\"] .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }\n[data-theme=\"dark\"] .filter-btn { color: rgba(226,232,240,0.6); border-color: rgba(255,255,255,0.1); }\n[data-theme=\"dark\"] .filter-btn:hover { color: #e2e8f0; border-color: rgba(255,255,255,0.2); }\n[data-theme=\"dark\"] .filter-btn.active { backg«truncated»"
+    },
+    {
+      "path": "/api/summary",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 640,
+      "sha256": "6f1b165d64e0a34b",
+      "body": "{\"total\":5,\"statusRows\":[{\"status\":\"active\",\"c\":4},{\"status\":\"archived\",\"c\":1}],\"minActiveEff\":null,\"sector_distribution\":[{\"sector\":\"working\",\"count\":0},{\"sector\":\"episodic\",\"count\":3},{\"sector\":\"semantic\",\"count\":0},{\"sector\":\"procedural\",\"count\":0},{\"sector\":\"meta\",\"count\":1},{\"sector\":\"social\",\"count\":1},{\"sector\":\"user\",\"count\":0},{\"sector\":\"prospective\",\"count\":0},{\"sector\":\"affective\",\"count\":0}],\"secret_count\":1,\"restricted\":{\"enabled\":true,\"taskCreate\":true,\"planImport\":true,\"customSource\":true,\"cardCreate\":true,\"cardDispatch\":true,\"cardComment\":false,\"cardLink\":true,\"noteCreate\":true,\"cardToMemory\":true,\"agentWrite\":true}}"
+    },
+    {
+      "path": "/api/scan-agents",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 2397,
+      "sha256": "07c11173883adb2d",
+      "body": "{\"agents\":[{\"id\":\"codex\",\"name\":\"OpenAI Codex CLI\",\"type\":\"CLI Agent\",\"version\":\"codex-cli 0.147.0\",\"connected\":true,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"claude\",\"name\":\"Claude Code\",\"type\":\"CLI Agent\",\"version\":\"2.1.227 (Claude Code)\",\"connected\":true,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"qwen\",\"name\":\"Qwen Code\",\"type\":\"CLI Agent\",\"version\":\"0.23.3\",\"connected\":false,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"zcode\",\"name\":\"ZCode\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":true,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"workbuddy\",\"name\":\"WorkBuddy\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":true,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":false,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"traecode\",\"name\":\"TraeCode CN\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":true,\"path\":\"«path» CN\\\\Trae CN.exe\",\"heartbeat\":false},{\"id\":\"traework\",\"name\":\"TraeWork CN\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":true,\"path\":\"«path» SOLO CN\\\\TRAE SOLO CN.exe\",\"heartbeat\":false},{\"id\":\"zhipu\",\"name\":\"智谱清言\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":false,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"codexpp\",\"name\":\"Codex++\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":false,\"path\":\"«path»\",\"heartbeat\":false},{\"id\":\"minimax\",\"name\":\"MiniMax Code\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":true,\"path\":\"«path» Code\\\\MiniMax Code.exe\",\"heartbeat\":false},{\"id\":\"dsh\",\"name\":\"DeepSeek Harness\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":false,\"path\":\"«path» Menu\\\\Programs\",\"heartbeat\":false},{\"id\":\"vscode\",\"name\":\"VS Code\",\"type\":\"IDE Agent\",\"version\":null,\"connected\":false,\"path\":\"«path» VS Code\\\\Code.exe\",\"heartbeat\":false}],\"total\":13,\"connected\":7}"
+    },
+    {
+      "path": "/api/skills/status",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 11754,
+      "sha256": "0dbf5d6866de36e3",
+      "body": "{\"central\":[\"agent-browser-core\",\"ark-novel-to-tuiwen__skillhub\",\"browser-use\",\"cdp-ui-walk\",\"code-bug-analyzer__skillhub\",\"code-review-and-quality__skillhub\",\"code-reviewer-new__skillhub\",\"code-run-auto-fix__skillhub\",\"deep-story-design\",\"dialogue-reflection\",\"ecommerce-video\",\"evolution-engine__skillhub\",\"fiction-crafter__skillhub\",\"fiction-polish-distill__skillhub\",\"frontend-cleanup\",\"greatnovels__skillhub\",\"image-to-video\",\"impeccable\",\"lobster-self-iteration__skillhub\",\"lsp-novel-writer__skillhub\",\"my-novel-writer__skillhub\",\"novel-conjecture\",\"novel-deai-tomato-pass__skillhub\",\"novel-deconstruction__skillhub\",\"novel-evaluator__skillhub\",\"novel-to-drama__skillhub\",\"novel-txt-finder__skillhub\",\"novel-writer-cn__skillhub\",\"nox-grill-me\",\"obsidian\",\"onkos__skillhub\",\"poster\",\"product-retouch\",\"serial-novel-architect__skillhub\",\"spec-coding\",\"token-optimizer\",\"token-saver-skill\",\"xiaoshuojubenzhuanfenjing__skillhub\",\"xiaoshuozhuantuiwenfenjing__skillhub\",\"xiexiaoshuo__skillhub\"],\"centralDir\":\"«path»\",\"targets\":[{\"name\":\"豆包 Doubao\",\"dir\":\"«path» Data\\\\Default\\\\.doubao\\\\agent_mode\\\\workspace\\\\.user_skills\",\"exists\":true,\"skills\":[\"agent-browser-core\",\"ark-novel-to-tuiwen\",\"browser-use\",\"cdp-ui-walk\",\"code-bug-analyzer\",\"code-reviewer-new__skillhub\",\"code-run-auto-fix__skillhub\",\"deep-story-design\",\"dialogue-reflection\",\"ecommerce-video\",\"evolution engine\",\"fiction-crafter\",\"fiction-polish-distill\",\"frontend-cleanup\",\"grill-me\",\"image-to-video\",\"impeccable\",\"lobster-self-iteration__skillhub\",\"my-novel-writer__skillhub\",\"novel-conjecture\",\"novel-deai-tomato-pass\",\"novel-deconstruction\",\"novel-evaluator\",\"novel-to-drama\",\"novel-tuiwen-master\",\"novel-txt-finder\",\"novel-writer\",\"novel-writing\",\"obsidian\",\"onkos\",\"poster\",\"product-retouch\",\"serial-novel-architect\",\"spec-coding\",\"story-pipeline-cn\",\"test-skill\",\"token-optimizer\",\"tokensaver\",\"tomato-novelist\",\"代码审查与质量评估\"],\"missing\":[\"ark-novel-to-tuiwen__skillhub\",\"code-bug-analyzer__skillhub\",\"code-review-and-quality__skillhub\",\"evolution-engine__skillhub\",\"fiction-crafter__skillhub\",\"fiction-polish-distill__skillhub\",\"greatnovels__skillhub\",\"lsp-novel-writer__skillhub\",\"novel-deai-tomato-pass__skillhub\",\"novel-deconstruction__skillhub\",\"novel-evaluator__skillhub\",\"novel-to-drama__skillhub\",\"novel-txt-finder__skillhub\",\"novel-writer-cn__skillhub\",\"nox-grill-me\",\"onkos__skillhub\",\"serial-novel-architect__skillhub\",\"token-saver-skill\",\"xiaoshuojubenzhuanfenjing__skillhub\",\"xiaoshuozhuantuiwenfenjing__skillhub\",\"xiexiaoshuo__skillhub\"],\"outdated\":[],\"upToDate\":[\"agent-browser-core\",\"browser-use\",\"cdp-ui-walk\",\"code-reviewer-new__skillhub\",\"code-run-auto-fix__skillhub\",\"deep-story-design\",\"dialogue-reflection\",\"ecommerce-video\",\"frontend-cleanup\",\"image-to-video\",\"impeccable\",\"lobster-self-iteration__skillhub\",\"my-novel-writer__skillhub\",\"novel-conjecture\",\"obsidian\",\"poster\",\"product-retouch\",\"spec-coding\",\"token-optimizer\"]},{\"name\":\"Codex\",\"dir\":\"«path»\",\"exists\":true,\"skills\":[\"agent-browser-core\",\"ark-novel-to-tuiwen__skillhub\",\"browser-use\",\"cdp-ui-walk\",\"code-bug-analyzer__skillhub\",\"code-review-and-quality__skillhub\",\"code-reviewer-new__skillhub\",\"code-run-auto-fix__skillhub\",\"deep-story-design\",\"dialogue-reflection\",\"dws\",\"ecommerce-video\",\"evolution-engine__skillhub\",\"fiction-crafter__skillhub\",\"fiction-polish-distill__skillhub\",\"frontend-cleanup\",\"greatnovels__skillhub\",\"image-to-video\",\"impeccable\",\"lobster-self-iteration__skillhub\",\"lsp-novel-writer__skillhub\",\"my-novel-writer__skillhub\",\"novel-conjecture\",\"novel-deai-tomato-pass__skillhub\",\"novel-deconstruction__skillhub\",\"novel-evaluator__skillhub\",\"novel-to-drama__skillhub\",\"novel-txt-finder__skillhub\",\"novel-writer-cn__skillhub\",\"nox-grill-me\",\"obsidian\",\"onkos__skillhub\",\"poster\",\"product-retouch\",\"serial-novel-architect__skillhub\",\"spec-coding\",\"test-skill\",\"token-optimizer\",\"token-saver-skill\",\"xiaoshuojubenzhuanfenjing__skillhub\",\"xiaoshuozhuantuiwenfenjing__skillhub\",\"xiexiaoshuo__skillhub\"],\"missing\":[],\"outdated\":«truncated»"
+    },
+    {
+      "path": "/api/sectors",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 1213,
+      "sha256": "73a640af89f76831",
+      "body": "{\"sectors\":[{\"sector\":\"working\",\"cn\":\"工作记忆\",\"desc\":\"当前上下文、临时变量、工具返回、任务状态\",\"lambda\":0.05,\"w\":0.9,\"count\":0},{\"sector\":\"episodic\",\"cn\":\"情景记忆\",\"desc\":\"原始对话、时间、参与者、事件链、代码行号\",\"lambda\":0.015,\"w\":1.2,\"count\":3},{\"sector\":\"semantic\",\"cn\":\"语义记忆\",\"desc\":\"事实、偏好、结论、概念关系\",\"lambda\":0.005,\"w\":1,\"count\":0},{\"sector\":\"procedural\",\"cn\":\"程序记忆\",\"desc\":\"SOP、规约、工具用法、提示词、技能\",\"lambda\":0.008,\"w\":1.1,\"count\":0},{\"sector\":\"meta\",\"cn\":\"元记忆\",\"desc\":\"来源、置信度、决策理由、冲突记录、复盘（含反思）\",\"lambda\":0.001,\"w\":0.8,\"count\":1},{\"sector\":\"social\",\"cn\":\"社会/共享记忆\",\"desc\":\"任务分派、交接、权限、共享黑板\",\"lambda\":0.01,\"w\":1,\"count\":1},{\"sector\":\"user\",\"cn\":\"用户记忆\",\"desc\":\"用户画像、偏好与历史交互信息\",\"lambda\":0.003,\"w\":1,\"count\":0},{\"sector\":\"prospective\",\"cn\":\"前瞻记忆\",\"desc\":\"触发条件 + 行动建议 + 有效期\",\"lambda\":0,\"w\":1,\"count\":0},{\"sector\":\"affective\",\"cn\":\"情感记忆\",\"desc\":\"情绪极性/强度、挫败点、偏好强度\",\"lambda\":0.02,\"w\":1.3,\"count\":0}]}"
+    },
+    {
+      "path": "/api/config",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 358,
+      "sha256": "2e80ee344c18c3db",
+      "body": "{\"llmUrl\":\"\",\"llmModel\":\"\",\"llmKeySet\":false,\"llmKeySource\":\"none\",\"llmEffective\":{\"url\":\"http:«path»:18900«path»\",\"model\":\"agnes-2.5-flash\",\"source\":\"default\",\"keySource\":\"none\"},\"restricted\":false,\"restrictedActive\":true,\"port\":8787,\"dataDir\":\"\",\"dbPath\":\"\",\"dbName\":\"memory.db\",\"processAlive\":false,\"daemonStale\":true,\"hoursSince\":\"«volatile»\"}"
+    },
+    {
+      "path": "/api/conflicts",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 22,
+      "sha256": "c0da23c453e9762b",
+      "body": "{\"count\":0,\"items\":[]}"
+    },
+    {
+      "path": "/api/cross-tool",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 2,
+      "sha256": "4f53cda18c2baa0c",
+      "body": "[]"
+    },
+    {
+      "path": "/api/cards",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 156,
+      "sha256": "02717a848732affc",
+      "body": "{\"total\":0,\"buckets\":{\"triage\":[],\"todo\":[],\"ready\":[],\"running\":[],\"review\":[],\"done\":[],\"failed\":[],\"cancelled\":[],\"blocked\":[],\"archived\":[]},\"lanes\":[]}"
+    },
+    {
+      "path": "/api/cards/archive",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 34,
+      "sha256": "43f1357b7798b748",
+      "body": "{\"ok\":true,\"mode\":\"auto\",\"days\":7}"
+    },
+    {
+      "path": "/api/cards/graph",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 46,
+      "sha256": "9b4d05ee76932292",
+      "body": "{\"ok\":true,\"auto\":false,\"nodes\":[],\"links\":[]}"
+    },
+    {
+      "path": "/api/hygiene/suggestions",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 193,
+      "sha256": "c7bc6b7b72fdf984",
+      "body": "{\"config\":{\"archiveEff\":0.1,\"archiveAgeDays\":45,\"dedupeSim\":0.96,\"dedupeRoundLimit\":50,\"qPromote\":0.65,\"trialAgeDays\":30,\"trialPolicy\":\"lenient\"},\"dedupeSuggestions\":[],\"archiveSuggestions\":[]}"
+    },
+    {
+      "path": "/api/health",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 383,
+      "sha256": "b067cb401d7bdc48",
+      "body": "{\"ok\":true,\"db\":{\"pageCount\":71,\"freelist\":0,\"freelistPct\":0,\"sizeMb\":0.3,\"autoVacuum\":0},\"analyze\":{\"ts\":\"«volatile»\",\"stat1Exists\":false,\"stat1Rows\":0,\"fresh\":false},\"vacuum\":{\"ts\":\"«volatile»\",\"enabled\":false},\"queries\":{\"enabled\":true,\"total\":120,\"slow\":0,\"sampled\":120,\"slowMs\":50,\"busyRetry\":0,\"p50\":\"«volatile»\",\"p95\":\"«volatile»\",\"max\":\"«volatile»\",\"slowTop\":[]},\"daemon\":{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true}}"
+    },
+    {
+      "path": "/api/funnel",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 343,
+      "sha256": "905f2d009dbf11e7",
+      "body": "[{\"name\":\"write\",\"event\":\"write\",\"value\":0},{\"name\":\"returned(去重memory)\",\"event\":\"returned\",\"value\":0},{\"name\":\"raw_cited\",\"event\":\"cited\",\"value\":0},{\"name\":\"inferred_cited\",\"event\":\"inferred\",\"value\":0},{\"name\":\"adopted(≈采用,raw+inferred)\",\"event\":\"adopted\",\"value\":0},{\"name\":\"x(未被采用,write-adopted)\",\"event\":\"x\",\"value\":0}]"
+    },
+    {
+      "path": "/api/trend",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 2,
+      "sha256": "4f53cda18c2baa0c",
+      "body": "[]"
+    },
+    {
+      "path": "/api/top",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 746,
+      "sha256": "9df1035646600dc9",
+      "body": "[{\"id\":1,\"content\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"type\":\"experience\",\"agent\":\"snapshot\",\"confidence\":0.8,\"hit_count\":0,\"cited\":0,\"returned\":0},{\"id\":2,\"content\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"type\":\"experience\",\"agent\":\"snapshot\",\"confidence\":0.8,\"hit_count\":0,\"cited\":0,\"returned\":0},{\"id\":3,\"content\":\"快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"type\":\"experience\",\"agent\":\"snapshot\",\"confidence\":0.8,\"hit_count\":0,\"cited\":0,\"returned\":0},{\"id\":5,\"content\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"type\":\"task\",\"agent\":\"snapshot\",\"confidence\":0.8,\"hit_count\":0,\"cited\":0,\"returned\":0}]"
+    },
+    {
+      "path": "/api/task/s",
+      "status": 404,
+      "contentType": "text/html",
+      "contentLength": 9,
+      "sha256": "0019dfc4b32d63c1",
+      "body": "Not Found"
+    },
+    {
+      "path": "/api/zombies",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 2,
+      "sha256": "4f53cda18c2baa0c",
+      "body": "[]"
+    },
+    {
+      "path": "/api/all",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 1602,
+      "sha256": "838ddbd0a5cb9894",
+      "body": "{\"total\":5,\"rows\":[{\"id\":5,\"content\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"type\":\"task\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":4,\"content\":\"快照夹具 D：已归档样本\",\"type\":\"decision\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"archived\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":1,\"content\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":2,\"content\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":3,\"content\":\"快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"}]}"
+    },
+    {
+      "path": "/api/agent/status",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 645,
+      "sha256": "27c4e4f8ca59dbca",
+      "body": "{\"ok\":true,\"agent\":\"dashboard-agent\",\"llm\":{\"model\":\"qwen3:8b\",\"baseUrl\":\"http:«path»:11434/v1\",\"endpoint\":\"http:«path»:11434«path»\",\"source\":\"默认本地 Ollama\",\"keySet\":false},\"mcp\":{\"tools\":[\"memory_write\",\"memory_search\",\"memory_ask\",\"memory_projects\",\"memory_context\",\"memory_read\",\"memory_feedback\",\"memory_cite\",\"memory_report\",\"memory_health\",\"obsidian_import\",\"obsidian_export\",\"obsidian_write_note\",\"task_assign\",\"task_claim\",\"task_done\",\"task_supersede\",\"task_next\"],\"toolCount\":18,\"error\":null},\"writeMode\":{\"allowed\":false,\"restricted\":true,\"hint\":\"受限模式：由系统统一派发，agent 仅可读\"}}"
+    },
+    {
+      "path": "/api/agents",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 429,
+      "sha256": "1d8d18d09f208e92",
+      "body": "{\"agents\":[{\"id\":\"OpenAI Codex CLI\",\"load\":0},{\"id\":\"Claude Code\",\"load\":0},{\"id\":\"Qwen Code\",\"load\":0},{\"id\":\"ZCode\",\"load\":0},{\"id\":\"WorkBuddy\",\"load\":0},{\"id\":\"WorkBuddy AI\",\"load\":0},{\"id\":\"TraeCode CN\",\"load\":0},{\"id\":\"TraeWork CN\",\"load\":0},{\"id\":\"智谱清言\",\"load\":0},{\"id\":\"Codex++\",\"load\":0},{\"id\":\"MiniMax Code\",\"load\":0},{\"id\":\"DeepSeek Harness\",\"load\":0},{\"id\":\"VS Code\",\"load\":0},{\"id\":\"豆包 Doubao\",\"load\":0}]}"
+    },
+    {
+      "path": "/api/audit",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 11,
+      "sha256": "1633902c6cbba5e7",
+      "body": "{\"rows\":[]}"
+    },
+    {
+      "path": "/api/rules",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 21,
+      "sha256": "5da0e64d7adbe141",
+      "body": "{\"total\":0,\"rows\":[]}"
+    },
+    {
+      "path": "/api/rules/sync/-targets",
+      "status": 404,
+      "contentType": "text/html",
+      "contentLength": 9,
+      "sha256": "0019dfc4b32d63c1",
+      "body": "Not Found"
+    },
+    {
+      "path": "/api/rules/project-candidates",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 9998,
+      "sha256": "951d4269a3782a0b",
+      "body": "{\"projects\":[{\"dir\":\"«path»\",\"name\":\"02-文档报告\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"03-表格数据\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"04-图片素材\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"05-脚本代码\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"06-安装包压缩\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"07-临时杂项\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"111213123\",\"hasAgents\":true},{\"dir\":\"«path»\",\"name\":\"33333333333\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"agent\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"AI-Image-Cleaner\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"aiagent璁板繂涓庤鍒橽desktop-app\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"aiagent璁板繂涓庤鍒橽_diag-«date»\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"aiagent记忆与规则\",\"hasAgents\":true},{\"dir\":\"«path»\",\"name\":\"claude-desktop-zh-cn-main\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"data\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"deepskee\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"DesktopTool_DragTmp\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"eepseekharness导出\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"frontend\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"gools下载\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"MemoryOS\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"MemoryOS-P0-work-20260912\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"MemoryOS-Portable\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"memoryos-search-opt\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"MemoryOS-便携版\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"ozon\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"ps_extract\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"ps_video_frames\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"PS引擎移植包\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"PS电商套图工具_v3_fixed\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"python\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"skills-cn-backup\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"skills-shared\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"skills-中文说明\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"steamcommunity_302_AMD64_V14.0.02\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"ui-ux-pro-max-skill-2.11.3\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"wimoor-erp\",\"hasAgents\":true},{\"dir\":\"«path»\",\"name\":\"xingyun-4.0.4\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"z0804001\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"z0804007\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"_memoryos-task-actions-backup-20260912-225321\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"剪切板-1.0\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"尺子\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"文本文档\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"新图\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"新建文件夹\",\"hasAgents\":false},{\"dir\":\"«path» (2)\",\"name\":\"新建文件夹 (2)\",\"hasAgents\":false},{\"dir\":\"«path» (3)\",\"name\":\"新建文件夹 (3)\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"本地模型\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"知识厍\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"知识库\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"软件测试\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"软件迭代\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"部署\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-18-22-59\",\"hasAgents\":true},{\"dir\":\"«path»\",\"name\":\"«date»-20-59-01\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-13-47-38\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-23-03-58\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-23-42-11\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-17-48-46\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-21-46-38\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-12-39-53\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-13-01-33\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-05-17-06\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-05-53-41\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-18-33-39\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-21-05-04\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-19-02-13\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-22-14-15\",\"hasAgents\":false},{\"dir\":\"«path»\",\"name\":\"«date»-21-47«truncated»"
+    },
+    {
+      "path": "/api/plans",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 1418,
+      "sha256": "8a3ab1136fdb20cf",
+      "body": "{\"total\":3,\"dir\":\"«path»\",\"rows\":[{\"file\":\"plan-20260911-demo.json\",\"path\":\"«path»\",\"size\":4815,\"plan_id\":\"plan-memoryos-demo\",\"summary\":\"梳理共享记忆常用主题，产出一份脉络笔记\",\"plan_status\":\"active\",\"created_at\":\"«ts»+08:00\",\"updated_at\":\"«ts»+08:00\",\"tasks\":3,\"valid\":true,\"errors\":[]},{\"file\":\"plan-20260911-lease-demo.json\",\"path\":\"«path»\",\"size\":5726,\"plan_id\":\"plan-memoryos-lease-demo\",\"summary\":\"并发租约示例：executor-01 持 T1 租约临近过期，executor-02 可接管；演示 version«path» 乐观并发\",\"plan_status\":\"active\",\"created_at\":\"«ts»+08:00\",\"updated_at\":\"«ts»+08:00\",\"tasks\":3,\"valid\":true,\"errors\":[]},{\"file\":\"plan-20260914-fullopt.json\",\"path\":\"«path»\",\"size\":57585,\"plan_id\":\"plan-20260914-fullopt\",\"summary\":\"MemoryOS 全维度优化计划（安全4/性能3/代码质量1/可维护性3/架构3，共14项，全部带实证与验收证据链）\",\"plan_status\":\"active\",\"created_at\":\"«ts»+08:00\",\"updated_at\":\"«ts»+08:00\",\"tasks\":15,\"valid\":true,\"errors\":[]}]}"
+    },
+    {
+      "path": "/api/prospective/due",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 38,
+      "sha256": "48a199ceb20f18c6",
+      "body": "{\"ok\":true,\"due\":[],\"auto_created\":[]}"
+    },
+    {
+      "path": "/api/ingest/sources",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 19758,
+      "sha256": "1a5d6536d1b8e685",
+      "body": "{\"sources\":[{\"id\":\"codex-rules\",\"agent\":\"codex\",\"name\":\"Codex 规则 default.rules\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1811,\"level\":\"L1\"},{\"id\":\"codex-agents\",\"agent\":\"codex\",\"name\":\"Codex 全局约束 AGENTS.md\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":2756,\"level\":\"L1\"},{\"id\":\"codex-mem-raw\",\"agent\":\"codex\",\"name\":\"Codex 原始记忆 raw_memories\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":37,\"level\":\"L1\"},{\"id\":\"codex-mem-diff\",\"agent\":\"codex\",\"name\":\"Codex 工作区差异记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":140,\"level\":\"L1\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":259118,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":147323,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":159912,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":950355,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":209387,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":729438,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":150109,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":12692345,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7163773,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1907665,\"level\":\"L2\"},{\"id\":\"claude-config\",\"agent\":\"claude\",\"name\":\"Claude 配置 config.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":29,\"level\":\"L2\"},{\"id\":\"claude-settings\",\"agent\":\"claude\",\"name\":\"Claude 设置 settings.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1497,\"level\":\"L2\"},{\"id\":\"wb-memory\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy MEMORY\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":8779,\"level\":\"L1\"},{\"id\":\"wb-user\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy USER\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":383,\"level\":\"L1\"},{\"id\":\"wb-soul\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy SOUL\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1792,\"level\":\"L1\"},{\"id\":\"wb-identity\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy IDENTITY\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":496,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3053,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":254,\"level\":\"L1\"},{\"id\":\"trae-user-profile\",\"agent\":\"trae\",\"name\":\"Trae 用户画像 user_profile\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5609,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7237,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":916,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3080,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5839,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":1322,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2963,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5862,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":19908,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5335,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"nam«truncated»"
+    },
+    {
+      "path": "/api/ingest/custom-sources",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 80,
+      "sha256": "2ce0632e7fa6a03a",
+      "body": "{\"sources\":[],\"path\":\"«path»\"}"
+    },
+    {
+      "path": "/api/write-health",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 84,
+      "sha256": "b8b04cd3fdefe193",
+      "body": "{\"lastWrite\":null,\"daysSince\":null,\"writes30d\":0,\"mcpWrite30d\":0,\"manualWrite30d\":0}"
+    },
+    {
+      "path": "/api/working",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 22,
+      "sha256": "a0ba7994a6ba58bf",
+      "body": "{\"ok\":true,\"items\":[]}"
+    },
+    {
+      "path": "/api/usage-health",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 414,
+      "sha256": "e4af4c37dd23bc34",
+      "body": "{\"today\":{\"day\":\"«date»\",\"search\":0,\"write\":0,\"returned\":0,\"cited\":0,\"injected\":0},\"days30\":{\"search\":0,\"write\":0,\"returned\":0,\"cited\":0,\"injected\":0},\"trend\":[],\"hitRate\":0,\"hitRateRemark\":\"检索命中数 returned ÷ 检索调用次数 search（injected 自动注入已剔除）\",\"searchTriggerRate\":0,\"searchTriggerRemark\":\"search ÷ write；<1 表示检索次数少于沉淀次数（只写不搜信号）\"}"
+    },
+    {
+      "path": "/api/daemon-health",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 226,
+      "sha256": "119a59a9bbf4a680",
+      "body": "{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true,\"pending\":{\"trial\":0,\"active\":4},\"hygiene\":{\"archiveEff\":0.1,\"archiveAgeDays\":45,\"dedupeSim\":0.96,\"dedupeRoundLimit\":50,\"qPromote\":0.65,\"trialAgeDays\":30,\"trialPolicy\":\"lenient\"}}"
+    },
+    {
+      "path": "/api/obsidian/vaults",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 120,
+      "sha256": "6e4ff1bab7ef1b94",
+      "body": "{\"vaults\":[{\"name\":\"ZSK\",\"path\":\"«path»\"},{\"name\":\"知识库\",\"path\":\"«path»\"}]}"
+    },
+    {
+      "path": "/api/obsidian/status",
+      "status": 400,
+      "contentType": "application/json",
+      "contentLength": 30,
+      "sha256": "7fcc8da6a47f6797",
+      "body": "{\"error\":\"vault 参数必填\"}"
+    },
+    {
+      "path": "/api/graph",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 587,
+      "sha256": "185a5c7b69aa9861",
+      "body": "{\"nodes\":[{\"id\":\"memory:1\",\"kind\":\"memory\",\"label\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:2\",\"kind\":\"memory\",\"label\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:5\",\"kind\":\"memory\",\"label\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"sector\":\"social\",\"degree\":0},{\"id\":\"memory:-1\",\"kind\":\"memory\",\"label\":\"secret ×1\",\"sector\":\"secret\",\"degree\":0}],\"edges\":[],\"truncated\":false,\"secret_folded\":true}"
+    },
+    {
+      "path": "/api/backlinks",
+      "status": 400,
+      "contentType": "application/json",
+      "contentLength": 32,
+      "sha256": "66c9bfd4f53c5216",
+      "body": "{\"ok\":false,\"error\":\"id 必填\"}"
+    },
+    {
+      "path": "/api/notes",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 22,
+      "sha256": "221200b4bdc10e6f",
+      "body": "{\"ok\":true,\"notes\":[]}"
+    },
+    {
+      "path": "/app.js",
+      "status": 200,
+      "contentType": "application/javascript",
+      "contentLength": 283453,
+      "sha256": "b6257758ebfabc76",
+      "body": "// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）\n// 同源 fetch /api/*；后端无能力处降级展示。依赖全局 echarts。\n(() => {\n  'use strict';\n  if (!window.EChartsLoaded) window.EChartsLoaded = {\n    // 等待 echarts 就绪\n    when(cb) {\n      const t = setInterval(() => { if (window.echarts) { clearInterval(t); cb(); } }, 200);\n      setTimeout(() => clearInterval(t), 15000);\n    },\n  };\n\n  const $ = s => document.querySelector(s);\n  const $$ = s => document.querySelectorAll(s);\n  const esc = v => String(v ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n  const fmtDate = s => s ? String(s).slice(0, 16).replace('T', ' ') : '—';\n  const fmtRelative = s => {\n    if (!s) return '—';\n    const diff = Date.now() - new Date(s).getTime();\n    const mins = Math.floor(diff / 60000);\n    if (mins < 1) return '刚刚';\n    if (mins < 60) return mins + ' 分钟前';\n    const hours = Math.floor(mins / 60);\n    if (hours < 24) return hours + ' 小时前';\n    const days = Math.floor(hours / 24);\n    if (days < 30) return days + ' 天前';\n    const months = Math.floor(days / 30);\n    if (months < 12) return months + ' 个月前';\n    return Math.floor(months / 12) + ' 年前';\n  };\n  // 文本相似度（基于字符 bigram 的 Jaccard 相似度）\n  function textSimilarity(a, b) {\n    if (!a || !b) return 0;\n    const grams = (s) => {\n      const set = new Set();\n      for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));\n      return set;\n    };\n    const ga = grams(a), gb = grams(b);\n    if (ga.size === 0 || gb.size === 0) return 0;\n    let inter = 0;\n    ga.forEach(g => { if (gb.has(g)) inter++; });\n    return inter / (ga.size + gb.size - inter);\n  }\n  // 找相似记忆\n  function findSimilar(memory, limit = 3) {\n    return S.memories\n      .filter(m => m.id !== memory.id && m.status === 'active')\n      .map(m => ({ m, sim: textSimilarity(memory.content, m.content) }))\n      .filter(x => x.sim > 0.08)\n      .sort((a, b) => b.sim - a.sim)\n      .slice(0, limit);\n  }\n  // 记忆质量评分（0-100，基于 eff/引用/置信度/长度综合）\n  function calcQuality(m) {\n    if (!m) return 0;\n    const effScore = Math.min(100, (m.eff || 0) * 100);\n    const hitScore = Math.min(100, Math.log10((m.hits || 0) + 1) * 50);\n    const confScore = (m.confidence || 0) * 100;\n    const lenScore = Math.min(100, (m.content || '').length / 5);\n    return Math.round(effScore * 0.35 + hitScore * 0.3 + confScore * 0.2 + lenScore * 0.15);\n  }\n  function qualityLabel(score) {\n    if (score >= 80) return { text: '优秀', color: '#10b981' };\n    if (score >= 60) return { text: '良好', color: '#06b6d4' };\n    if (score >= 40) return { text: '一般', color: '#f59e0b' };\n    if (score >= 20) return { text: '较差', color: '#ef4444' };\n    return { text: '待优化', color: '#6b7280' };\n  }\n  // 提取高频关键词（简单中文分词：提取2-4字常用词）\n  function extractKeywords(limit = 30) {\n    const stopWords = new Set(['的','了','是','在','我','有','和','就','不','人','都','一','一个','上','也','很','到','说','要','去','你','会','着','没有','看','好','自己','这','那','它','他','她','它们','他们','她们','这个','那个','什么','怎么','为什么','可以','因为','所以','但是','如果','虽然','而且','或者','以及','等等','之类','一下','一些','一样','这样','那样','怎么','什么样','多少','几','哪','哪里','哪个','谁','什么时候','以前','以后','现在','今天','昨天','明天','时候','时间','地方','东西','事情','问题','办法','方法','方式','情况','状态','结果','效果','作用','功能','特点','优势','缺点','原因','理由','目的','目标','计划','安排','准备','开始','结束','完成','继续','停止','开始','进行','执行','实施','落实','推进','推动','促进','提升','提高','增加','减少','降低','优化','改进','改善','完善','解决','处理','应对','面对','面临','存在','出现','发生','产生','形成','变成','成为','属于','关于','对于','通过','根据','按照','基于','由于','鉴于','因此','因而','从而','进而','甚至','尤其','特别','更加','越来越','越','最','更','比较','相当','非常','十分','极其','极为','太','真','确实','的确','显然','明显','当然','自然','其实','实际上','事实上','基本上','大致','大概','大约','约','左右','上下','前后','之间','以内','以上','以下','之中','之外','旁边','附近','周围','周边','上面','下面','里面','外面','前面','后面','左边','右边','中间','中央','中心','核心','重点','关键','主要','重要','必要','必须','需要','需求','要求','期望','期待','希望','愿望','理想','目标','方向','路径','道路','途径','渠道','方式','方法','办法','措施','手段','工具','平台','系统','体系','机制','模式','模型','框架','结构','架构','设计','开发','测试','部署','运维','运营','管理','治理«truncated»"
+    },
+    {
+      "path": "/echarts.min.js",
+      "status": 200,
+      "contentType": "application/javascript",
+      "contentLength": 1034102,
+      "sha256": "bf4a223524e40b77",
+      "body": "\n/*\n* Licensed to the Apache Software Foundation (ASF) under one\n* or more contributor license agreements.  See the NOTICE file\n* distributed with this work for additional information\n* regarding copyright ownership.  The ASF licenses this file\n* to you under the Apache License, Version 2.0 (the\n* \"License\"); you may not use this file except in compliance\n* with the License.  You may obtain a copy of the License at\n*\n*   http://www.apache.org/licenses/LICENSE-2.0\n*\n* Unless required by applicable law or agreed to in writing,\n* software distributed under the License is distributed on an\n* \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n* KIND, either express or implied.  See the License for the\n* specific language governing permissions and limitations\n* under the License.\n*/\n\n!function(t,e){\"object\"==typeof exports&&\"undefined\"!=typeof module?e(exports):\"function\"==typeof define&&define.amd?define([\"exports\"],e):e((t=\"undefined\"!=typeof globalThis?globalThis:t||self).echarts={})}(this,(function(t){\"use strict\";\n/*! *****************************************************************************\n    Copyright (c) Microsoft Corporation.\n\n    Permission to use, copy, modify, and/or distribute this software for any\n    purpose with or without fee is hereby granted.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH\n    REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY\n    AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,\n    INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM\n    LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR\n    OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n    PERFORMANCE OF THIS SOFTWARE.\n    ***************************************************************************** */var e=function(t,n){return e=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(t,e){t.__proto__=e}||function(t,e){for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n])},e(t,n)};function n(t,n){if(\"function\"!=typeof n&&null!==n)throw new TypeError(\"Class extends value \"+String(n)+\" is not a constructor or null\");function i(){this.constructor=t}e(t,n),t.prototype=null===n?Object.create(n):(i.prototype=n.prototype,new i)}var i=function(){this.firefox=!1,this.ie=!1,this.edge=!1,this.newEdge=!1,this.weChat=!1},r=new function(){this.browser=new i,this.node=!1,this.wxa=!1,this.worker=!1,this.svgSupported=!1,this.touchEventsSupported=!1,this.pointerEventsSupported=!1,this.domSupported=!1,this.transformSupported=!1,this.transform3dSupported=!1,this.hasGlobalWindow=\"undefined\"!=typeof window};\"object\"==typeof wx&&\"function\"==typeof wx.getSystemInfoSync?(r.wxa=!0,r.touchEventsSupported=!0):\"undefined\"==typeof document&&\"undefined\"!=typeof self?r.worker=!0:!r.hasGlobalWindow||\"Deno\"in window?(r.node=!0,r.svgSupported=!0):function(t,e){var n=e.browser,i=t.match(/Firefox\\/([\\d.]+)/),r=t.match(/MSIE\\s([\\d.]+)/)||t.match(/Trident\\/.+?rv:(([\\d.]+))/),o=t.match(/Edge?\\/([\\d.]+)/),a=/micromessenger/i.test(t);i&&(n.firefox=!0,n.version=i[1]);r&&(n.ie=!0,n.version=r[1]);o&&(n.edge=!0,n.version=o[1],n.newEdge=+o[1].split(\".\")[0]>18);a&&(n.weChat=!0);e.svgSupported=\"undefined\"!=typeof SVGRect,e.touchEventsSupported=\"ontouchstart\"in window&&!n.ie&&!n.edge,e.pointerEventsSupported=\"onpointerdown\"in window&&(n.edge||n.ie&&+n.version>=11),e.domSupported=\"undefined\"!=typeof document;var s=document.documentElement.style;e.transform3dSupported=(n.ie&&\"transition\"in s||n.edge||\"WebKitCSSMatrix\"in window&&\"m11\"in new WebKitCSSMatrix||\"MozPerspective\"in s)&&!(\"OTransition\"in s),e.transformSupported=e.transform3dSupported||n.ie&&+n.version>=9}(navigator.userAgent,r);var o=\"sans-serif\",a=\"12px \"+o;var s,l,u=function(t){var e={};if(\"undefined\"==typeof JSON)return e;for(var n=0;n<t.length;n++){var i=String.fromCharCode(n+32),r=(t.charCodeAt(n)-20)/100;e[i]=r}return e}(\"007LLmW'55;N0500L«truncated»"
+    }
+  ],
+  "skipped": {
+    "dynamic": [
+      "/api/cards/:id",
+      "/api/cards/:id/comment/s",
+      "/api/cards/:id/context",
+      "/api/cards/:id/events",
+      "/api/agent/:id/connect/-guide"
+    ],
+    "nonGet": [
+      "HEAD /",
+      "HEAD /api/summary",
+      "HEAD /api/scan-agents",
+      "HEAD /api/skills/status",
+      "POST /api/skills/sync",
+      "HEAD /api/sectors",
+      "HEAD /api/config",
+      "POST /api/config",
+      "POST /api/config/test-llm",
+      "HEAD /api/conflicts",
+      "POST /api/conflict/:id",
+      "HEAD /api/cross-tool",
+      "HEAD /api/cards",
+      "POST /api/cards",
+      "POST /api/cards/apply-plan",
+      "HEAD /api/cards/archive",
+      "POST /api/cards/archive",
+      "POST /api/cards/from-memory/:id",
+      "POST /api/cards/from-note/:id",
+      "POST /api/cards/import-legacy",
+      "HEAD /api/cards/graph",
+      "DELETE /api/cards/positions",
+      "HEAD /api/cards/:id",
+      "PUT /api/cards/:id",
+      "DELETE /api/cards/:id",
+      "POST /api/cards/:id/claim",
+      "POST /api/cards/:id/comment",
+      "HEAD /api/cards/:id/comment/s",
+      "HEAD /api/cards/:id/context",
+      "POST /api/cards/:id/status",
+      "POST /api/cards/:id/accept",
+      "POST /api/cards/:id/refine",
+      "HEAD /api/cards/:id/events",
+      "POST /api/cards/:id/links",
+      "DELETE /api/cards/:id/links",
+      "POST /api/cards/:id/memory",
+      "DELETE /api/cards/:id/memory",
+      "POST /api/cards/:id/heartbeat",
+      "POST /api/cards/:id/to-memory",
+      "POST /api/cards/:id/position",
+      "POST /api/cards/:id/push-to-task",
+      "HEAD /api/hygiene/suggestions",
+      "POST /api/hygiene/apply",
+      "HEAD /api/health",
+      "HEAD /api/funnel",
+      "HEAD /api/trend",
+      "HEAD /api/top",
+      "POST /api/task",
+      "HEAD /api/task/s",
+      "HEAD /api/zombies",
+      "POST /api/archive",
+      "HEAD /api/all",
+      "HEAD /api/agent/status",
+      "POST /api/agent/chat",
+      "POST /api/agent/:id/connect",
+      "HEAD /api/agent/:id/connect/-guide",
+      "HEAD /api/agents",
+      "HEAD /api/audit",
+      "POST /api/memory",
+      "POST /api/memory/hit",
+      "PUT /api/memory/:id",
+      "DELETE /api/memory/:id",
+      "POST /api/memory/:id/secret-view",
+      "POST /api/embed/recompute/:id",
+      "HEAD /api/rules",
+      "POST /api/rules/sync",
+      "HEAD /api/rules/sync/-targets",
+      "HEAD /api/rules/project-candidates",
+      "POST /api/rules/project-sync",
+      "HEAD /api/plans",
+      "POST /api/plans/import",
+      "POST /api/plans/apply",
+      "HEAD /api/prospective/due",
+      "HEAD /api/ingest/sources",
+      "POST /api/ingest/run",
+      "HEAD /api/ingest/custom-sources",
+      "POST /api/ingest/custom-sources",
+      "DELETE /api/ingest/custom-sources/:id",
+      "POST /api/ingest/custom-sources/:id/enabled",
+      "POST /api/ingest/validate-source",
+      "POST /api/inject",
+      "HEAD /api/write-health",
+      "HEAD /api/working",
+      "POST /api/working",
+      "DELETE /api/working",
+      "HEAD /api/usage-health",
+      "HEAD /api/daemon-health",
+      "POST /api/dispatch",
+      "HEAD /api/obsidian/vaults",
+      "HEAD /api/obsidian/status",
+      "POST /api/obsidian/import",
+      "POST /api/obsidian/export",
+      "HEAD /api/graph",
+      "HEAD /api/backlinks",
+      "HEAD /api/notes",
+      "POST /api/notes",
+      "PUT /api/notes/:id",
+      "DELETE /api/notes/:id",
+      "HEAD /app.js",
+      "HEAD /echarts.min.js"
+    ]
+  },
+  "auth": {
+    "noTokenStatus": 401
+  }
+}

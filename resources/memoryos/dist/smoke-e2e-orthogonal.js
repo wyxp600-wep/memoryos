@@ -11,7 +11,7 @@
  *   E2 排序：原始 a 排最前、score 最高
  *   E3 正交化贡献：a=1、b=0、c=0（重复/近似重复被压，不挤占独立名额）
  *   E4 命中回血：返回记忆 hit_count≥1 且 last_hit_at 已写
- * 用法：npx tsx src/smoke-e2e-orthogonal.ts
+ * 用法：node dist/smoke-e2e-orthogonal.js
  */
 import { openDb, writeMemory, getVectorsOnProject } from "./db.js";
 import { hybridSearch, orthogonalContrib } from "./search.js";

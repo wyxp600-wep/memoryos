@@ -5,7 +5,7 @@
  *   U2 memory_cite 逻辑：cited 埋点 + confidence 抬升（复刻 server 同源）
  *   U3 inferred-cited（R4）：同 session 内 returned 后又 write → 记 inferred
  *   U4 五查询全可跑：funnel(含 raw/inferred 两行) / trend / top / zombies / cross_tool
- * 用法：npx tsx src/smoke-cite.ts
+ * 用法：node dist/smoke-cite.js
  */
 import { openDb, writeMemory, logUsage, readMemory, bumpConfidence, usageCount } from "./db.js";
 import { funnel, trend, topMemories, zombies, crossTool } from "./report.js";

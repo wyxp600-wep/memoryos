@@ -6,7 +6,7 @@
  *   A4 键3合并：双方→merged + 插合并行（derived_from），u 撤销后删插入行恢复
  *   A5 键4不冲突：双方去标签，conf 恢复 0.8
  *   A6 u 撤销：按键1后撤销，旧值回到 active 并可检索
- * 用法：npx tsx src/smoke-arbitrate.ts
+ * 用法：node dist/smoke-arbitrate.js
  */
 import { openDb, writeMemory, readMemory, applyArbitration, undoLastArbitration, pendingConflicts } from "./db.js";
 import { hybridSearch } from "./search.js";

@@ -7,7 +7,7 @@
  *   F4 POST /api/archive 批量归档 + 审计 operator=human:dashboard
  *   F5 归档后 top 不再召回该记忆
  *   F6 非法 ids 返回 400
- * 用法：npx tsx src/smoke-dashboard.ts
+ * 用法：node dist/smoke-dashboard.js
  */
 import { openDb, writeMemory, logUsage } from "./db.js";
 import { buildApp } from "./dashboard.js";

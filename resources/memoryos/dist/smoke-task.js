@@ -1,8 +1,8 @@
 /**
- * 任务交接状态机单测（db 层，与 server.ts 三工具同源逻辑）
+ * 任务交接状态机单测（db 层，与 server.js 三工具同源逻辑）
  * 复刻工具内约定：content 头 `[task][assignee:X][status:open|claimed|done]`
  * 用例：T1 写好头 + FTS 可检索；T2 open→claimed；T3 claimed→done；T4 非法任务不匹配
- * 用法：npx tsx src/smoke-task.ts
+ * 用法：node dist/smoke-task.js
  */
 import { openDb, writeMemory, readMemory } from "./db.js";
 import os from "node:os";
@@ -15,7 +15,7 @@ function check(name, cond, detail = "") {
     if (!cond)
         failed++;
 }
-// 与 server.ts 同源（保持口径一致）
+// 与 server.js 同源（保持口径一致）
 const TASK_HEAD_RE = /^\[task\]\[assignee:[^\]]*\]\[status:(open|claimed|done)\]/;
 const TASK_DEP_RE = /\[depends:([0-9,\s]+)\]/;
 const taskHead = (s, a) => `[task][assignee:${a}][status:${s}]`;

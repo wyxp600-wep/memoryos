@@ -3,7 +3,7 @@
  * 评估闭环最后一块的前置（V5.1 附录C）。
  *
  * 两条链路：
- *   1. 仲裁测绘（emit）：arbitrate.ts 每次裁决后调 recordRegression()，
+ *   1. 仲裁测绘（emit）：arbitrate.js 每次裁决后调 recordRegression()，
  *      把 pending/old 内容 + 判定 sim + 自动判定 auto_action + 人工结论 decision
  *      append 到 <db 同目录>/regression_cases.jsonl（回归集种子，V5.1 第9章采集点①）。
  *   2. 重放判定（replay）：runner 离线读 jsonl，用 embedder 对记录存储的

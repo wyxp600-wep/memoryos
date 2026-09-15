@@ -4,7 +4,7 @@
  *   D1 dedupeDecision 单元：同向量→merge；正交→insert；0.9 相似→conflict
  *   D2 写入管线：同内容二次写 → 命中 merge（confidence+0.1，不计新行）
  *   D3 混合检索：语义路召回 + RRF 融合出分 + 命中回血(hit_count+1, last_hit_at)
- * 用法：npx tsx src/smoke-v02.ts
+ * 用法：node dist/smoke-v02.js
  */
 import { openDb, writeMemory, dedupeDecision, getVectorsOnProject, readMemory } from "./db.js";
 import { hybridSearch } from "./search.js";

@@ -6,7 +6,7 @@
  *  Q3 adoption：hit 高 vs 零曝光 → 前者高
  *  Q4 freshness：新 vs 一年前 → 前者高
  *  Q5 权重方向全因子正确合计 + 趋势单调
- * 用法：npx tsx src/smoke-quality.ts
+ * 用法：node dist/smoke-quality.js
  */
 import { qualityScore } from "./daemon.js";
 let failed = 0;

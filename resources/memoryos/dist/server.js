@@ -176,7 +176,7 @@ server.addTool({
             for (const h of hits) {
                 if (seen.has(h.id))
                     continue;
-                // 过滤参数（type/agent）：结果级后置过滤，保持 search.ts 签名不变（最小改动）
+                // 过滤参数（type/agent）：结果级后置过滤，保持 search.js 签名不变（最小改动）
                 if (args.type && h.type !== args.type)
                     continue;
                 if (args.agent && h.agent !== args.agent)

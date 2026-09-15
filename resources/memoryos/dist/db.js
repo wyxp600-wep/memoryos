@@ -969,7 +969,7 @@ export function readMemory(db, id) {
     return r ? rowOf(r) : null;
 }
 /** project 内（含 global）所有带向量记录，供语义 KNN。
- *  activeOnly=true 时仅取 status='active'（检索路径用：非 active 候选最终必被 search.ts 过滤掉，
+ *  activeOnly=true 时仅取 status='active'（检索路径用：非 active 候选最终必被 search.js 过滤掉，
  *  提前在 SQL 收窄可显著缩小候选池，且避免无关候选挤占 topK）。去重预检请传 false（需覆盖全部状态）。 */
 export function getVectorsOnProject(db, project, activeOnly = false) {
     // ★ P1-2.2：向量已独立成表 → JOIN 取代原来的 `embedding IS NOT NULL` 过滤
