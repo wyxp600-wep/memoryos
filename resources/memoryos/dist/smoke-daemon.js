@@ -51,7 +51,7 @@ try {
     db.prepare(`UPDATE memories SET hit_count=1 WHERE id=?`).run(dupB.id);
     const plan = buildPlan(db);
     // D1/D2/D3 计划
-    check("D1.decision 不衰减（eff=conf=0.9）", plan.decays.find((x) => x.id === dec.id)?.eff === 0.9);
+    check("D1.decision 不衰减（eff=salience，60 天不贬损）", plan.decays.find((x) => x.id === dec.id)?.eff === db.prepare("SELECT salience FROM memories WHERE id=?").get(dec.id).salience, `eff=${plan.decays.find((x) => x.id === dec.id)?.eff}`);
     check("D1.常规旧记忆 eff 被压低", (plan.decays.find((x) => x.id === old.id)?.eff ?? 1) < 0.5);
     check("D2.旧记忆进归档候选", plan.archives.some((a) => a.id === old.id), `archives=${plan.archives.map((a) => `#${a.id}`).join(",")}`);
     const dup = plan.dedupes.find((d) => d.winner === dupA.id && d.loser === dupB.id);
@@ -78,10 +78,20 @@ try {
     const plan2 = buildPlan(db);
     check("D7.归档阈值可配置：0.99 使 hot 进归档候选", plan2.archives.some((a) => a.id === hot.id), `plan2.archives=${plan2.archives.map((a) => `#${a.id}`).join(",")}`);
     check("D7.未覆盖字段走默认（dedupeSim）", loadHygieneConfig(db).dedupeSim === DEFAULT_HYGIENE_CONFIG.dedupeSim);
-    // D6：M-2.2 —— 把 hot 的 eff 压到 0.1（≤0.15）后不应再被召回
-    db.prepare(`UPDATE memories SET eff_confidence=0.10 WHERE id=?`).run(hot.id);
+    // D6：M-2.2 —— 显著性压到 ≤0.15 后不应再被召回
+    // ★ 2026-09-15 修正：检索侧自 M9 起**查询时现算** eff = salience × e^(-λ·Δt)（search.js:142-149），
+    //   不再读 eff_confidence 列 —— 旧断言只改 eff_confidence 已无法影响召回，属陈旧断言而非产品回归。
+    db.prepare(`UPDATE memories SET salience=0.10, last_seen_at=datetime('now') WHERE id=?`).run(hot.id);
     const hits = await hybridSearch(db, emb, { query: "订单状态机 Redis", project: "ecommerce", limit: 10 });
     check("D6.eff≤0.15 的 active 不再被召回", !hits.some((h) => h.id === hot.id), `returned=${hits.map((h) => `#${h.id}`).join(",")}`);
+    // D8：decision 类记忆超期不自动归档（2026-09-15 回归修复的守护断言：
+    //     该豁免曾在 sector/salience 重构中被 pinned 判断取代而丢失，见 daemon.js computeArchives 注释）
+    db.prepare(`UPDATE memories SET status='active', created_at=datetime('now','-200 days'), hit_count=0 WHERE id=?`).run(dec.id);
+    const archivedDec = buildPlan(db).archives.some((a) => a.id === dec.id);
+    check("D8.decision 超期 200 天不进归档候选", !archivedDec, `dec.type=${db.prepare("SELECT type FROM memories WHERE id=?").get(dec.id)?.type}`);
+    // 对照：同条件的 experience 必须仍被归档（防"豁免写宽了"造成漏归档）
+    db.prepare(`UPDATE memories SET status='active', created_at=datetime('now','-200 days'), hit_count=0, last_seen_at=NULL WHERE id=?`).run(old.id);
+    check("D8.对照：同条件 experience 仍进归档候选", buildPlan(db).archives.some((a) => a.id === old.id));
     db.close();
 }
 finally {

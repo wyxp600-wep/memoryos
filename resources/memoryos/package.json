@@ -6,6 +6,11 @@
   "description": "MemoryOS v0.1 shared memory (SQLite + FTS5) MCP server",
   "scripts": {
     "build": "tsc",
+    "test": "node dist/smoke-all.js",
+    "test:exec": "node dist/smoke-exec.js",
+    "test:mcp": "node dist/smoke-mcp.js",
+    "audit": "node dist/audit-probe.js",
+    "lint": "node --check dist/server.js && node --check dist/exec-tools.js && node --check dist/agent-core.js && node --check dist/agent.js && node --check dist/smoke-all.js && node --check dist/smoke-exec.js && node --check dist/audit-probe.js",
     "start": "node dist/server.js",
     "obsidian:import": "node dist/obsidian-sync.js import",
     "obsidian:export": "node dist/obsidian-sync.js export",

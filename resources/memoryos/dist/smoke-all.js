@@ -62,11 +62,12 @@ function discover() {
         .sort()
         .map((f) => ({ name: f.replace(/^smoke-|\.js$/g, ""), label: f, file: path.join(HERE, f) }));
 
-    // 执行面冒烟在 .workbuddy/tmp（P0 临时验收脚本，尚未进阶为 dist/ 常驻）
-    const tmp = path.join(REPO, ".workbuddy", "tmp", "smoke-exec.mjs");
-    if (fs.existsSync(tmp)) items.push({ name: "exec", label: "smoke-exec.mjs", file: tmp });
-
-    // #1 前身脚本已被拆分/覆盖时不重复计入（保持清单与 dist 实际一致）
+    // 执行面冒烟：dist/smoke-exec.js 是 git 纳管的权威副本；`.workbuddy/tmp/smoke-exec.mjs` 为遗留
+    //  scratch 副本（.workbuddy/ 被 .gitignore 忽略）。仅当 dist 版缺失时才回落 tmp 版，避免重复计数。
+    if (!items.some((i) => i.label === "smoke-exec.js")) {
+        const tmp = path.join(REPO, ".workbuddy", "tmp", "smoke-exec.mjs");
+        if (fs.existsSync(tmp)) items.push({ name: "exec", label: "smoke-exec.mjs", file: tmp });
+    }
     return items;
 }
 
@@ -79,7 +80,15 @@ function runOne(item, skipReason) {
         encoding: "utf8",
         timeout: timeoutS * 1000,
         windowsHide: true,
-        env: { ...process.env, MEMORY_AGENT: "smoke-all", MEMORY_AGENT_FPATH: path.join(REPO, ".workbuddy", "tmp", "smoke-agent.txt") },
+        env: {
+            ...process.env,
+            MEMORY_AGENT: "smoke-all",
+            MEMORY_AGENT_FPATH: path.join(REPO, ".workbuddy", "tmp", "smoke-agent.txt"),
+            // ★ P0-2 落地后 server 侧执行面**默认关闭**（需 MEMORYOS_EXEC_ON=1）。
+            //   冒烟必须显式打开，否则执行面本身无法被验证（生产默认值不受影响）。
+            MEMORYOS_EXEC_ON: "1",
+            MEMORYOS_EXEC_OFF: "",
+        },
     });
     const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
     const ms = Date.now() - t0;

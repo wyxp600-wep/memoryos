@@ -46,7 +46,22 @@ const ok = (name, cond, detail = "") => {
     const mcp = await createMcpClient({ agentName: "smoke", agentFpath: "dist/smoke-agent.js" });
     try {
         const tools2 = await mcp.tools();
-        ok("MCP 连通 + 18 工具", tools2.length === 18, `got ${tools2.length}: ${tools2.map((t) => t.name).join(", ")}`);
+        // ① 计数断言（P0 执行面加入 3 工具后为 21）；② 必备清单断言 —— 只改计数会漏掉"注册缺失"
+        //   （F16 教训：`&&` 短路使计数为假时清单根本不执行，故两者分开断言）
+        const REQUIRED = [
+            "memory_write", "memory_search", "memory_ask", "memory_projects", "memory_context",
+            "memory_read", "memory_feedback", "memory_cite", "memory_report", "memory_health",
+            "obsidian_import", "obsidian_export", "obsidian_write_note",
+            "task_assign", "task_claim", "task_done", "task_supersede", "task_next",
+        ];
+        const names = tools2.map((t) => t.name);
+        // 执行面默认关闭（P0-2）：开启时才期望 +3，否则应为基线 18 —— 两种态都必须自洽
+        const execOn = process.env.MEMORYOS_EXEC_ON === "1";
+        ok(`MCP 连通 + 工具计数（执行面${execOn ? "已开启" : "默认关闭"}）`, tools2.length === (execOn ? REQUIRED.length + 3 : REQUIRED.length), `got ${tools2.length}: ${names.join(", ")}`);
+        const missing = REQUIRED.filter((n) => !names.includes(n));
+        ok("必备 18 工具全部注册（防静默缺失）", missing.length === 0, missing.length ? `缺失 ${missing.join(", ")}` : "0 缺失");
+        const execNames = ["file_read", "file_write", "exec_run"].filter((n) => names.includes(n));
+        ok("执行面 3 工具的暴露与开关一致", execOn ? execNames.length === 3 : execNames.length === 0, `实际暴露 ${execNames.length} 个${execNames.length ? `: ${execNames.join(", ")}` : ""}`);
         const tn = await mcp.callTool("task_next", { project: "global", as: "" });
         ok("task_next 只读调用", !tn.isError, String(tn.text).replace(/\s+/g, " ").slice(0, 120));
         // ③ 只读 agent 单轮

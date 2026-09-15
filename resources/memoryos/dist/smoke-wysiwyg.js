@@ -20,6 +20,8 @@ import { buildApp } from "./dashboard.js";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = path.resolve(HERE, "..");
 const DB_PATH = path.join(ROOT, "data", "memory-wysiwyg.db");
+/** dashboard 访问控制为 fail-closed，冒烟须显式提供令牌（见 ④ 用户侧注释） */
+const SMOKE_TOKEN = "smoke-wysiwyg-token";
 for (const p of [DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm"]) {
     try {
         fs.rmSync(p, { force: true });
@@ -109,9 +111,12 @@ try {
     }
     // ④ 用户侧：同库起 dashboard，取 ai.* 视图（此时 hit_count 与上面 MCP 返回同刻）
     const db = openDb(DB_PATH);
-    const app = buildApp(db, { token: null });
+    // ★ 2026-09-15 修正：installAccessControl 已 fail-closed（无令牌 503 token-not-configured），
+    //   `{token:null}` 不再表示"免校验" —— 冒烟须自带令牌并逐请求带 x-memory-token。
+    const app = buildApp(db, { token: SMOKE_TOKEN });
     await app.ready();
-    const res = await app.inject({ method: "GET", url: "/api/all?limit=100" });
+    const inject = (opts) => app.inject({ ...opts, headers: { ...(opts.headers ?? {}), "x-memory-token": SMOKE_TOKEN } });
+    const res = await inject({ method: "GET", url: "/api/all?limit=100" });
     check("/api/all 返回 200", res.statusCode === 200, `status=${res.statusCode}`);
     const rows = JSON.parse(res.body).rows ?? [];
     check("/api/all 含 ai.* 视图字段", rows.length >= 3 && rows.every((r) => r.ai && r.ai.search && r.ai.context && r.ai.read), `rows=${rows.length}`);
@@ -167,11 +172,11 @@ try {
     }
     check("回归：AI 侧输出与改动前模板逐字一致（无行为变更）", okLegacy === raw.length, `${okLegacy}/${raw.length}`);
     // ⑨ AI 可见性规则（status/eff 过滤）
-    const res2 = await app.inject({ method: "GET", url: "/api/all?limit=100" });
+    const res2 = await inject({ method: "GET", url: "/api/all?limit=100" });
     const before = JSON.parse(res2.body).rows.find((r) => r.content === SHORT);
     check("active 且 eff>0.15 → searchable=true", before?.ai_visible?.searchable === true, JSON.stringify(before?.ai_visible));
     db.prepare(`UPDATE memories SET status='archived' WHERE id=?`).run(before.id);
-    const res3 = await app.inject({ method: "GET", url: "/api/all?limit=100" });
+    const res3 = await inject({ method: "GET", url: "/api/all?limit=100" });
     const after = JSON.parse(res3.body).rows.find((r) => r.id === before.id);
     check("archived → searchable=false 且给出原因", after?.ai_visible?.searchable === false && /status=archived/.test(after.ai_visible.reason), JSON.stringify(after?.ai_visible));
     await app.close();

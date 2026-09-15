@@ -20,6 +20,8 @@ const ok = (n, cond, extra = "") => {
 };
 const tmp = path.join(os.tmpdir(), `mem-e2e-${process.pid}.db`);
 const jsonl = path.join(os.tmpdir(), `mem-e2e-${process.pid}.jsonl`);
+/** dashboard 访问控制为 fail-closed，冒烟须显式提供令牌（见 E3 注释） */
+const SMOKE_TOKEN = "smoke-e2e-token";
 try {
     fs.rmSync(jsonl, { force: true });
     const db = openDb(tmp);
@@ -68,13 +70,16 @@ try {
     ok("E2 无 decision 被归档", decActive.c === 1, `decision 仍 active`);
     /* ================= E3 Dashboard 端点 + 归档留痕 ================= */
     const e3a = await w("E3 待人工归档的普通记忆"); // 保持 active，专门用于人工归档
-    const app = buildApp(db);
-    const r = await app.inject({ method: "GET", url: "/api/summary" });
+    // ★ 2026-09-15 修正：installAccessControl 已改为 fail-closed（无令牌 503 token-not-configured，P0-2.2），
+    //   buildApp 不再接受 token=null 直通 —— 冒烟须自带令牌并逐请求带 x-memory-token，否则 E3 全为环境噪声。
+    const app = buildApp(db, { token: SMOKE_TOKEN });
+    const inject = (opts) => app.inject({ ...opts, headers: { ...(opts.headers ?? {}), "x-memory-token": SMOKE_TOKEN } });
+    const r = await inject({ method: "GET", url: "/api/summary" });
     const sum = r.json();
     ok("E3 /api/summary 可看 status 分布", r.statusCode === 200 && Array.isArray(sum.statusRows), `总=${sum.total}`);
-    const arch = await app.inject({ method: "POST", url: "/api/archive", payload: { ids: [e3a.id] } });
+    const arch = await inject({ method: "POST", url: "/api/archive", payload: { ids: [e3a.id] } });
     ok("E3 人工归档 ok", arch.statusCode === 200 && arch.json().archived === 1, `status=${arch.statusCode} body=${arch.body}`);
-    const audit = await app.inject({ method: "GET", url: "/api/audit" });
+    const audit = await inject({ method: "GET", url: "/api/audit" });
     const auditRows = audit.json().rows;
     ok("E3 归档留痕 human:dashboard", auditRows.some((x) => x.operator === "human:dashboard" && x.memory_id === e3a.id));
     await app.close();
