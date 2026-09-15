@@ -9,7 +9,7 @@
  * 冒烟：buildApp(db) 交给 smoke-dashboard.ts 用 app.inject() 端到端测试。
  */
 import Fastify from "fastify";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import { openDb, archiveMemory, logUsage, logDaemon, withTx, writeMemory, updateMemory, queryByType, rejectMemory, pendingConflicts, applyArbitration, markMerged, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory } from "./db.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -24,6 +24,9 @@ import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { detectVaults, importVault, exportMemories, vaultStatus, syncNotesIndex, demoteNoteLinks, writeNoteToVault } from "./obsidian-sync.js";
 import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { computeStatus, syncSkills, detectSkillTargets } from "./skill-sync.js";
+import { createMcpClient, resolveLlm, runAgent, buildSystemPrompt } from "./agent-core.js";
+import { protectSecret, unprotectSecret, forgetSecret } from "./secret-store.js";
+import { probeEndpoint, normalizeLlmEndpoint, llmConf } from "./llm.js";
 import { SECTORS, SECTOR_KEYS } from "./db.js";
 const DEFAULT_PORT = 8787;
 /** 人工/编辑/新建允许的 type（含规则页 rule） */
@@ -86,6 +89,13 @@ const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
  *  ③ 安全响应头 —— CSP + nosniff + no-referrer
  */
 function installAccessControl(app, token) {
+    /** ★ 2026-09-15（P-4171）：常数时间令牌比较。原 `===` 有长度/早期退出侧信道；
+     *  先 sha256 摘要再 timingSafeEqual —— 摘要恒定 32B，消除长度侧信道。 */
+    const safeEqual = (a, b) => {
+        const ha = createHash("sha256").update(String(a ?? "")).digest();
+        const hb = createHash("sha256").update(String(b ?? "")).digest();
+        return timingSafeEqual(ha, hb);
+    };
     app.addHook("onRequest", async (req, reply) => {
         const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
         if (!LOOPBACK_HOSTS.has(host)) {
@@ -107,11 +117,11 @@ function installAccessControl(app, token) {
             .map((s) => s.trim())
             .find((s) => s.startsWith(TOKEN_COOKIE + "="))
             ?.slice(TOKEN_COOKIE.length + 1);
-        const ok = fromQuery === token || String(req.headers["x-memory-token"] ?? "") === token || fromCookie === token;
+        const ok = safeEqual(fromQuery, token) || safeEqual(String(req.headers["x-memory-token"] ?? ""), token) || safeEqual(fromCookie, token);
         if (!ok) {
             return reply.code(401).send({ ok: false, error: "unauthorized", hint: "需带 ?token=<令牌> 访问；令牌见 data/token" });
         }
-        if (fromQuery === token) {
+        if (safeEqual(fromQuery, token)) {
             reply.header("set-cookie", `${TOKEN_COOKIE}=${token}; Path=/; SameSite=Strict; HttpOnly; Max-Age=31536000`);
         }
     });
@@ -150,8 +160,27 @@ function writeDiskConfig(cfg) {
     if (!f)
         return;
     fs.mkdirSync(dataDirOf(), { recursive: true });
-    fs.writeFileSync(f, JSON.stringify(cfg, null, 2), "utf8");
+    // ★ 2026-09-15（P-4171 落地补齐）：明文 llmKey 绝不落盘，改为落 DPAPI 密文 llmKeyEnc
+    // （secret-store.js，用户作用域加密，只有同一 Windows 用户能解）。原实现只是把 llmKey 剥掉，
+    // 却没有替代存储 → 密钥保存即丢失、云端 LLM 在设置页根本配不起来。
+    const { llmKey, ...safe } = cfg;
+    fs.writeFileSync(f, JSON.stringify(safe, null, 2), "utf8");
 }
+/* ── Agent 的 MCP 客户端（模块级单例：一个 dashboard 进程 = 一个 MCP 子进程）──
+ * 惰性拉起：首次用到 agent 端点时才 spawn，避免拖慢 dashboard 启动。
+ * smoke-dashboard 等会多次调用 buildApp —— 放模块级可避免重复 spawn 与 exit 监听堆积。 */
+let _agentMcp = null;
+async function getAgentMcp() {
+    if (!_agentMcp) {
+        _agentMcp = await createMcpClient({
+            agentName: "dashboard-agent",
+            agentFpath: fileURLToPath(new URL("./dashboard.js", import.meta.url)),
+        });
+    }
+    return _agentMcp;
+}
+// dashboard 退出时收掉 MCP 子进程（stdio 子进程随父进程 stdin EOF 退出，这里是显式兜底）
+process.once("exit", () => { try { _agentMcp?.close(); } catch { /* 已断 */ } _agentMcp = null; });
 export function buildApp(db, opts = {}) {
     const app = Fastify({ logger: false });
     installAccessControl(app, opts.token ?? process.env.MEMORY_TOKEN ?? null);
@@ -190,6 +219,8 @@ export function buildApp(db, opts = {}) {
                 cardLink: RESTRICTED,
                 noteCreate: RESTRICTED,
                 cardToMemory: RESTRICTED,
+                // ★ 2026-09-15：Agent 页写门禁能力位（受限模式 → agent 仅只读，前端隐藏「允许写入」勾选）
+                agentWrite: RESTRICTED,
             },
         };
     });
@@ -203,7 +234,13 @@ export function buildApp(db, opts = {}) {
         return {
             llmUrl: String(cfg.llmUrl ?? ""),
             llmModel: String(cfg.llmModel ?? process.env.INGEST_MODEL ?? ""),
-            llmKeySet: !!cfg.llmKey,
+            // ★ 2026-09-15：密钥状态改为反映**真实可用的来源**（原实现取 cfg.llmKey，而它从不落盘 → 永远 false）
+            llmKeySet: !!(cfg.llmKeyEnc || process.env.LLM_API_KEY || process.env.INGEST_KEY),
+            llmKeySource: cfg.llmKeyEnc ? "encrypted" : (process.env.LLM_API_KEY ? "env(LLM_API_KEY)" : (process.env.INGEST_KEY ? "env(INGEST_KEY)" : "none")),
+            llmEffective: await (async () => {
+                const c = await llmConf();
+                return { url: c.url, model: c.model, source: c.source, keySource: c.keySource };
+            })(),
             restricted: cfg.restricted === true,
             restrictedActive: RESTRICTED,
             port,
@@ -219,12 +256,14 @@ export function buildApp(db, opts = {}) {
     app.post("/api/config", async (req, reply) => {
         const b = (req.body ?? {});
         const cfg = readDiskConfig();
+        let llmTouched = false;
         if (b.llmUrl !== undefined) {
             const v = String(b.llmUrl ?? "").trim();
             if (v)
                 cfg.llmUrl = v;
             else
                 delete cfg.llmUrl;
+            llmTouched = true;
         }
         if (b.llmModel !== undefined) {
             const v = String(b.llmModel ?? "").trim();
@@ -232,23 +271,55 @@ export function buildApp(db, opts = {}) {
                 cfg.llmModel = v;
             else
                 delete cfg.llmModel;
+            llmTouched = true;
         }
-        if (b.llmKey !== undefined) {
-            const v = String(b.llmKey ?? "").trim();
-            if (v)
-                cfg.llmKey = v;
-            else
-                delete cfg.llmKey;
+        // ★ 2026-09-15：密钥改为 DPAPI 密文落盘（llmKeyEnc）；明文只存在于请求内，不落盘。
+        if (b.clearLlmKey === true) {
+            delete cfg.llmKeyEnc;
+            delete cfg.llmKey;
+            forgetSecret();
+            llmTouched = true;
         }
+        else if (typeof b.llmKey === "string" && b.llmKey.trim()) {
+            const enc = await protectSecret(b.llmKey.trim());
+            if (!enc.ok)
+                return reply.code(500).send({ ok: false, error: `密钥加密失败，未保存：${enc.error}`, hint: "可改用环境变量 LLM_API_KEY 注入密钥" });
+            cfg.llmKeyEnc = enc.blob;
+            delete cfg.llmKey;
+            llmTouched = true;
+        }
+        const restrictedChanged = typeof b.restricted === "boolean" && b.restricted !== (cfg.restricted === true);
         if (typeof b.restricted === "boolean")
             cfg.restricted = b.restricted;
         try {
             writeDiskConfig(cfg);
-            return { ok: true, restartRequired: true };
+            // LLM 配置现已「现读」（llm.js llmConf / agent-core resolveLlm 都每次读 config.json）→ 即时生效
+            // 只有受限模式这类启动期环境变量仍需要重启内核重新注入。
+            return {
+                ok: true,
+                restartRequired: restrictedChanged,
+                llmEffective: llmTouched ? "saved" : undefined,
+                note: restrictedChanged
+                    ? "已保存：LLM 配置即时生效；受限模式切换需重启内核"
+                    : "已保存，即时生效（无需重启内核）",
+            };
         }
         catch (e) {
             return reply.code(500).send({ ok: false, error: "写入 config.json 失败：" + (e instanceof Error ? e.message : String(e)) });
         }
+    });
+    /** 设置页「测试连接」：用**表单里还没保存的值**真发一次 max_tokens=1 请求，定位是 URL/密钥/模型哪一步不对 */
+    app.post("/api/config/test-llm", async (req) => {
+        const b = (req.body ?? {});
+        const cfg = readDiskConfig();
+        const saved = await llmConf();
+        const url = normalizeLlmEndpoint(String(b.llmUrl ?? "").trim() || cfg.llmUrl || saved.url);
+        const model = String(b.llmModel ?? "").trim() || cfg.llmModel || saved.model;
+        // 表单没填密钥 → 用已保存的（env 或解密）
+        let key = String(b.llmKey ?? "").trim();
+        if (!key)
+            key = saved.key;
+        return probeEndpoint({ url, model, key }, Number(b.timeoutMs) || 15000);
     });
     // —— 记忆卫生建议（只读，不落库）：治理阈值 + 去重/归档候选，供前端"建议→人工确认"环 ——
     app.get("/api/hygiene/suggestions", async () => {
@@ -1209,6 +1280,38 @@ export function buildApp(db, opts = {}) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail)
        VALUES (?,?,?,?,?,?)`).run(cardId, actor, action, fromStatus ?? null, toStatus ?? null, detail ?? null);
     }
+    /** ★ 2026-09-15：卡片状态 → 关联 task 记忆状态头回写（task_assign 建的卡 ref_kind='memory'，dispatch 关联）。
+     *  卡片流转会同步 memories 里对应 type='task' 的内容头 [status:]，保持「地图卡 ↔ MCP 任务」双向一致。 */
+    function syncCardToTask(cardId) {
+        try {
+            // 定位关联 task 记忆：优先 ref_kind='memory'，其次 card_memory dispatch 关联
+            const card = readCard(cardId);
+            if (!card)
+                return;
+            const memRow = (card.ref_kind === "memory" && card.ref_id
+                ? db.prepare(`SELECT id FROM memories WHERE id=?`).get(card.ref_id)
+                : undefined) ??
+                db.prepare(`SELECT memory_id id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(cardId);
+            if (!memRow)
+                return;
+            const mem = db.prepare(`SELECT id, content FROM memories WHERE id=? AND type='task' AND status IN ('active','trial')`).get(memRow.id);
+            if (!mem)
+                return;
+            const st = mem.content.match(/\[status:([^\]]+)\]/);
+            if (!st)
+                return;
+            // 卡片状态 → 任务状态头映射
+            const map = { ready: "pending", running: "in_progress", done: "done", failed: "failed", blocked: "blocked", review: "review", cancelled: "cancelled", archived: "cancelled" };
+            const toSt = map[card.status];
+            if (!toSt || st[1] === toSt)
+                return;
+            const newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
+            db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(newContent, mem.id);
+        }
+        catch {
+            /* 回写失败不阻断卡片流程 */
+        }
+    }
     /** 请求中的自我声明身份（单机单用户，README 已声明不防恶意本机调用，R4-6） */
     function asOf(req) {
         return String(req.query.as ?? "").trim() || "unassigned";
@@ -1555,6 +1658,7 @@ export function buildApp(db, opts = {}) {
         if (Number(info.changes) === 0)
             return reply.code(409).send({ ok: false, error: "认领失败：卡片不在 ready 或已被认领" });
         writeCardEvent(id, actor, "claim", "ready", "running", `CAS 认领（lock=${lock.slice(0, 8)}…）`);
+        syncCardToTask(id); // ★ 认领 → 关联 task 回写 in_progress
         return { ok: true, id, assignee: actor, lock };
     });
     // —— 状态流转（H3 ②：WHERE status=expected_from 前置校验 + 白名单）——
@@ -1588,6 +1692,7 @@ export function buildApp(db, opts = {}) {
             db.prepare(`UPDATE cards SET claim_lock=NULL WHERE id=?`).run(id);
         if (to === "failed")
             db.prepare(`UPDATE cards SET failure_count=failure_count+1 WHERE id=?`).run(id);
+        syncCardToTask(id); // ★ 2026-09-15：卡片状态回写关联 task 记忆状态头
         return { ok: true, id, from: c.status, to };
     });
     // —— M2 验收：review → done（meta.acceptance 存在时必须走此端点）——
@@ -1601,6 +1706,7 @@ export function buildApp(db, opts = {}) {
             return reply.code(409).send({ ok: false, error: "仅 review 状态可验收" });
         db.prepare(`UPDATE cards SET status='done', updated_at=datetime('now') WHERE id=? AND status='review'`).run(id);
         writeCardEvent(id, actor, "accept", "review", "done", "验收通过");
+        syncCardToTask(id); // ★ 验收 → 关联 task 回写 done
         return { ok: true, id };
     });
     // —— M1 refine：LLM 生成 steps/acceptance 建议（以评论返回，用户确认后写 meta）——
@@ -1835,7 +1941,7 @@ export function buildApp(db, opts = {}) {
         //   · 连线：任务卡两两「标题+正文」嵌入向量余弦相似 → relates_auto 虚线（语义近似，非词枚举）
         //   · 子卡：任务卡「标题+正文」向量 vs 记忆库 active 记忆向量余弦 → 相似记忆 aux_memory 子卡
         //   记忆向量直接取（免重算）；卡向量实时 embed（卡量少可承受）。embedding 失败 → 静默降级（不连线不补卡）。
-        if (String(req.query.auto ?? "1") !== "0") {
+        if (String(req.query.auto ?? "0") !== "0") {
             const tasks = nodes.filter((n) => !(String(n.kind).startsWith("aux_")));
             try {
                 const embedder = await getEmbedder();
@@ -1912,10 +2018,22 @@ export function buildApp(db, opts = {}) {
         }
         // 序列化统一转字符串（数字卡片 id 与 "mem-N" 字符串 id 均可；前端 Number() 容错数字）
         const serializable = (v) => String(v);
+        // ★ 2026-09-15（看板 58→25 根治）：状态语义归一。给每个节点补 bucket：
+        //   active（ready/todo/running=真实未完成）/ done / terminal（archived/cancelled/failed=已终结）
+        //   aux 子卡无任务状态 → bucket=null。前端未完成计数只取 bucket==='active'，终结态不再混入。
+        const TERMINAL = new Set(["archived", "cancelled", "failed"]);
+        const nodesWithBucket = nodes.map((n) => {
+            const kind = String(n.kind ?? "");
+            const bucket = kind.startsWith("aux_") || kind === "aux" ? null
+                : n.status === "done" ? "done"
+                    : TERMINAL.has(String(n.status)) ? "terminal"
+                        : "active";
+            return { ...n, bucket };
+        });
         return {
             ok: true,
-            auto: String(req.query.auto ?? "1") !== "0",
-            nodes: nodes.map((n) => ({ ...n, id: serializable(n.id) })),
+            auto: String(req.query.auto ?? "0") !== "0",
+            nodes: nodesWithBucket.map((n) => ({ ...n, id: serializable(n.id) })),
             links: links.map((l) => ({ ...l, src_id: serializable(l.src_id), dst_id: serializable(l.dst_id) })),
         };
     });
@@ -2397,6 +2515,112 @@ export function buildApp(db, opts = {}) {
         db.prepare(`DELETE FROM links WHERE src_kind='note' AND src_id=?`).run(id);
         return { ok: true, id };
     });
+
+    /* ── Agent（C 路线：dashboard 内置智能体）──────────────────────────────
+     * 与 CLI（dist/agent.js）共用 dist/agent-core.js —— 同一个 agent 循环、同一个 MCP 工具面（18 工具），
+     * 只是把「大脑」换成可插拔 LLM 端点、「工具客户端」换成 dashboard 进程内 stdio 拉起。
+     * LLM 端点：设置页 llmUrl/llmModel（config.json 落盘）优先，环境变量 LLM_* 兜底，默认本地 Ollama qwen3:8b。
+     *           API Key 绝不落盘（P-4171）：如需鉴权走环境变量 LLM_API_KEY（config.json 不含明文密钥）。
+     * 写门禁：默认全拒（记忆库写操作须先获同意）。前端显式带 allowWrites=true 且非受限模式时才放行写类工具。
+     * 无状态：对话历史由前端回传（仅收 user/assistant 文本），服务端不持有会话，重启不丢、也不串号。 */
+    /** agent 状态：模型端点 + 工具面 + 写门禁（前端页头直接展示，避免"以为在用 A 其实在用 B"） */
+    app.get("/api/agent/status", async () => {
+        const disk = readDiskConfig();
+        // 密钥：env 优先，否则解 config.json 的 DPAPI 密文（与 llm.js 同口径）
+        const key = process.env.LLM_API_KEY || process.env.INGEST_KEY || (disk.llmKeyEnc ? await unprotectSecret(disk.llmKeyEnc) : null);
+        const llm = resolveLlm({ baseUrl: disk.llmUrl || undefined, model: disk.llmModel || undefined, apiKey: key || undefined });
+        let tools = null;
+        let mcpError = null;
+        try {
+            tools = (await (await getAgentMcp()).tools()).map((t) => t.name);
+        }
+        catch (e) {
+            _agentMcp = null; // 拉起失败不缓存坏句柄，下次请求重试
+            mcpError = e instanceof Error ? e.message : String(e);
+        }
+        return {
+            ok: true,
+            agent: "dashboard-agent",
+            llm: {
+                model: llm.model,
+                baseUrl: llm.baseUrl,
+                endpoint: `${llm.baseUrl}/chat/completions`,
+                source: disk.llmUrl ? "config.json（设置页）" : "默认本地 Ollama",
+                keySet: !!key,
+            },
+            mcp: { tools: tools ?? [], toolCount: tools?.length ?? 0, error: mcpError },
+            writeMode: {
+                allowed: !RESTRICTED,
+                restricted: RESTRICTED,
+                hint: RESTRICTED
+                    ? "受限模式：由系统统一派发，agent 仅可读"
+                    : "默认只读；勾选「允许写入记忆库」后本次对话内 agent 的写类工具才会执行",
+            },
+        };
+    });
+    /** 跑一轮 agent：返回答案 + 工具调用轨迹（前端据此展示"它干了什么"） */
+    app.post("/api/agent/chat", async (req, reply) => {
+        const b = (req.body ?? {});
+        const message = String(b.message ?? "").trim();
+        if (!message)
+            return reply.code(400).send({ ok: false, error: "message 不能为空" });
+        if (message.length > 4000)
+            return reply.code(400).send({ ok: false, error: "message 过长（上限 4000 字）" });
+        const disk = readDiskConfig();
+        const key = process.env.LLM_API_KEY || process.env.INGEST_KEY || (disk.llmKeyEnc ? await unprotectSecret(disk.llmKeyEnc) : null);
+        const llm = resolveLlm({ baseUrl: disk.llmUrl || undefined, model: disk.llmModel || undefined, apiKey: key || undefined });
+        let mcp;
+        try {
+            mcp = await getAgentMcp();
+        }
+        catch (e) {
+            _agentMcp = null;
+            return reply.code(503).send({ ok: false, error: "MCP 工具面不可用：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        const messages = [{ role: "system", content: buildSystemPrompt("dashboard-agent") }];
+        for (const h of (Array.isArray(b.history) ? b.history.slice(-12) : [])) {
+            const role = h?.role === "assistant" ? "assistant" : h?.role === "user" ? "user" : null;
+            const content = String(h?.content ?? "").trim().slice(0, 3000);
+            if (role && content)
+                messages.push({ role, content });
+        }
+        messages.push({ role: "user", content: message });
+        const allowWrites = b.allowWrites === true && !RESTRICTED;
+        const toolLog = [];
+        const denied = [];
+        const t0 = Date.now();
+        const steps = Math.min(Math.max(Number(b.maxSteps) || 8, 1), 16);
+        try {
+            const r = await runAgent({
+                llm, mcp, messages, maxSteps: steps,
+                onStep: (s) => {
+                    if (s.type === "tool_call")
+                        toolLog.push({ tool: s.tool, args: JSON.stringify(s.args ?? {}).slice(0, 240), ok: null });
+                    if (s.type === "tool_result") {
+                        const last = toolLog[toolLog.length - 1];
+                        if (last && last.tool === s.tool)
+                            last.ok = s.ok;
+                    }
+                    if (s.type === "write_denied")
+                        denied.push(s.tool);
+                },
+                // 未获同意 → 写门禁一律拒绝（agent 收到拒绝提示后改为只读作答，不会硬重试）
+                writeGate: allowWrites ? null : () => false,
+            });
+            return {
+                ok: true, answer: r.answer, steps: r.steps, llmSteps: r.steps,
+                toolLog, deniedWrites: denied, allowWrites, elapsedMs: Date.now() - t0,
+                llm: { model: llm.model, baseUrl: llm.baseUrl },
+            };
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            const hint = /fetch failed|ECONNREFUSED|HTTP 500/i.test(msg)
+                ? `（LLM 端点 ${llm.baseUrl} 不可达：本地 Ollama 未启动可执行 ollama serve；或在设置页把 llmUrl/llmModel 指向可用端点）`
+                : "";
+            return reply.code(502).send({ ok: false, error: `agent 执行失败：${msg}${hint}`, toolLog, elapsedMs: Date.now() - t0 });
+        }
+    });
     return app;
 }
 // —— CLI：严格比对入口文件（pathToFileURL 全等），避免被 smoke-dashboard 等 import 时误触发真实监听 ——
@@ -2427,5 +2651,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const port = Number(process.env.MEMORY_PORT ?? DEFAULT_PORT);
     app
         .listen({ host, port })
-        .then(() => console.log(`MemoryOS Dashboard: http://${host}:${port}/?token=${token}  (db=${dbPath})`));
+        .then(() => console.log(`MemoryOS Dashboard: http://${host}:${port}/  （访问令牌不在 URL/日志中打印；令牌见 ${tokenFile}）`));
 }

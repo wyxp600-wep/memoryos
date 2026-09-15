@@ -14,7 +14,7 @@ const path = require("node:path");
 
 const ROOT = __dirname;
 const ASAR = path.join(ROOT, "resources", "app.asar");
-const SYNC_FILES = ["/main.js", "/services/core-process.js", "/window/tray.js"]; // ★ 2026-09-13：tray.js 加入同步（托盘「重新启动」）
+const SYNC_FILES = ["/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js"]; // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
 
 function sourceFile(asarPath) {
   return path.join(ROOT, asarPath.replace(/^\//, ""));

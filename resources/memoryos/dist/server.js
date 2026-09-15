@@ -5,7 +5,7 @@
  */
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logUsageBatch, logDaemon, appendEvent, setStatus, updateMemory, } from "./db.js";
+import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, } from "./db.js";
 import { hybridSearch } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
@@ -182,19 +182,18 @@ server.addTool({
         // M-1.5: 调用计数埋点。search 每次只需记 1 条（含零命中），与 returned 区分"调用次数"与"命中条数"。
         // 修正口径：零命中（最需要写记忆的场景）也必须计入，否则门禁会把"搜了但无果"误判成"没搜过"。
         const hitRef = hits[0] ?? { id: 0, agent: AGENT, project: args.project };
-        // M-1.5 + PerfOpt-3：1 条 search + N 条 returned 合并为单事务批量写入
-        //   （写入内容与逐条 logUsage 完全一致，立即落库；仅 I/O 形态从 N 次提交变 1 次）
-        logUsageBatch(db, [
-            {
-                memory_id: hitRef.id,
-                event: "search",
-                reader_agent: AGENT,
-                writer_agent: hitRef.agent,
-                project: hitRef.project,
-                session_id: args.session_id,
-                task_hint: args.task_hint,
-            },
-            ...hits.map((h) => ({
+        logUsage(db, {
+            memory_id: hitRef.id,
+            event: "search",
+            reader_agent: AGENT,
+            writer_agent: hitRef.agent,
+            project: hitRef.project,
+            session_id: args.session_id,
+            task_hint: args.task_hint,
+        });
+        // M-1.5: 每条命中埋点 returned（跨工具复用 + 价值漏斗基础）
+        for (const h of hits) {
+            logUsage(db, {
                 memory_id: h.id,
                 event: "returned",
                 reader_agent: AGENT,
@@ -202,8 +201,8 @@ server.addTool({
                 project: h.project,
                 session_id: args.session_id,
                 task_hint: args.task_hint,
-            })),
-        ]);
+            });
+        }
         if (hits.length === 0) {
             // 零命中降级：FTS 探测其他 project 是否有相关内容（只报数量，不返回正文，保持 scope 隔离）
             const q = args.query.trim().replace(/["'()*]/g, " ").replace(/\s+/g, " ").trim();
@@ -319,19 +318,19 @@ server.addTool({
             }
         }
         const top = hits.slice(0, args.limit);
-        // 埋点：与 memory_search 对齐（search 一次 + returned 每条）；PerfOpt-3 单事务批量
+        // 埋点：与 memory_search 对齐（search 一次 + returned 每条）
         const hitRef = top[0] ?? { id: 0, agent: AGENT, project: args.project };
-        logUsageBatch(db, [
-            {
-                memory_id: hitRef.id,
-                event: "search",
-                reader_agent: AGENT,
-                writer_agent: hitRef.agent,
-                project: hitRef.project,
-                session_id: args.session_id,
-                task_hint: args.task_hint,
-            },
-            ...top.map((h) => ({
+        logUsage(db, {
+            memory_id: hitRef.id,
+            event: "search",
+            reader_agent: AGENT,
+            writer_agent: hitRef.agent,
+            project: hitRef.project,
+            session_id: args.session_id,
+            task_hint: args.task_hint,
+        });
+        for (const h of top) {
+            logUsage(db, {
                 memory_id: h.id,
                 event: "returned",
                 reader_agent: AGENT,
@@ -339,8 +338,8 @@ server.addTool({
                 project: h.project,
                 session_id: args.session_id,
                 task_hint: args.task_hint,
-            })),
-        ]);
+            });
+        }
         if (top.length === 0) {
             return `记忆库中未找到与「${args.query}」相关的记忆（scope=${args.project}）。可在相关修复/决策后 memory_write 沉淀，之后此问题即可被回答。`;
         }
@@ -411,12 +410,11 @@ server.addTool({
         const scopes = db
             .prepare(`SELECT project, COUNT(*) c FROM memories WHERE status='active' GROUP BY project ORDER BY c DESC`)
             .all();
-        // ② 埋点：视为一次 context 注入（帮助漏斗追踪"自动注入"，区别于手动 search）；PerfOpt-3 批量
-        const injectedRows = [];
+        // ② 埋点：视为一次 context 注入（帮助漏斗追踪"自动注入"，区别于手动 search）
         for (const t of top) {
             const writer_agent = db.prepare(`SELECT agent FROM memories WHERE id=?`).get(t.id)?.agent ?? AGENT;
             const proj = db.prepare(`SELECT project FROM memories WHERE id=?`).get(t.id)?.project ?? args.project;
-            injectedRows.push({
+            logUsage(db, {
                 memory_id: t.id,
                 // ★ 口径修正（2026-09-12）：memory_context 是"开工自动注入"，不是用户主动检索。
                 // 原记 returned 污染了 usage-health 的检索命中数（注入曝光 ≈946 远超真实命中）。
@@ -429,7 +427,6 @@ server.addTool({
                 task_hint: args.task_hint,
             });
         }
-        logUsageBatch(db, injectedRows);
         const head = top.length
             ? top.map((t) => `#${t.id} [${t.type}|${t.agent}]${args.focus ? "" : ` cited=${t.cited} hit=${t.hit_count}`} conf=${t.confidence.toFixed(2)}: ${t.content.replace(/\s+/g, " ").slice(0, 120)}`).join("\n")
             : "（该 scope 暂无相关记忆，可 memory_write 沉淀）";
@@ -661,7 +658,11 @@ server.addTool({
             .default("experience")
             .describe("记忆类型"),
         project: z.string().default("global").describe("记忆库 project scope（默认 global，所有 Agent 可检索）"),
-        folder: z.string().optional().describe("vault 内子文件夹（默认 MemoryOS 写入）"),
+        folder: z
+            .string()
+            .optional()
+            .describe("vault 内子文件夹（默认 MemoryOS 写入；相对目录名，禁止 .. 穿越/绝对路径/盘符/UNC）")
+            .refine((f) => !/\.\./.test(String(f)) && !/^[A-Za-z]:[\\/]/.test(String(f)) && !/^\\\\/.test(String(f)), { message: "folder 非法：禁止路径穿越（..）、绝对路径、盘符或 UNC" }),
     }),
     async execute(args) {
         try {
@@ -735,12 +736,13 @@ function depsSatisfied(deps, doneIds) {
 }
 server.addTool({
     name: "task_assign",
-    description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。可声明 depends_on 依赖其他任务（多个用 , 分隔），被依赖任务全部 done 后本任务才可做。另一 Agent 用 task_claim 领取、task_done 完成、task_next 查询可做集。",
+    description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。可声明 depends_on 依赖其他任务（多个用 , 分隔），被依赖任务全部 done 后本任务才可做。另一 Agent 用 task_claim 领取、task_done 完成、task_next 查询可做集。默认同步在任务地图建一张 can 领取的卡片（create_card=true），卡片认领/流转会回写 memories 状态头。",
     parameters: z.object({
         content: z.string().describe("任务描述（不含状态头，工具自动加）"),
         assignee: z.string().describe("接收方 agent 名（如 codex/trae/zcode/claude）"),
         depends_on: z.string().optional().describe("依赖的任务 id，逗号分隔（如 '12,15'）；依赖全 done 后本任务才可做"),
         project: z.string().default("global").describe("任务 scope"),
+        create_card: z.boolean().default(true).describe("是否在任务地图同步建卡（默认开）"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -767,11 +769,30 @@ server.addTool({
             payload: JSON.stringify({ from: AGENT, to: args.assignee, project: args.project, depends: deps || null }),
             operator: `agent:${AGENT}`,
         });
+        // ★ 2026-09-15：task_assign 同步建卡（默认 open=create_card），避免任务地图无卡可领。
+        // 复用 from-memory 的 ref 关联：ref_kind='memory', ref_id=task 记忆 id → 卡片状态流转可经此回写 memories。
+        let cardInfo = "";
+        if (args.create_card !== false) {
+            try {
+                const dup = db.prepare(`SELECT id FROM cards WHERE ref_kind='memory' AND ref_id=?`).get(row.id);
+                const title = body.split("\n")[0].replace(/\[[^\]]*\]/g, "").trim().slice(0, 120) || `任务 #${row.id}`;
+                const cardId = dup
+                    ? dup.id
+                    : Number(db
+                        .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES ('default','task',?,?,'ready','memory',?,?,?)`)
+                        .run(title, body.slice(0, 2000), row.id, 3, args.assignee).lastInsertRowid);
+                db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(cardId, row.id);
+                cardInfo = ` + 地图卡 #${cardId}`;
+            }
+            catch (e) {
+                cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
+            }
+        }
         logUsage(db, {
             memory_id: row.id, event: "write", reader_agent: AGENT, writer_agent: AGENT,
             project: row.project, session_id: args.session_id, task_hint: args.task_hint,
         });
-        return `已分派任务 #${row.id} → ${args.assignee}（status=pending）[${row.type}|${row.agent}] ${row.content.replace(/\s+/g, " ").slice(0, 120)}`;
+        return `已分派任务 #${row.id} → ${args.assignee}（status=pending）${cardInfo}[${row.type}|${row.agent}] ${row.content.replace(/\s+/g, " ").slice(0, 120)}`;
     },
 });
 server.addTool({
@@ -801,6 +822,7 @@ server.addTool({
             const newContent = taskBodyWithDep("in_progress", who, st.deps, taskBody(row.content));
             updateMemory(db, row.id, { content: newContent }); // 同步 FTS
             appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who }), operator: `agent:${AGENT}` });
+            syncTaskToCard(row.id, "running"); // ★ 2026-09-15：认领 → 关联卡片 running，看板即时同步
             return `已认领任务 #${row.id}（status=in_progress by ${who}）：${newContent.replace(/\s+/g, " ").slice(0, 120)}`;
         }
         // 列可领任务：type='task' 且状态头 pending（★ H4：secret 任务不进工具通道）
@@ -808,11 +830,42 @@ server.addTool({
        WHERE type='task' AND status IN ('active','trial') AND project IN (?, 'global') AND sensitivity != 'secret'
        ORDER BY created_at DESC LIMIT ?`).all(args.project, 50);
         const open = rows.filter((r) => readTaskState(r.content)?.status === "pending");
-        if (!open.length)
-            return "当前无可领的 pending 任务。";
+        if (!open.length) {
+            // ★ 2026-09-15：跨 project 回退提示（与 task_next 同口径）
+            let hint = "";
+            if (args.project !== "global") {
+                try {
+                    const other = db.prepare(`SELECT project, COUNT(*) c FROM memories WHERE type='task' AND status IN ('active','trial') AND project != 'global' AND project != ? AND sensitivity != 'secret' GROUP BY project`).all(args.project);
+                    if (other.length)
+                        hint = `；其他 project 有开放任务 ${other.map((o) => `${o.project}(${o.c})`).join("、")}，可切换 project 查询`;
+                }
+                catch { /* 统计失败忽略 */ }
+            }
+            return `当前无可领的 pending 任务${hint}。`;
+        }
         return open.map((r) => `#${r.id} [${readTaskState(r.content)?.assignee}] ${r.content.slice(30, 160)}`).join("\n");
     },
 });
+/** ★ 2026-09-15 根治「智能体领取/上传与看板不一致」：任务状态变更 → 关联卡片同步。
+ *  反向于 dashboard.syncCardToTask()：MCP 的 task_claim/task_done 改 memories 状态头后，
+ *  立即把对应卡片 status 同步（in_progress→running / done→done），消除「MCP 领取但看板仍 ready」的不一致。 */
+function syncTaskToCard(memoryId, cardStatus) {
+    try {
+        const rel = db.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch' LIMIT 1`).get(memoryId);
+        if (!rel)
+            return false;
+        const cid = Number(rel.card_id);
+        const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
+        if (!card)
+            return false;
+        db.prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(cardStatus, cid);
+        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, "dispatcher", "mcp_sync", card.status, cardStatus, `任务 #${memoryId} MCP 流转同步`);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 server.addTool({
     name: "task_done",
     description: "多 Agent 协同：把已认领/待办任务标记为完成（状态头 → done），并把结论追加进任务正文。调用方应为当前认领者或任务接收方。",
@@ -840,7 +893,45 @@ server.addTool({
         updateMemory(db, row.id, { content: newContent });
         bumpConfidence(db, row.id, 0.05); // 完成任务强化
         appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT }), operator: `agent:${AGENT}` });
+        syncTaskToCard(row.id, "done"); // ★ 2026-09-15：完成 → 关联卡片 done，看板即时同步
         return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}`;
+    },
+});
+server.addTool({
+    name: "task_supersede",
+    description: "多 Agent 协同·去重归档：把一条重复任务标记为「被另一条取代」——状态置 merged + superseded_by=主任务 id。用于跨链路重复（如 dispatcher 卡片派生 与 task_assign 直写 双套）；被并的任务移出可做集、不污染正文、可经 superseded_by 追溯主任务。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("要归档的重复任务记忆 id（loser）"),
+        superseded_by: z.number().int().min(1).describe("保留的主任务记忆 id（winner）"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const win = readMemory(db, args.superseded_by);
+        if (!win || win.type !== "task")
+            return `#${args.superseded_by} 不存在或非任务（winner 须为任务）。`;
+        if (args.memory_id === args.superseded_by)
+            return `memory_id 与 superseded_by 不能相同。`;
+        const st = readTaskState(row.content);
+        if (!st)
+            return `#${args.memory_id} 任务头格式异常，无法归档。`;
+        if (st.status === "done")
+            return `#${args.memory_id} 已 done，无需归档。`;
+        markMerged(db, args.memory_id, args.superseded_by); // merged + superseded_by；移出检索候选
+        appendEvent(db, {
+            memory_id: args.memory_id,
+            op: "task_supersede",
+            payload: JSON.stringify({ superseded_by: args.superseded_by, by: AGENT }),
+            operator: `agent:${AGENT}`,
+        });
+        logUsage(db, {
+            memory_id: args.memory_id, event: "supersede", reader_agent: AGENT, writer_agent: AGENT,
+            project: row.project, session_id: args.session_id, task_hint: args.task_hint,
+        });
+        return `任务 #${args.memory_id} 已标记被 #${args.superseded_by} 取代（merged ⇒ 移出可做集，可经 superseded_by 追溯）`;
     },
 });
 server.addTool({
@@ -921,6 +1012,19 @@ server.addTool({
         out += `可做（pending 且依赖done，按优先级）:\n${avail.length ? avail.map((x) => x.label).join("\n") : "（暂无，检查阻塞项）"}\n\n`;
         out += `阻塞（依赖未完成）:\n${blocked.length ? blocked.map((x) => x.label).join("\n") : "（无）"}\n\n`;
         out += `我在做:\n${mine.length ? mine.join("\n") : "（无进行中任务）"}`;
+        // ★ 2026-09-15：跨 project 回退提示 —— 指定 project 无开放任务且确实存在其他 project 的任务时，
+        // 明确提示而非静默空结果（避免『任务存在但领不到』）。
+        if (avail.length === 0 && args.project !== "global") {
+            try {
+                const other = db.prepare(`SELECT project, COUNT(*) c FROM memories WHERE type='task' AND status IN ('active','trial') AND project != 'global' AND project != ? AND sensitivity != 'secret' GROUP BY project`).all(args.project);
+                if (other.length) {
+                    out += `\n\n跨 project 提示：当前 project='${args.project}' 无可用任务。其他 project 有开放任务 ${other.map((o) => `${o.project}(${o.c})`).join("、")}，可用 project 参数切换查询。`;
+                }
+            }
+            catch {
+                /* 统计失败不回退原返回 */
+            }
+        }
         return out;
     },
 });

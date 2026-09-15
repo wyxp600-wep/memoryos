@@ -527,6 +527,33 @@ export function exportMemories(db, opts = {}) {
  * 同时同步写入 memories 表（去重预检 + 埋点），并记录 obsidian_sync 元表映射。
  * 文件已存在时加时间戳后缀，绝不覆盖。
  */
+/**
+ * ★ 2026-09-15：folder 参数消毒（防路径穿越，P-4170）。
+ * folder 来自 MCP 工具/HTTP 入参，原本未消毒直接 path.join(vaultRoot, folder)，
+ * 任意 `..` / 绝对路径 / 盘符 / UNC 可把 .md 写到 vault 之外。
+ * 规则：清洗每段为安全目录名（仿 title 的非法字符过滤），禁止 `..`、空段、绝对路径、
+ * 盘符（C:/）与 UNC（\\），最终解析后必须仍落在 vaultRoot 内（由调用方断言）。
+ */
+export function sanitizeFolder(folder) {
+    const raw = String(folder ?? "").trim();
+    if (!raw)
+        return "Inbox";
+    // 绝对路径 / 盘符 / UNC / 根斜杠 —— 一律拒绝（不静默清洗）
+    if (/^[A-Za-z]:[\\/]/.test(raw))
+        throw new Error(`非法 folder 路径（盘符绝对）: ${folder}`);
+    if (/^\\\\/.test(raw))
+        throw new Error(`非法 folder 路径（UNC）: ${folder}`);
+    if (/^[/]/.test(raw))
+        throw new Error(`非法 folder 路径（根绝对）: ${folder}`);
+    // 穿越段：任何 .. 段都拒绝（不丢弃，直接报错）
+    const segments = raw.split(/[\\/]+/).map((s) => s.replace(/[\\/:*?"<>|#]+/g, "_").trim());
+    if (segments.some((s) => s === ".."))
+        throw new Error(`非法 folder 路径（含 .. 穿越）: ${folder}`);
+    const clean = segments.filter((s) => s && s !== ".");
+    if (!clean.length)
+        throw new Error(`非法 folder 路径（空）: ${folder}`);
+    return clean.join("/");
+}
 export async function writeNoteToVault(db, embedder, opts) {
     const vaultRoot = path.resolve(opts.vaultPath);
     if (!fs.existsSync(vaultRoot) || !fs.statSync(vaultRoot).isDirectory()) {
@@ -535,7 +562,7 @@ export async function writeNoteToVault(db, embedder, opts) {
     ensureMetaTable(db);
     const type = mapType(opts.type);
     const project = opts.project ?? "global";
-    const folder = opts.folder ?? WRITE_DIR;
+    const folder = sanitizeFolder(opts.folder ?? WRITE_DIR);
     const agent = opts.agent;
     const agent_fpath = opts.agent_fpath ?? null;
     // 文件名：清洗 title 非法字符
@@ -551,6 +578,10 @@ export async function writeNoteToVault(db, embedder, opts) {
         fileName = `${safeTitle}-${ts}.md`;
         filePath = path.join(dir, fileName);
         created = false;
+    }
+    // ★ 2026-09-15：纵深防御——最终路径必须仍落在 vaultRoot 内（folder 消毒后的兜底断言）
+    if (!filePath.startsWith(vaultRoot + path.sep) && filePath !== vaultRoot) {
+        throw new Error(`拒绝写入 vault 之外: ${filePath}`);
     }
     // 生成 frontmatter + 写文件
     const now = new Date().toISOString();

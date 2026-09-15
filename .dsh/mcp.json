@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "servers": [
+    {
+      "name": "memoryos",
+      "transport": "stdio",
+      "enabled": true,
+      "toolCallTimeoutMs": 15000,
+      "reconnect": {},
+      "command": "node",
+      "args": [
+        "C:\\Users\\WYX\\Desktop\\MemoryOS\\resources\\memoryos\\dist\\server.js"
+      ]
+    }
+  ]
+}

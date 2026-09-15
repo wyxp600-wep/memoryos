@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MemoryOS UI 界面问题分析报告（实测版）</title>
+<style>
+:root {
+  --bg-deep:#0a0f14; --bg-base:#0f1620; --bg-card:#141e2a; --bg-card-2:#1a2535;
+  --border:rgba(65,187,200,0.15); --border-bright:rgba(65,187,200,0.4);
+  --text:#e2e8f0; --text-2:#94a3b8; --text-3:#64748b;
+  --cyan:#22d3ee; --purple:#a78bfa; --red:#f87171; --orange:#fbbf24; --green:#34d399;
+  --radius:12px; --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  --sans:-apple-system,'Segoe UI','Noto Sans SC',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg-deep);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.7}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(ellipse 600px 400px at 15% 0%,rgba(34,211,238,.08),transparent),
+             radial-gradient(ellipse 500px 500px at 85% 100%,rgba(167,139,250,.06),transparent)}
+.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:42px 24px 90px}
+.header{text-align:center;margin-bottom:40px}
+.header h1{font-size:30px;font-weight:700;letter-spacing:-.5px;
+  background:linear-gradient(135deg,var(--cyan),var(--purple));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px}
+.header .sub{color:var(--text-3);font-size:13px;font-family:var(--mono)}
+.header .note{margin-top:14px;font-size:12px;color:var(--text-3)}
+
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+.kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi.p0::before{background:var(--red)} .kpi.p1::before{background:var(--orange)}
+.kpi.p2::before{background:var(--cyan)} .kpi.p3::before{background:var(--purple)}
+.kpi .n{font-size:34px;font-weight:700;font-family:var(--mono);line-height:1;margin-bottom:6px}
+.kpi.p0 .n{color:var(--red)} .kpi.p1 .n{color:var(--orange)} .kpi.p2 .n{color:var(--cyan)} .kpi.p3 .n{color:var(--purple)}
+.kpi .l{font-size:12px;color:var(--text-2);letter-spacing:.5px}
+
+.legend{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin:18px 0 40px;font-size:12px;color:var(--text-3)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+.sec{margin-bottom:42px}
+.sec-h{font-size:18px;font-weight:600;margin-bottom:18px;display:flex;align-items:center;gap:10px;
+  padding-bottom:12px;border-bottom:1px solid var(--border)}
+.sec-h .b{font-size:11px;padding:2px 10px;border-radius:20px;font-weight:600;font-family:var(--mono)}
+.b.p0{background:rgba(248,113,113,.15);color:var(--red)}
+.b.p1{background:rgba(251,191,36,.15);color:var(--orange)}
+.b.p2{background:rgba(34,211,238,.15);color:var(--cyan)}
+
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:18px 22px;margin-bottom:12px;transition:border-color .2s}
+.card:hover{border-color:var(--border-bright)}
+.card-h{display:flex;align-items:flex-start;gap:12px;margin-bottom:8px}
+.id{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;margin-top:2px;white-space:nowrap}
+.id.p0{background:rgba(248,113,113,.15);color:var(--red)}
+.id.p1{background:rgba(251,191,36,.15);color:var(--orange)}
+.id.p2{background:rgba(34,211,238,.15);color:var(--cyan)}
+.ttl{font-size:15px;font-weight:600;flex:1}
+.where{font-family:var(--mono);font-size:11px;color:var(--text-3);background:rgba(255,255,255,.04);
+  padding:2px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0}
+.body{color:var(--text-2);font-size:13.5px;line-height:1.8}
+.body p{margin-bottom:6px}
+.body code{font-family:var(--mono);font-size:12px;background:rgba(34,211,238,.1);color:var(--cyan);padding:1px 6px;border-radius:4px}
+.fix{margin-top:10px;padding:10px 14px;border-radius:8px;background:rgba(52,211,153,.06);
+  border-left:3px solid var(--green);font-size:13px;color:var(--text-2)}
+.fix b{color:var(--green)}
+.shot{margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(248,113,113,.06);
+  border-left:3px solid var(--red);font-size:12.5px;color:var(--text-2)}
+.shot b{color:var(--red)}
+.t{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-family:var(--mono);margin-right:6px}
+.t.layout{background:rgba(248,113,113,.12);color:var(--red)}
+.t.data{background:rgba(251,191,36,.12);color:var(--orange)}
+.t.i18n{background:rgba(167,139,250,.12);color:var(--purple)}
+.t.empty{background:rgba(34,211,238,.12);color:var(--cyan)}
+.t.chart{background:rgba(52,211,153,.12);color:var(--green)}
+.t.code{background:rgba(148,163,184,.15);color:var(--text-2)}
+
+@media(max-width:768px){.grid4{grid-template-columns:repeat(2,1fr)}.where{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="header">
+  <h1>MemoryOS UI 界面问题分析报告</h1>
+  <div class="sub">实际运行巡检 14 个页面 + 静态代码审查 · 亮色/暗色双主题</div>
+  <div class="note">分析对象 memoryos-dashboard-redesign（index.html 179KB + app.js 282KB）· 2026-09-15</div>
+</div>
+
+<div class="grid4">
+  <div class="kpi p0"><div class="n">5</div><div class="l">阻断级（功能不可用）</div></div>
+  <div class="kpi p1"><div class="n">9</div><div class="l">严重（明显体验缺陷）</div></div>
+  <div class="kpi p2"><div class="n">11</div><div class="l">一般（一致性/打磨）</div></div>
+  <div class="kpi p3"><div class="n">25</div><div class="l">问题总数</div></div>
+</div>
+<div class="legend">
+  <span><i style="background:var(--red)"></i>阻断 P0</span>
+  <span><i style="background:var(--orange)"></i>严重 P1</span>
+  <span><i style="background:var(--cyan)"></i>一般 P2</span>
+  <span style="color:var(--red)">■ 截图实证</span>
+  <span style="color:var(--text-3)">□ 代码审查</span>
+</div>
+
+<!-- ============ P0 阻断 ============ -->
+<div class="sec">
+  <div class="sec-h">🔴 阻断级问题（功能/可视化不可用）<span class="b p0">5 项</span></div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p0">P0-1</span><div class="ttl">知识图谱渲染成无意义的正圆环，完全无法展示关系</div><span class="where">知识图谱页</span></div>
+    <div class="body">
+      <p><span class="t layout">布局</span><span class="t shot-badge"></span><b style="color:var(--red)">截图实证</b>：200+ 节点被力导向布局均匀排成一个正圆形，节点小到没有文字标签，连线沿圆周/穿圆心，视觉上就是一个蓝色圆圈，看不出任何聚类、层级或关联。顶部还提示"图已截断（节点&gt;200）"，等于默认状态就是坏的。</p>
+      <div class="shot"><b>实测：</b>进入页面默认即如此，图例有笔记/记忆/卡片三类，但只能看到蓝色笔记节点，图谱作为核心功能不可用。</div>
+      <div class="fix"><b>修复方向：</b>节点超阈值时默认按 scope 聚类折叠（而非硬截断后仍全量画圈）；节点按连接度做力导向权重而非均匀环形；默认深度收窄到可读范围并显示标签。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p0">P0-2</span><div class="ttl">任务看板节点严重重叠，卡片互相压住无法阅读</div><span class="where">任务看板页</span></div>
+    <div class="body">
+      <p><span class="t layout">布局</span><b style="color:var(--red)">截图实证</b>：右上角 #63 卡片直接压在 #51 卡片之上，两张卡的标题文字互相覆盖；与此同时左侧列与中间列之间却留着大片空白。自动排布算法既重叠又疏密悬殊。</p>
+      <div class="shot"><b>实测：</b>默认进入为 120% 缩放且未"适配全图"，一进来看到的是局部错乱画面而非整体。102 节点 / 61 连线。</div>
+      <div class="fix"><b>修复方向：</b>自动排布加入碰撞检测（节点间距≥卡片宽+gap）；进入页面默认执行一次"适配全图"；持久化坐标加载后做重叠校验。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p0">P0-3</span><div class="ttl">记忆总数三处数字互相矛盾（247 / 1855）</div><span class="where">概览·全部记忆·设置·侧栏</span></div>
+    <div class="body">
+      <p><span class="t data">数据</span><b style="color:var(--red)">截图实证</b>：概览统计卡"记忆总量 <code>247</code>"、侧栏徽标 <code>247</code>，但"全部记忆"页右上角是"共 <code>1855</code> 条"、设置弹窗"关于"里"记忆总数 <code>1855</code>"。用户无法判断哪个是真的，严重损害数据可信度。</p>
+      <div class="fix"><b>修复方向：</b>统一统计口径（247 疑似 active 子集、1855 为全量含归档/合并），在卡片上明确标注口径，如"活跃记忆 247 / 全部 1855"，所有页面共用同一接口字段。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p0">P0-4</span><div class="ttl">侧栏"待归档·僵尸"徽标 18，实际列表只有 1 条</div><span class="where">侧栏 vs 僵尸页</span></div>
+    <div class="body">
+      <p><span class="t data">数据</span><b style="color:var(--red)">截图实证</b>：侧栏红色徽标显示 18，点进去"全部僵尸"只有 1 条记录（闲置 44 天）。徽标计数与列表查询口径不一致，会让用户以为漏加载了。</p>
+      <div class="fix"><b>修复方向：</b>徽标计数与列表使用同一筛选条件（状态+闲置天数阈值），并在切换 15+/30+/60+ 天时同步。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p0">P0-5</span><div class="ttl">暗色主题下多个输入框仍是白底，亮到刺眼</div><span class="where">新建记忆弹窗·笔记页</span></div>
+    <div class="body">
+      <p><span class="t layout">主题</span><b style="color:var(--red)">截图实证</b>：暗色模式下，"新建记忆"弹窗的"项目 SCOPE"输入框、笔记页的 VAULT 路径框和 PROJECT 框都是纯白底白字场景，与深色弹窗强反差。根因是暗色覆盖选择器只写了 <code>.form-field input</code>，而这些输入框不在 <code>.form-field</code> 容器内。</p>
+      <div class="fix"><b>修复方向：</b>把暗色输入框样式选择器改为覆盖所有 <code>input/textarea/select</code>（或统一加 form-field 类），不要依赖父级 class。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P1 严重 ============ -->
+<div class="sec">
+  <div class="sec-h">🟠 严重问题（明显体验缺陷）<span class="b p1">9 项</span></div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-1</span><div class="ttl">中英文混杂贯穿全应用，技术术语直接裸露</div><span class="where">全局</span></div>
+    <div class="body">
+      <p><span class="t i18n">国际化</span><b style="color:var(--red)">截图实证</b>，同类元素一会儿中文一会儿英文：</p>
+      <p>· 类型标签：大部分页面是中文"经验/踩坑"，但全部记忆表格里 <code>task</code> 是纯灰文本无彩色标签，僵尸页 <code>experience</code> 是英文紫标签。</p>
+      <p>· 图表：折线图图例写 <code>write / returned / cited</code>，图内标注却是"写入/返回/引用"；环形图类型 <code>task</code> 夹在中文里。</p>
+      <p>· 审计日志操作名全英文 <code>decay · eff_update / trial · promote</code>；采集页类型列 <code>rule/memory/convo</code>；说明文字裸露 <code>scope/frontmatter/dry-run/INGEST_MAX_CALLS/127.0.0.1:18900</code>。</p>
+      <div class="fix"><b>修复方向：</b>建立类型/状态/操作的中英文映射字典，展示层统一中文化（英文原值放 title 提示）；面向用户的描述句移除环境变量、IP、字段名。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-2</span><div class="ttl">空状态大面积留白且无引导，用户分不清"没数据"还是"加载失败"</div><span class="where">仲裁队列·Agent·笔记</span></div>
+    <div class="body">
+      <p><span class="t empty">空状态</span><b style="color:var(--red)">截图实证</b>：仲裁队列"待裁决 0 条"时只剩一个空表头和整屏空白，没有图标/说明/操作入口；Agent 页对话区空着，建议问题"试着问…"只是纯文本<b>不可点击</b>；笔记页三个空栏各自重复提示"选好 vault 再导入"，却不解释 vault 是什么。</p>
+      <div class="fix"><b>修复方向：</b>统一空状态组件（图标+一句话说明+主动作按钮）；Agent 建议问题做成可点击 chips 直接发送。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-3</span><div class="ttl">设置弹窗内容溢出底部被截断，快捷键文字竖排</div><span class="where">设置弹窗</span></div>
+    <div class="body">
+      <p><span class="t layout">布局</span><b style="color:var(--red)">截图实证</b>：弹窗 max-height 80vh 但内容更高，LLM 配置/系统区只露出半截（"采集/提炼/+内…"被切），且没有明显滚动提示。快捷键卡片里"聚焦搜索""详情切换"被挤成一字一行的<b>竖排文字</b>。</p>
+      <div class="fix"><b>修复方向：</b>弹窗 body 设 <code>overflow-y:auto</code> 并让 footer 固定；快捷键标签加 <code>white-space:nowrap</code>，栅格给足最小宽度。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-4</span><div class="ttl">趋势图 X 轴时间不连续却等宽排列，造成趋势误导</div><span class="where">趋势页</span></div>
+    <div class="body">
+      <p><span class="t chart">图表</span><b style="color:var(--red)">截图实证</b>：周增量柱状图 X 轴为 W19/W23/W31/W36/W37/W38，中间跳过数十周，但相邻柱间距完全相等，W19→W23（4周）与 W36→W37（1周）视觉等宽；前段大量空周位留白。eff 衰减曲线 X 轴用 <code>#1 #113 #225…#1233</code> 记忆序号，用户无法理解含义。</p>
+      <div class="fix"><b>修复方向：</b>时间轴按真实时间比例或只显示有数据的周；衰减曲线 X 轴改为"记忆年龄/天数"并加轴标题。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-5</span><div class="ttl">eff 质量直方图中段断裂、写入热力图无坐标标签</div><span class="where">概览页</span></div>
+    <div class="body">
+      <p><span class="t chart">图表</span><b style="color:var(--red)">截图实证</b>：eff 直方图在 0.1~0.3 区间完全无柱，形成视觉断档却未说明；写入活跃度热力图几乎全空，且<b>没有行（星期）列（日期）标签</b>，只有"少→多"图例，无法解读哪个格子对应哪天。</p>
+      <div class="fix"><b>修复方向：</b>空区间补 0 值占位并保持连续；热力图补星期/月份坐标，无数据时给出空状态说明。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-6</span><div class="ttl">全部记忆表格信息密度与可读性问题集中</div><span class="where">全部记忆页</span></div>
+    <div class="body">
+      <p><span class="t layout">布局</span><b style="color:var(--red)">截图实证</b>：内容两行截断且常断在词/句中间；EFF 列标题是缩写无解释；操作列两个图标按钮<b>无文字/无 tooltip 区分</b>；"指向的库"列在工具页大面积显示"无法判定/—"，信息价值低；类型筛选无计数而类别筛选有计数，不一致。</p>
+      <div class="fix"><b>修复方向：</b>表头加中文全称+tooltip；行操作按钮加 title/文字；空值率高的列默认收起到"更多列"。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-7</span><div class="ttl">亮色主题背景色与设计变量不一致（米黄 vs 冷蓝灰两套底色）</div><span class="where">全局 · index.html L14/L307</span></div>
+    <div class="body">
+      <p><span class="t code">代码</span>变量声明是"米白 <code>#FCF9E8</code>"，但 body 实际背景是冷蓝灰渐变 <code>#f8fafc→#e8f4f8</code>；背景光晕还用了金黄 <code>#fccd4d</code> 和玫红 <code>#e11d48</code>，与青色主色不搭，亮色下尤其突兀。</p>
+      <div class="fix"><b>修复方向：</b>统一底色变量与 body 渐变；光晕/星点改为青色系同色系。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-8</span><div class="ttl">992–768px 区间侧栏被锁死，汉堡按钮未显示</div><span class="where">响应式 · L2257/L2333</span></div>
+    <div class="body">
+      <p><span class="t layout">响应式</span>侧栏在 ≤992px 自动收成 64px 图标条，但展开/收起按钮 <code>.sidebar-toggle</code> 默认 <code>display:none</code>，要到 ≤768px 才显示。768–992px 之间用户无法手动展开侧栏。</p>
+      <div class="fix"><b>修复方向：</b>把 toggle 显示断点提前到 992px。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p1">P1-9</span><div class="ttl">暗色模式下强调按钮/轨道对比失衡</div><span class="where">概览·状态分布</span></div>
+    <div class="body">
+      <p><span class="t layout">主题</span><b style="color:var(--red)">截图实证</b>：暗色下"去写入一条记忆"仍是高饱和亮黄块，在深色背景上刺眼、与青色体系脱节；状态分布的灰色轨道条几乎与背景融为一体，只剩彩色填充段。</p>
+      <div class="fix"><b>修复方向：</b>警告色在暗色下降饱和/提亮文字；轨道色用 <code>rgba(255,255,255,.08)</code> 保证可见。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P2 一般 ============ -->
+<div class="sec">
+  <div class="sec-h">🔵 一般问题（一致性与打磨）<span class="b p2">11 项</span></div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-1</span><div class="ttl">CSS 变量 --radius 未定义，骨架屏圆角失效</div><span class="where">L661</span></div>
+    <div class="body"><p><span class="t code">代码</span><code>.skeleton-card{border-radius:var(--radius)}</code>，但只定义了 <code>--radius-lg/md/sm</code>，导致加载骨架直角，与正式卡片 20px 圆角不一致。改为 <code>var(--radius-lg)</code> 即可。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-2</span><div class="ttl">硬编码颜色 469 处、内联样式 330 处，主题维护脆弱</div><span class="where">全局</span></div>
+    <div class="body"><p><span class="t code">代码</span>142 处 hex + 327 处 rgba 写死，暗色靠逐元素 <code>[data-theme=dark]</code> 覆盖（这正是 P0-5 漏网的根因）；330 个内联 style 让统一样式和响应式很难收敛。建议色值全部变量化、重复内联提取为类。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-3</span><div class="ttl">"记忆利用率健康"数字斜杠堆叠难读</div><span class="where">概览页</span></div>
+    <div class="body"><p><span class="t layout">布局</span><b style="color:var(--red)">截图实证</b>：第三个指标 <code>153/1234/1039/36</code> 一串斜杠挤在一格，标题只写"30天 搜/写/回/引"，读者要逐位对应。建议拆成 4 个小数字或用"搜153·写1234·回1039·引36"带标签排列。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-4</span><div class="ttl">高价值 TOP 榜：排名色区分弱、指标名用英文大写</div><span class="where">高价值TOP页</span></div>
+    <div class="body"><p><span class="t i18n">国际化</span>第 1/2/3 名色块（黄/灰/棕）区分度低，第 4 名起突然无底色；右侧 <code>CITED / RETURNED</code> 全大写英文，两栏内容大量重复却未说明区别，顶部说明也是 <code>raw-cited+inferred-cited</code>。建议中文化指标名、明确两栏定义。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-5</span><div class="ttl">跨工具页用纯数字列表表达矩阵，缺少视觉编码</div><span class="where">跨工具页</span></div>
+    <div class="body"><p><span class="t chart">图表</span>名为"Writer×Reader 复用矩阵"，实际是纵向列表 + 右侧纯数字，数值大小无法一眼比较，(returned)/(cited) 全英文。建议加内联条形（按次数比例）或真正的二维热力矩阵。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-6</span><div class="ttl">扫描进度条完成后仍满格常驻，无完成态</div><span class="where">工具连接页</span></div>
+    <div class="body"><p><span class="t layout">状态</span>扫描已 100% 完成，青紫渐变进度条仍一直满格显示，应在完成后收起或变为"✓ 已完成 N 个"静态状态，避免用户以为还在跑。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-7</span><div class="ttl">导航 &lt;a&gt; 无 href、图标按钮缺 aria-label</div><span class="where">侧栏·顶栏</span></div>
+    <div class="body"><p><span class="t code">可访问性</span>导航项是无 href 的 <code>&lt;a&gt;</code>，键盘/屏幕阅读器不友好；主题🌙、设置⚙️只有 title 无 aria-label（任务地图缩放按钮反而做对了）。建议补 href hash 或改 button，并统一 aria-label。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-8</span><div class="ttl">字体走外部 CDN，离线静默回退</div><span class="where">L10</span></div>
+    <div class="body"><p><span class="t code">性能</span>Space Grotesk 等从 <code>miaoda.feishu.cn</code> 加载，桌面端离线时数字/标题字体静默回退系统字体，版式跳动。建议 woff2 本地化打包。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-9</span><div class="ttl">常驻动画过多，hover 上浮过度普遍</div><span class="where">全局</span></div>
+    <div class="body"><p><span class="t code">性能</span>双 orb 浮动 + 星点闪烁 + 卡片 stagger 入场 + ripple + shimmer 同时运行；几乎所有卡片 hover 都 translateY 上浮，鼠标划过时画面持续晃动。建议页面不可见时暂停背景动画，数据卡去掉位移只留描边反馈。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-10</span><div class="ttl">UI 版本号硬编码两处，任务地图高度写死视口值</div><span class="where">L2551/L2651 · L1507</span></div>
+    <div class="body"><p><span class="t code">代码</span>"UI 09-11 23:36"在 logo 和顶栏各硬编码一份，易不一致；任务画布 <code>height:calc(100vh - 285px)</code> 靠魔数估算，顶栏一变就溢出/留白。建议版本由 JS 注入、画布改 flex 自适应。</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="id p2">P2-11</span><div class="ttl">z-index 层级与顶栏小屏挤压缺少统一管理</div><span class="where">全局</span></div>
+    <div class="body"><p><span class="t code">代码</span>z-index 从 0/50/100/200/400/500/999 散落各处无变量；顶栏 actions 无 flex-wrap，窄屏搜索框+多按钮易挤溢。建议 z-index 变量化、顶栏允许换行或按断点收按钮。</p></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-h">📋 修复优先级建议</div>
+  <div class="card">
+    <div class="body" style="font-size:13.5px">
+      <p><b style="color:var(--red)">第一批（数据可信 + 核心可视化）：</b>P0-3/P0-4 统一计数口径 → P0-1 图谱聚类 → P0-2 看板防重叠 → P0-5 暗色输入框。这批直接决定"数据能不能信、核心页面能不能看"。</p>
+      <p><b style="color:var(--orange)">第二批（一致性 + 可用性）：</b>P1-1 术语中文化映射、P1-2 空状态组件、P1-3 设置弹窗、P1-4/P1-5 图表坐标与断档、P1-6 表格可读性。</p>
+      <p><b style="color:var(--cyan)">第三批（主题/响应式/打磨）：</b>P1-7~P1-9 主题与响应式，P2 全部纳入一次"设计系统收敛"：色值变量化、去硬编码、字体本地化、动画降噪。</p>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

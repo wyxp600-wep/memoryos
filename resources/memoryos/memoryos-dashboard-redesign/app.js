@@ -139,13 +139,14 @@
 
   /* ===== 受限模式（能力位由后端 /api/summary 下发）=====
      入口不删除、只隐藏：body.restricted + CSS 规则生效，后端关闭受限后自动恢复。 */
-  let RESTRICTED = { enabled: false, taskCreate: false, planImport: false, customSource: false, cardCreate: false, cardDispatch: false, cardComment: false, cardLink: false, noteCreate: false, cardToMemory: false };
+  let RESTRICTED = { enabled: false, taskCreate: false, planImport: false, customSource: false, cardCreate: false, cardDispatch: false, cardComment: false, cardLink: false, noteCreate: false, cardToMemory: false, agentWrite: false };
   function applyRestricted(r) {
     if (!r || typeof r !== 'object') return;
     RESTRICTED = {
       enabled: !!r.enabled, taskCreate: !!r.taskCreate, planImport: !!r.planImport, customSource: !!r.customSource,
       cardCreate: !!r.cardCreate, cardDispatch: !!r.cardDispatch, cardComment: !!r.cardComment,
       cardLink: !!r.cardLink, noteCreate: !!r.noteCreate, cardToMemory: !!r.cardToMemory,
+      agentWrite: !!r.agentWrite,
     };
     document.body.classList.toggle('restricted', RESTRICTED.enabled);
   }
@@ -1076,7 +1077,7 @@
   }
 
   /* ===== 路由 ===== */
-  const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
+  const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], agent: ['Agent', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
   function navigate(route) {
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
     $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + route));
@@ -1088,12 +1089,15 @@
     if (route === 'top') window.EChartsLoaded.when(drawTopScatter);
     if (route === 'cross') window.EChartsLoaded.when(drawCrossCharts);
     if (route === 'connect' && autoScanConnect) autoScanConnect();
+    if (route === 'agent' && initAgent) initAgent();
     if (route === 'rules' && initRules) initRules();
     if (route === 'ingest' && initIngest) initIngest();
     if (route === 'obsidian' && initObsidian) initObsidian();
     if (route === 'skills' && initSkills) initSkills();
     if (route === 'graph' && initGraph) initGraph();
     if (route === 'tasks' && initTasks) initTasks();
+    // ★ UI2.0：入场动画结束后统一重算图表尺寸，修正 ECharts 在容器尺寸未稳定时初始化导致的挤压/只显首点
+    setTimeout(() => { try { resizeAllCharts(); } catch { /* ignore */ } }, 340);
   }
   function bindNav() {
     $$('.nav-item').forEach(item => item.onclick = () => navigate(item.dataset.route));
@@ -2808,6 +2812,8 @@
     else document.documentElement.removeAttribute('data-reduce-motion');
     // 每页条数
     ALL_PAGE_SIZE = s.pageSize;
+    // ★ UI2.0：主题切换会改变容器配色与布局，延迟统一重算 ECharts 尺寸，避免图表挤压
+    setTimeout(() => { try { resizeAllCharts(); } catch { /* ignore */ } }, 300);
   }
 
   // ===== 命令面板 =====
@@ -3159,14 +3165,24 @@
       toast('已重置为默认设置');
     };
 
-    // ★ 设置面板增强 /api/config：LLM / 受限 / 状态（写回 config.json，重启内核生效）
+    // ★ 设置面板增强 /api/config：LLM / 受限 / 状态
+    //   LLM 配置保存后**即时生效**（内核侧现读 config.json）；密钥以 DPAPI 密文落盘，明文不落盘。
+    function llmKeyStateText(r) {
+      if (!r.llmKeySet) return '未设置';
+      const src = r.llmKeySource || '';
+      if (src.startsWith('env')) return '已设置（来自环境变量 ' + src.replace(/^env\(|\)$/g, '') + '）';
+      if (src === 'encrypted') return '已设置（DPAPI 密文存储）';
+      return '已设置';
+    }
     async function loadCfg() {
       try {
         const r = await fetch('/api/config').then(x => x.json());
         $('#cfgLlmUrl').value = r.llmUrl || '';
         $('#cfgLlmModel').value = r.llmModel || '';
-        $('#cfgLlmKeyState').textContent = r.llmKeySet ? '已设置' : '未设置';
+        $('#cfgLlmKeyState').textContent = llmKeyStateText(r);
         $('#cfgLlmKey').value = '';
+        const eff = $('#cfgLlmEffective');
+        if (eff && r.llmEffective) eff.textContent = r.llmEffective.url + '　·　' + r.llmEffective.model + '　（来源：' + r.llmEffective.source + '；密钥：' + r.llmEffective.keySource + '）';
         const _rCfg = $('#cfgRestricted'); if (_rCfg) _rCfg.checked = !!r.restricted; // 受限模式开关已移除（2026-09-13），元素缺失时安全跳过
         $('#cfgDataDir').value = r.dataDir || '';
         $('#cfgPort').textContent = r.port || '—';
@@ -3190,6 +3206,33 @@
       keyInput.type = show ? 'text' : 'password';
       keyToggle.textContent = show ? '隐藏' : '显示';
     };
+    const keyClear = $('#cfgLlmKeyClear');
+    if (keyClear) keyClear.onclick = async () => {
+      if (!confirm('删除已保存的 LLM 密钥？（环境变量里的密钥不受影响）')) return;
+      const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clearLlmKey: true }) }).then(x => x.json()).catch(e => ({ error: e.message }));
+      toast(r.ok ? '密钥已清除' : ('清除失败：' + (r.error || '')));
+      await loadCfg();
+    };
+    const testBtn = $('#testLlmBtn');
+    if (testBtn) testBtn.onclick = async () => {
+      const item = $('#cfgLlmTestItem'), out = $('#cfgLlmTestResult');
+      const payload = { llmUrl: $('#cfgLlmUrl').value.trim(), llmModel: $('#cfgLlmModel').value.trim(), llmKey: $('#cfgLlmKey').value.trim() };
+      if (item) item.style.display = '';
+      if (out) { out.textContent = '测试中…（本地模型冷启动可能要十几秒）'; out.style.color = 'var(--text-muted)'; }
+      try {
+        const r = await fetch('/api/config/test-llm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(x => x.json());
+        if (!out) return;
+        if (r.ok) {
+          out.style.color = '#16a34a';
+          out.textContent = '✓ 连接成功　' + r.url + '\n模型 ' + r.model + '　耗时 ' + r.latencyMs + 'ms';
+        } else {
+          out.style.color = 'var(--danger)';
+          out.textContent = '✗ 失败' + (r.status ? '（HTTP ' + r.status + '）' : '') + '　' + (r.url || '') + '\n' + (r.error || '') + (r.hint ? '\n💡 ' + r.hint : '');
+        }
+      } catch (e) {
+        if (out) { out.style.color = 'var(--danger)'; out.textContent = '✗ 请求失败：' + e.message; }
+      }
+    };
     const saveBtn = $('#saveCfgBtn');
     if (saveBtn) saveBtn.onclick = async () => {
       const payload = { llmUrl: $('#cfgLlmUrl').value.trim(), llmModel: $('#cfgLlmModel').value.trim() };
@@ -3197,9 +3240,10 @@
       if (key) payload.llmKey = key;
       try {
         const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(x => x.json());
-        toast(r.restartRequired ? '已保存，重启内核后生效' : '已保存');
+        if (!r.ok) { toast('保存失败：' + (r.error || '未知错误')); return; }
+        toast(r.note || (r.restartRequired ? '已保存，重启内核后生效' : '已保存，即时生效'));
         $('#cfgLlmKey').value = '';
-        $('#cfgLlmKeyState').textContent = key ? '已设置' : '未设置';
+        await loadCfg();
       } catch (e) { toast('保存失败：' + e.message); }
     };
     const rstr = $('#cfgRestricted');
@@ -3420,11 +3464,79 @@
     const count = Math.max(1, nodes.length);
     // ★ 关键：layout:'none' 下只保留 id/name/category/x/y（Q6 实证 23974px 渲染）；
     //   带 symbol/symbolSize/itemStyle 等字段在此组合下会 0 渲染（本环境实证）
-    const positioned = nodes.map((n, i) => ({
-      id: n.id, name: n.label, category: n.kind, symbolSize: 18,
-      x: Math.round(cx + R * Math.cos((2 * Math.PI * i) / count)),
-      y: Math.round(cy + R * Math.sin((2 * Math.PI * i) / count)),
-    }));
+    // ★ UI2.0：分层力导向坐标（layout:'none'，绕开 ECharts force 引擎在本环境的飞散/NaN bug）
+    //   有连接的节点在中心区域做力导向形成关系网络；大量彼此无边的孤立节点按类别排到外圈双环并弱化，避免糊成一个圈。
+    const positioned = (() => {
+      const N = nodes.length;
+      if (N <= 2) {
+        return nodes.map((n, i) => ({ id: n.id, name: n.label, category: n.kind, symbolSize: 18,
+          x: Math.round(cx + (i - (N - 1) / 2) * 60), y: Math.round(cy) }));
+      }
+      const idIndex = new Map(); nodes.forEach((n, i) => idIndex.set(String(n.id), i));
+      const rand = (i) => { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+      const deg = new Array(N).fill(0);
+      const adj = Array.from({ length: N }, () => []);
+      edges.forEach(e => {
+        const a = idIndex.get(String(e.source)), b = idIndex.get(String(e.target));
+        if (a != null && b != null && a !== b) { adj[a].push(b); adj[b].push(a); deg[a]++; deg[b]++; }
+      });
+      const conn = [], iso = [];
+      nodes.forEach((n, i) => (deg[i] > 0 ? conn : iso).push(i));
+      const result = new Array(N);
+
+      // —— 中心：连通子网络力导向（限制在 R*0.5 半径内）——
+      if (conn.length) {
+        const CN = conn.length, Rc = R * 0.5, ccx = cx, ccy = cy;
+        const P = conn.map((gi, t) => ({
+          x: ccx + (rand(gi) - 0.5) * Rc, y: ccy + (rand(gi + 7) - 0.5) * Rc, dx: 0, dy: 0, gi,
+        }));
+        const local = new Map(); conn.forEach((gi, t) => local.set(gi, t));
+        const cAdj = Array.from({ length: CN }, () => []);
+        conn.forEach((gi, t) => adj[gi].forEach(o => { if (local.has(o)) cAdj[t].push(local.get(o)); }));
+        const k = Math.sqrt((2 * Rc) * (2 * Rc) / Math.max(1, CN)) * 0.7, ITER = 240;
+        for (let it = 0; it < ITER; it++) {
+          for (let t = 0; t < CN; t++) P[t].dx = P[t].dy = 0;
+          for (let a = 0; a < CN; a++) for (let b = a + 1; b < CN; b++) {
+            let x = P[a].x - P[b].x, y = P[a].y - P[b].y;
+            let d2 = x * x + y * y; if (d2 < 0.01) { d2 = 0.01; x = 0.01 * (rand(a + it) - 0.5); }
+            const d = Math.sqrt(d2), f = (k * k) / d, fx = f * x / d, fy = f * y / d;
+            P[a].dx += fx; P[a].dy += fy; P[b].dx -= fx; P[b].dy -= fy;
+          }
+          cAdj.forEach((list, a) => list.forEach(b => {
+            if (b <= a) return;
+            let x = P[a].x - P[b].x, y = P[a].y - P[b].y;
+            const d = Math.hypot(x, y) || 0.01, f = (d * d) / k, fx = f * x / d, fy = f * y / d;
+            P[a].dx -= fx; P[a].dy -= fy; P[b].dx += fx; P[b].dy += fy;
+          }));
+          const temp = (Rc * 0.2) * (1 - it / ITER) + 0.4;
+          P.forEach((p, t) => {
+            p.dx += (ccx - p.x) * 0.02; p.dy += (ccy - p.y) * 0.02;
+            const d = Math.hypot(p.dx, p.dy) || 0.01, step = Math.min(d, temp);
+            p.x += p.dx / d * step; p.y += p.dy / d * step;
+            const rr = Math.hypot(p.x - ccx, p.y - ccy), maxR = Rc - 10;
+            if (rr > maxR) { p.x = ccx + (p.x - ccx) / rr * maxR; p.y = ccy + (p.y - ccy) / rr * maxR; }
+          });
+        }
+        P.forEach((p, t) => { const gi = p.gi; result[gi] = { x: Math.round(p.x), y: Math.round(p.y), size: 18 }; });
+      }
+
+      // —— 外圈：孤立节点按类别排序，双环交错排布并弱化 ——
+      const catOrder = { note: 0, memory: 1, card: 2 };
+      iso.sort((a, b) => (catOrder[nodes[a].category] ?? 9) - (catOrder[nodes[b].category] ?? 9) || a - b);
+      const M = iso.length;
+      iso.forEach((gi, t) => {
+        const ang = (2 * Math.PI * t) / M - Math.PI / 2;
+        const ring = (t % 2 === 0) ? R * 0.84 : R * 0.96; // 内外双环交错，降低单环密度
+        result[gi] = {
+          x: Math.round(cx + ring * Math.cos(ang)),
+          y: Math.round(cy + ring * Math.sin(ang)),
+          size: 11, // 孤立节点弱化
+        };
+      });
+
+      return nodes.map((n, i) => ({ id: n.id, name: n.label, category: n.kind,
+        symbolSize: result[i].size, x: result[i].x, y: result[i].y }));
+    })();
     chart.setOption({
       tooltip: { formatter: p => { const n = (data.nodes || []).find(x => x.id === p.data.id); return n ? `<b>${esc(n.label)}</b><br>类型: ${catMap[n.kind] || n.kind}${n.sector ? ' · ' + esc(n.sector) : ''}${data.secret_folded ? '<br><span style="color:#94a3b8">私密记忆折叠，不出现在图谱</span>' : ''}` : ''; } },
       legend: { data: ['笔记', '记忆', '卡片'], textStyle: { color: '#94a3b8' }, top: 0 },
@@ -3754,6 +3866,27 @@
         worldH = Math.max(worldH, (Number(saved.y) || 0) + TASK_MAP_NODE_H + 32);
       }
     });
+    // ★ UI2.0 碰撞解算：持久化手动坐标可能互相重叠（如 #51/#63），按纵向推开，保持横向分层不变
+    {
+      const CW = TASK_MAP_NODE_W + 12, CH = TASK_MAP_NODE_H + 16, OVERLAP_X = 40;
+      const arr = [];
+      nodes.forEach(n => { const p = _taskMapState.positions.get(Number(n.id)); if (p && !p.aux) arr.push(p); });
+      arr.sort((a, b) => (a.rank - b.rank) || a.y - b.y || a.x - b.x);
+      for (let pass = 0; pass < 4; pass++) {
+        let moved = false;
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            const a = arr[i], b = arr[j];
+            const ox = Math.min(a.x + CW, b.x + CW) - Math.max(a.x, b.x);
+            if (ox <= OVERLAP_X) continue; // 水平基本不重叠 → 不同列，不处理
+            const oy = Math.min(a.y + CH, b.y + CH) - Math.max(a.y, b.y);
+            if (oy > 0) { b.y = a.y + CH; moved = true; } // 同列纵向重叠 → 后者下移
+          }
+        }
+        if (!moved) break;
+      }
+      _taskMapState.positions.forEach(p => { worldH = Math.max(worldH, p.y + TASK_MAP_NODE_H + 32); });
+    }
     world.style.width = worldW + 'px';
     world.style.height = worldH + 'px';
     edgesEl.setAttribute('width', String(worldW));
@@ -3761,8 +3894,8 @@
     nodesEl.innerHTML = '';
     renderTaskMapEdges(); // 边渲染抽离（拖动时增量复用）
 
-    // ★ 2026-09-13：地图状态二态（已完成 / 未完成）；细粒度状态保留在卡片抽屉与右键菜单
-    const statusBucket = (s) => (String(s) === 'done' ? { label: '已完成', color: '#10b981' } : { label: '未完成', color: '#06b6d4' });
+    // ★ 2026-09-15：地图状态三态（未完成 / 已完成 / 已归档）；细粒度状态仍在卡片抽屉与右键菜单；终结态不再误标的「未完成」
+    const statusBucket = (s) => { const st = String(s); if (st === 'done') return { label: '已完成', color: '#10b981' }; if (st === 'archived' || st === 'cancelled' || st === 'failed') return { label: '已归档', color: '#64748b' }; return { label: '未完成', color: '#06b6d4' }; };
     const nodeById = new Map(nodes.map(x => [Number(x.id), x]));
     const auxKindOf = new Map();
     const hostOf = new Map(); // 辅助卡 → 宿主卡（辅助卡没有自身状态：标签/过滤/连线都跟随宿主）
@@ -3814,7 +3947,8 @@
         // 辅助卡过滤跟随宿主卡（自身无状态）
         const hostId = hostOf.get(node.id);
         const ref = (hostId != null && isAux) ? (nodeById.get(hostId) || node) : node;
-        const bkt = String(ref.status) === 'done' ? 'done' : 'open';
+        // 优先用后端 bucket（三态），aux 无 bucket 时按宿主状态回退三态
+        const bkt = node.bucket != null ? node.bucket : (String(ref.status) === 'done' ? 'done' : (['archived', 'cancelled', 'failed'].includes(String(ref.status)) ? 'terminal' : 'open'));
         if (bkt !== _taskMapFilter) button.style.display = 'none';
       }
       // ★ 2026-09-14：非数字 id 节点（内存/自动匹配的 mem-N 子卡）不是真实卡片，点击/拖拽/右键均跳过，避免 openCardDetail(NaN) 与位置误存
@@ -3876,9 +4010,9 @@
       if (isAuxLink && kindOfNode.get(s) === 'aux') [s, d] = [d, s];
       // ★ 已完成卡片不参与连线（任一端点 done → 整条边隐藏；辅助边看宿主卡）
       if (isAuxLink ? statusOf.get(hostRef) === 'done' : (statusOf.get(s) === 'done' || statusOf.get(d) === 'done')) return;
-      // ★ 二态过滤（done / open）：辅助边按宿主卡判定；其余任一端点落在桶外 → 该边隐藏
+      // ★ 2026-09-15：过滤三态（open / done / terminal）——终结态(archived/cancelled/failed)不再混入「未完成」
       if (_taskMapFilter) {
-        const bucket = (id) => (statusOf.get(id) === 'done' ? 'done' : 'open');
+        const bucket = (id) => { const s = statusOf.get(id); if (s === 'done') return 'done'; if (s === 'archived' || s === 'cancelled' || s === 'failed') return 'terminal'; return 'open'; };
         if (isAuxLink ? bucket(hostRef) !== _taskMapFilter : (bucket(s) !== _taskMapFilter || bucket(d) !== _taskMapFilter)) return;
       }
       // ★ 方向修复：depends/spawned_by 按「前置 → 依赖方」绘制，箭头指向工作流方向（原实现箭头指反）
@@ -4094,15 +4228,18 @@
     // ★ 2026-09-13：状态二态 chips（已完成 / 未完成；细粒度状态仍在卡片抽屉与右键菜单保留；点击过滤，再点/全部=清除）
     const chips = $('#taskMapChips');
     if (chips && data.nodes) {
-      let open = 0, done = 0;
+      // ★ 2026-09-15：状态三态 chips（未完成 / 已完成 / 已归档）；终结态(archived/cancelled/failed)归「已归档」，不再混入「未完成」
+      let open = 0, done = 0, terminal = 0;
       data.nodes.forEach(n => {
         const nk = String(n.kind);
         if (nk === 'aux' || nk.startsWith('aux_')) return; // 辅助卡是挂载物，不计入任务统计
-        if (String(n.status) === 'done') done++; else open++;
+        const b = n.bucket != null ? n.bucket : (String(n.status) === 'done' ? 'done' : (['archived', 'cancelled', 'failed'].includes(String(n.status)) ? 'terminal' : 'open'));
+        if (b === 'terminal') terminal++; else if (b === 'done') done++; else open++;
       });
       const chipDefs = [
         ['open', '未完成', '#06b6d4', open],
         ['done', '已完成', '#10b981', done],
+        ['terminal', '已归档', '#64748b', terminal],
       ];
       chips.innerHTML = chipDefs.map(([k, l, color, c]) =>
         c ? `<button class="task-map-chip" data-chip="${k}" style="${_taskMapFilter === k ? 'outline:2px solid ' + color + ';outline-offset:1px' : ''}"><i style="background:${color}"></i>${l} ${c}</button>` : ''
@@ -4513,6 +4650,100 @@
     `;
   }
 
+  /* ===== Agent 页（C 路线）：内置 agent 对话 =====
+     服务端无状态 → 对话历史随请求回传（仅 user/assistant 文本）；
+     写门禁由「允许写入记忆库」勾选决定（受限模式下后端强制只读，前端同步置灰）。 */
+  const AGENT_HISTORY = []; // [{role, content}] 最多回传 8 条
+  let agentInited = false, agentBusy = false;
+
+  function agentBubble(role, html) {
+    const isUser = role === 'user';
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `display:flex;flex-direction:column;gap:5px;align-items:${isUser ? 'flex-end' : 'flex-start'}`;
+    wrap.innerHTML = `<div style="font-size:11px;color:var(--text-muted)">${isUser ? '我' : 'Agent'}</div>
+      <div style="max-width:86%;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.85;white-space:pre-wrap;word-break:break-word;${isUser
+        ? 'background:rgba(65,187,200,0.12);border:1px solid rgba(65,187,200,0.25);color:var(--text-primary)'
+        : 'background:rgba(255,255,255,0.72);border:1px solid rgba(15,23,42,0.08);color:var(--text-primary)'}">${html}</div>`;
+    return wrap;
+  }
+
+  async function agentSend() {
+    if (agentBusy) return;
+    const input = $('#agentInput'), chat = $('#agentChat');
+    const text = (input && input.value || '').trim();
+    if (!text || !chat) return;
+    agentBusy = true;
+    if (chat.dataset.empty === '1') { chat.innerHTML = ''; chat.dataset.empty = '0'; }
+    if (input) input.value = '';
+    chat.appendChild(agentBubble('user', esc(text)));
+    const pending = agentBubble('assistant', '<span class="text-muted">思考中…（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
+    chat.appendChild(pending);
+    chat.scrollTop = chat.scrollHeight;
+    const sendBtn = $('#agentSendBtn');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '运行中…'; }
+    const allowWrites = !!($('#agentAllowWrites') || {}).checked;
+    try {
+      const res = await fetch('/api/agent/chat', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: text, history: AGENT_HISTORY.slice(-8), allowWrites }),
+      });
+      const j = await res.json().catch(() => ({}));
+      pending.remove();
+      if (!res.ok || !j.ok) {
+        chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ ${esc(j.error || ('HTTP ' + res.status))}</span>`));
+        return;
+      }
+      const tools = j.toolLog || [];
+      const toolHtml = tools.length
+        ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">工具调用 ${tools.length} 次 · ${((j.elapsedMs || 0) / 1000).toFixed(1)}s · ${j.steps} 轮</summary>
+            <div style="margin-top:6px;font-size:11.5px;line-height:1.9;font-family:ui-monospace,Consolas,monospace;color:var(--text-secondary)">${tools.map(t => `${t.ok === false ? '✗' : '✓'} ${esc(t.tool)} <span style="color:var(--text-muted)">${esc(t.args || '')}</span>`).join('<br>')}</div></details>`
+        : '';
+      const denied = j.deniedWrites || [];
+      const deniedHtml = denied.length
+        ? `<div style="margin-top:8px;font-size:12px;color:var(--warning)">✋ 已拦截写操作：${denied.map(esc).join('、')}（需先勾选「允许写入记忆库」）</div>`
+        : '';
+      chat.appendChild(agentBubble('assistant', esc(j.answer || '（无内容）') + toolHtml + deniedHtml));
+      AGENT_HISTORY.push({ role: 'user', content: text }, { role: 'assistant', content: j.answer || '' });
+      if (AGENT_HISTORY.length > 16) AGENT_HISTORY.splice(0, AGENT_HISTORY.length - 16);
+    } catch (e) {
+      pending.remove();
+      chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ 请求失败：${esc(e.message)}</span>`));
+    } finally {
+      agentBusy = false;
+      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }
+
+  function initAgent() {
+    const chat = $('#agentChat');
+    if (chat && chat.dataset.empty === undefined) chat.dataset.empty = '1';
+    // 页头状态：模型端点 + 工具面 + 写门禁（每次进入刷新，设置页改完立刻反映）
+    fetch('/api/agent/status').then(r => r.json()).then(st => {
+      const line = $('#agentStatusLine'); if (!line) return;
+      const mcp = st.mcp || {}, wm = st.writeMode || {};
+      line.innerHTML = `模型 <span class="mono">${esc(st.llm && st.llm.model || '?')}</span> @ <span class="mono">${esc(st.llm && st.llm.baseUrl || '?')}</span>（${esc(st.llm && st.llm.source || '')}）`
+        + ` · 工具面 <span class="mono">${mcp.toolCount || 0}</span> 个`
+        + (mcp.error ? ` <span style="color:var(--warning)">· 工具面异常：${esc(mcp.error)}</span>` : '')
+        + ` · ${esc(wm.hint || '')}`;
+      const wrap = $('#agentWriteWrap'), cb = $('#agentAllowWrites');
+      if (wrap && cb && !wm.allowed) {
+        cb.checked = false; cb.disabled = true; wrap.style.opacity = '0.45';
+        wrap.title = '受限模式：agent 仅只读';
+      }
+    }).catch(() => { const line = $('#agentStatusLine'); if (line) line.textContent = 'agent 状态读取失败（内核未响应？）'; });
+
+    if (agentInited) return;
+    agentInited = true;
+    const input = $('#agentInput'), btn = $('#agentSendBtn'), clear = $('#agentClearBtn');
+    if (btn) btn.onclick = agentSend;
+    if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); } });
+    if (clear) clear.onclick = () => {
+      AGENT_HISTORY.length = 0;
+      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
+    };
+  }
+
   initPreviewTooltip();
   initContextMenu();
   initErrorBoundary();
@@ -4525,6 +4756,7 @@
   initMemoryLinks();
   initSidebarCollapse();
   initConnectScan();
+  initAgent();
   initRules();
   initIngest();
   initObsidian();

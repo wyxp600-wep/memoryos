@@ -1,0 +1,36 @@
+# 项目持久记忆 Project Memory
+
+> 本文件由 dsh-memoir 插件维护：记录本项目历次会话的工作归纳、经验教训与行动指南，
+> 作为未来 AGENTS 接手本项目时的行动指南；它是人类可读的投影，不是 system prompt 的完整注入内容。
+> 新会话只注入有界的 Hot Memory，完整历史通过 memoir_read 按需检索。
+
+## 工作记录 Work Log
+
+- [2026-09-15 21:40] [工作记录] MemoryOS 完整 agent 补全设计（执行工具面）已产出 9 份专家文档 — 2026-09-15 完成「把 MemoryOS 补全成完整 agent」的分域设计，产出落盘 C:\Users\WYX\Desktop\MemoryOS\docs\agent-completion\：FACTS-PACK.md（F1-F15 行号级缺陷 + B1-B3 用户硬约束，事实基准）、INDEX.md（五层能力矩阵基线 + 八组执行工具清单模板 + P0 阻断项 + 接线时序）、expert-软件架构/后端架构/安全/代码审查/桌面/数据库可靠性/数据库性能/前端/工程效率.md 共 9 份。核心架构事实：agent-core.js 的 runAgent() 完全工具无关（tools/list→OpenAI tools→mcp.callTool 循环），加执行工具=MCP 服务端多暴露工具+修耦合缺陷，不是架构重写。注意：INDEX 矩阵仍为基线版，专家文档行号级结论未逐条人工核对前不能当定稿。
+- [2026-09-15 22:55] [工作记录] MemoryOS 补全方案最终定稿（FINAL-补全方案.md）与两处交付缺口 — 2026-09-15 MemoryOS 补全方案的最终交付定稿：C:\Users\WYX\Desktop\MemoryOS\docs\agent-completion\FINAL-补全方案.md（含五层能力矩阵定稿、8 域 ~20 工具的清单模板（入参/返回契约/风险级 L0-L4/审批/超时/输出预算/记忆钩子/状态）、P0 开工序 0-A/0-B/0-C + 4 个阻断缺陷表、端到端修 bug 时序 11 步、分批路线 P0 2~3 人日/P1 3~5/P2 5~10、证据等级与缺口标注）。共 8 份文档（7 份专家分域 + FACTS-PACK 事实基准 + INDEX 导航）。交付缺口如实标注两条：① 安全域（威胁建模 + L0-L4 门禁设计）专家代理仍在运行、完整文档未落盘（仅收到 2 条早期核实）；② 桌面域（Electron 进程归属选型、Windows 细节、崩溃恢复）代理被终止、无产物，本方案中桌面结论由主线程基于实测事实给出。待用户拍板的决策：--work 无人值守下 L1 是否预授权（因 task_done/task_claim 本身属 L1，一律拒绝会使自主任务队列不可用）；主线程推荐方案 c（仅 task_*/memory_* 预授权，执行类 L1 仍拒绝）。
+
+## 经验教训 Lessons Learned
+
+- [2026-09-15 21:52] [经验教训] 专家通道不可用时用 subagent + 事实包文件做角色化分工（含扇出效率教训） — Agency 专家通道（summon_expert/summon_experts）对长任务 100% aborted（5 并行与 1 单发均失败，判定后端不可用，勿再重试）。可用替代：subagent 原生委派 + 把共享事实先落盘成文件（本例 docs/agent-completion/FACTS-PACK.md），任务串只写「角色 + 指向文件 + 交付物清单 + 输出路径」，单条 200-400 字即可。产出文件再逐份抽查关键行号主张（grep/read 验证）后收敛。适用范围：任何需要多角色专家并行产出的设计任务。
+【效率教训（2026-09-15 MemoryOS 实测）】① 检测到通道故障要立刻降级，不要连试多种粒度——前 3 轮尝试全部白费。② 不要 9 路并行让每个子代理各自重读同一批大文件（db.js 67KB / dashboard.js 146KB），这是该次任务耗时的主因；应要求子代理先读事实包、按需精读，或拆成 2-3 路串行。③ 子代理"证据采齐却迟迟不落笔"会零产物被终止——任务里必须明确「先落盘骨架再补内容」并给出可验证的产出路径；本轮 9 路中有 2 路如此白费，需补派。④ 同时对多个子代理做事实纠偏时，用 send_message 在步边界推送修正，避免错误结论入档。
+- [2026-09-15 22:09] [经验教训] MemoryOS 4 处勘察事实修正（WRITE_TOOLS 计数/死代码/UI 真身） — MemoryOS 勘察事实修正（2026-09-15 复核已验证，回写 docs/agent-completion/FACTS-PACK.md）：① agent-core.js:15-19 WRITE_TOOLS 实为 10 个工具名（task_next 不在集内），非 11；② agent.js:209 setTimeout(res,5000) 是合法延迟写法非缺陷，真正死代码是 :118 的 writeGate 变量（赋值后从未引用，实际生效 :120 gate）；③ server.js:41 文件头注释「16 个工具」过期，实测 18（addTool 覆写 :49-63 + 18 处注册点）；④ dashboard.js(146KB) 是 Fastify 服务端而非 UI 源，UI 真身是 resources/memoryos/memoryos-dashboard-redesign/{index.html,app.js}(原生 JS+echarts)，经 resolveUiDir() 伺服；CSP 由 dashboard.js:129 注入。
+- [2026-09-15 22:44] [经验教训] 核实纪律四条：运行时真相优先于源码 grep、回滚前先验 git 纳管、断言常双重错误、harness 管道限制 — 审查/核实的四条可复用纪律（MemoryOS 勘察中实证）：
+① 源码 grep 不等于运行时真相——server.js 源码零 `$ref/oneOf/additionalProperties` 字面量，但活体 tools/list 显示每个 inputSchema 都带 `additionalProperties:false` 与 `$schema`（FastMCP/zod 运行时生成）。判断 schema 类问题必须取活体协议输出，不能只 grep 源码。
+② 承诺「可回滚」前先验 git 纳管状态——本次 P0 目标文件 agent-core.js/agent.js/smoke-agent.js 全是 untracked，导致既有回滚纪律对它们不成立。
+③ 断言类缺陷常是双重错误：smoke-mcp.js:77 既计数错(17→18)又白名单漏项，且 `&&` 短路使只修计数仍失败；多个 smoke 各自独立退出码、无聚合 runner 会制造「回归全绿」错觉，须补聚合 runner。
+④ 本 DSH 会话内 `child_process.spawn` + 管道 stdio 的脚本（如 smoke-mcp.js）会以 EXIT=13「顶层 await 未落定」失败，属 harness 边界非产品缺陷——此类脚本须在普通终端复跑，不可在本会话内作为判据。
+
+## 行动指南 Action Guide
+
+- [2026-09-15 21:43] [行动指南] MemoryOS 执行面上线前阻断项（含 F16/F17/F18，2026-09-15 修订） — MemoryOS 执行面上线前的阻断项（2026-09-15 代码审查独立实测核实后修订，原 5 项清单已重排）：
+【开工前置，顺序不可颠倒】F18 git 纳管缺口——git status 实锤 agent-core.js / agent.js / smoke-agent.js 全为 untracked(??)，仅 server.js 为 M，全仓 9 项 untracked ⇒ 「代码回滚走 git」对 P0 目标文件不成立，必须先 git add 全部改动 → checkpoint commit → 新 tag → 建 data/memory.db.pre-exec-<ts>(VACUUM INTO，严禁复制 .db)；F16 smoke-mcp.js:77 陈旧断言（计数 17→18 且白名单漏 task_supersede，&& 短路致只改计数仍 FAIL；实跑 13 PASS/1 FAIL exit 1）→ 修断言 + 补 smoke-all.js 聚合 runner，否则 P0 验收标准不可满足，且无法区分陈旧噪声与真实注册缺失。
+【执行面阻断】F7 agent.js:120-121（生效点，:118 是死变量）--work/--auto-write 门禁默认 null 全放行，违反 B1 → 默认拒绝 L1+，仅预授权 L0；F1 agent-core.js:15-19 WRITE_TOOLS 硬编码 10 个工具名 → 改工具自声明风险级；F17 agent-core.js:179 o.toolsFilter?.length 语义反转（[] 回落全量 = 权限放大；错名静默无工具）→ 改 pickTools() 严格语义 + tool_face 事件；F3 agent-core.js:158 head-only 截断丢尾部 → head/tail 双端 + artifact 契约（级联伤害：丢尾部错误→误判成功→task_done 把假结论写进共享记忆库被其他 agent 采信，数据污染级）。
+【降为 P1】F2（实测运行时 schema 已丢 additionalProperties/$schema，但当前无害；真实触发条件=参数进入 exec/路径汇点，正解是新工具侧 pickArgs(args,ALLOWED) 白名单化而非修转换器）、F10/F11 令牌硬化、F4 阶段化工具面、F5 去重键（seen Map 实为 runAgent 内局部）、F8 数据栅栏、F15 日志脱敏。
+【待用户拍板】--work 无人值守下 L1 是否预授权——task_done 本身属 L1，一律拒绝则 --work 无法自行结项、直接不可用。
+- [2026-09-15 21:52] [行动指南] MemoryOS P0 开工前置：checkpoint commit + 选定方案 A（exec-tools.js 模块分离） — MemoryOS 执行面 P0 开工前置（已核实 2026-09-15）：① 仓库工作树有 22 个未提交改动，基线 tag baseline-20260914-pre-fullopt 已过期——P0 开工前先做 checkpoint commit + 新 tag（SOP-A）；数据侧按 B2 建 memory.db.pre-* 时间戳快照。② 架构选型已定方案 A：在 dist/server.js 单 MCP 平面按模块分离追加执行工具（新增 exec-tools.js，经 server.js:49-63 既有 addTool 覆写钩子注册，18 处注册点已核实），否决双 MCP（B）与内核 RPC（C）——单治理点、git 可回滚、不放大 F10/F11 令牌安全债。P0 范围 = 最小执行面（file_read/file_write/exec_run）+ F7 无头门禁修复 + exec_audit 审计表，验收范式：临时库冒烟（dist/smoke-mcp.js 风格）+ agent.js -m 端到端 5 验证点。相关产出：docs\agent-completion\expert-软件架构.md、expert-工程效率.md。
+
+## 备注 Notes
+
+- [2026-09-15 22:40] [备注] MemoryOS 内核 DB 层环境约束（node:sqlite 引擎特性 4 条） — MemoryOS 内核 DB 层（resources/memoryos/dist/db.js）已验证环境约束：① 引擎 = node:sqlite（DatabaseSync），零原生依赖且禁 load_extension（db.js:5）→ 向量只能 BLOB+JS 余弦，SQL 内无内建哈希（审计哈希链必须走 JS 端）；② WAL（db.js:346）+ busy_timeout=5000（db.js:347）+ synchronous=NORMAL（db.js:354，注释明示为吞吐取舍）→ 关键审计事件需专用 synchronous=FULL 连接消除 fsync 丢失窗口；③ VACUUM INTO 在 db.js:705-707（目标文件须不存在、单引号需转义）；④ 并发写有让出-重试封装（db.js:836-860）。后续新增审计表/artifact 表设计必须兼容这四条。
+- [2026-09-15 22:45] [备注] MemoryOS 壳打包机制：pack-asar.js 是补丁器，preload/welcome/assets 为 asar-only 不可回滚区 — MemoryOS Electron 壳打包机制（2026-09-15 实测，改壳代码前必读）：`pack-asar.js` **不是从源码树构建 asar 的脚本，而是 asar 补丁器**——读入现有 `resources/app.asar`，仅把 `SYNC_FILES`（pack-asar.js:17 = /main.js、/services/core-process.js、/window/tray.js、/services/updater.js）从工作树热替换（:130 readFileSync(sourceFile)），其余 14 条从旧 asar 原样 extract，:110 自检条目数相等。推论：preload.js(253B)、welcome.html(3791B)、assets/{icon-512.png,icon.ico,tray.png} **不在工作树、也不在 git**（git ls-files 只匹配到 window/welcome-window.js）是**设计使然，不是文件丢失**；本仓库不存在从零打包步骤。要改这 5 个 asar-only 条目（P0/P1 动 IPC/preload/审批 UI 时几必然要碰）唯一正确路径 = 把路径加进 pack-asar.js:17 的 SYNC_FILES + 落树内副本 + `git add -f`，否则改不动且无 git 回滚，只能从 asar 反向提取恢复。
+- [2026-09-15 22:45] [备注] MemoryOS 审计/artifact 存储阈值与 VACUUM 放大核算 + FTS5 位置勘误 — MemoryOS 执行面存储策略（验证过的数字与位置勘误，2026-09-15）：① 大输出阈值 = 结果 ≤2KB 行内、>2KB 落外部文件 data/artifacts/（DB 只存路径+size+sha1+头尾预览），依据 = page_size 实测 4096（2KB 行不产生 overflow 页）；② VACUUM INTO 放大核算：实测快照 14.42MB×keep7≈101MB 基线，2KB 上限 90 天约 67MB → 快照 ≤568MB，而 1MB 级直接入 DB 会膨胀到 ≈189GB 不可行 ⇒ 大文本必须外置；③ 审计写入收口在 server.js:49-63 的 addTool 中心包装层（单写点覆盖全部工具），用进程级单连接，禁止每调用开新连接（openDb 重跑含 gram 回填实测 35s，db.js:432-433）；④ 勘误：FTS5 实现在 **db.js**（memories_fts + lexSearch db.js:1067），search.js 只是 RRF 层——任务书曾误记为 search.js。

@@ -1128,27 +1128,6 @@ export function logUsage(db, a) {
     db.prepare(`INSERT INTO memory_usage(memory_id,event,reader_agent,writer_agent,project,session_id,task_hint)
      VALUES (?,?,?,?,?,?,?)`).run(a.memory_id, a.event, a.reader_agent, a.writer_agent, a.project, a.session_id ?? null, a.task_hint ?? null);
 }
-/**
- * ★ PerfOpt-3（零行为改动）：多事件埋点事务合并。
- * 与「逐条调 logUsage N 次」写入结果完全等价（行内容/顺序/即时落库均不变），
- * 区别只在 I/O 形态：N 次独立自动提交 → 单事务一次提交。
- *   · WAL + synchronous=NORMAL 下省 N-1 次 WAL 追加与语句开销；
- *   · 锁竞争窗口从「N 次等待」收窄为「1 次等待」（daemon 治理持写锁期间更不易连锁超时）；
- *   · 数据**立即持久**（非延迟缓冲）：写前检索门禁、报表、既有测试的即时可见语义全部不变。
- * 取舍说明：曾评估「内存缓冲 + 定时刷盘」方案，但其引入 ≤N 秒遥测丢失窗口（崩溃语义变化 +
- *   门禁/报表即时性漂移 + 既有断言破坏），违背零功能改动纪律，故弃用，仅做事务合并。
- * @param rows 与 logUsage 入参同形（memory_id/event/reader_agent/writer_agent/project/session_id/task_hint）
- */
-export function logUsageBatch(db, rows) {
-    if (!rows || rows.length === 0)
-        return;
-    withTx(db, () => {
-        const ins = db.prepare(`INSERT INTO memory_usage(memory_id,event,reader_agent,writer_agent,project,session_id,task_hint)
-     VALUES (?,?,?,?,?,?,?)`);
-        for (const a of rows)
-            ins.run(a.memory_id, a.event, a.reader_agent, a.writer_agent, a.project, a.session_id ?? null, a.task_hint ?? null);
-    });
-}
 export function usageCount(db, event) {
     const r = event
         ? db.prepare(`SELECT COUNT(*) c FROM memory_usage WHERE event = ?`).get(event)

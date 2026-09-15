@@ -1,14 +1,67 @@
 /**
  * MemoryOS — LLM 提炼客户端（采集消化用）
- * 经本地 mimo-proxy (http://127.0.0.1:18900) 调用用户自定义模型任一观察/规则/记忆片段提炼成结构化记忆。
- * 配置：MIMOS_URL（默认 18900）、INGEST_MODEL（默认 agnes-2.5-flash，成本敏感可换）。
+ * 端点配置**每次调用现读**：LLM_* 显式覆盖 > config.json（设置页） > MIMOS_URL/INGEST_MODEL 旧变量 > 默认 mimo-proxy。
+ *   为什么改成现读：原先在模块加载时把 MIMOS_URL/INGEST_MODEL 读成常量，运行中的进程看不到设置页的改动，
+ *   于是「保存 LLM 配置」必须重启内核才生效。现读之后设置页保存即时生效，无需重启。
+ * 端点写法兼容：填 base（http://host/v1）或完整端点（http://host/v1/chat/completions）都能用。
+ * 密钥：env LLM_API_KEY/INGEST_KEY 优先；否则解 config.json 的 llmKeyEnc（DPAPI 密文，见 secret-store.js）。
  * 只读调用，不做任何写库。
  */
 import { env } from "node:process";
-const MIMOS_URL = env.MIMOS_URL?.trim() || "http://127.0.0.1:18900/v1/chat/completions";
-const INGEST_MODEL = env.INGEST_MODEL?.trim() || "agnes-2.5-flash";
+import fs from "node:fs";
+import path from "node:path";
+import { unprotectSecret } from "./secret-store.js";
+const DEFAULT_URL = "http://127.0.0.1:18900/v1/chat/completions";
+const DEFAULT_MODEL = "agnes-2.5-flash";
+/** 数据目录：与 dashboard.js 同口径（MEMORYOS_DATA_DIR 优先，否则由 MEMORY_DB 反推） */
+function dataDir() {
+    if (env.MEMORYOS_DATA_DIR)
+        return env.MEMORYOS_DATA_DIR;
+    const db = env.MEMORY_DB;
+    return db ? path.dirname(path.dirname(db)) : "";
+}
+function readDiskConfig() {
+    const dir = dataDir();
+    if (!dir)
+        return {};
+    try {
+        return JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
+    }
+    catch {
+        return {};
+    }
+}
+/** 端点归一化：base（…/v1）或完整端点（…/v1/chat/completions）都接受 */
+export function normalizeLlmEndpoint(u) {
+    const s = String(u ?? "").trim().replace(/\/+$/, "");
+    if (!s)
+        return "";
+    return /\/chat\/completions$/i.test(s) ? s : `${s}/chat/completions`;
+}
+/** 生效的 LLM 配置（现读，故设置页改动即时生效） */
+export async function llmConf() {
+    const cfg = readDiskConfig();
+    const url = normalizeLlmEndpoint(env.LLM_BASE_URL || cfg.llmUrl || env.MIMOS_URL || DEFAULT_URL);
+    const model = String(env.LLM_MODEL || cfg.llmModel || env.INGEST_MODEL || DEFAULT_MODEL).trim();
+    let key = String(env.LLM_API_KEY || env.INGEST_KEY || "");
+    let keySource = key ? "env" : "none";
+    if (!key && cfg.llmKeyEnc) {
+        const plain = await unprotectSecret(cfg.llmKeyEnc);
+        if (plain) {
+            key = plain;
+            keySource = "encrypted";
+        }
+        else {
+            keySource = "undecryptable"; // 换机器/换用户 → 明确暴露，不静默当无密钥用
+        }
+    }
+    return { url, model, key, keySource, source: cfg.llmUrl ? "config.json" : (env.MIMOS_URL ? "env" : "default") };
+}
 /** 调本地 LLM 提炼一段原文为 0~N 条结构化记忆（JSON 数组）。失败/超时返回空并抛错由上层决定跳过。 */
 export async function extractFromSource(original, kind, sourceLabel) {
+    const conf = await llmConf();
+    if (conf.keySource === "undecryptable")
+        throw new Error("LLM 密钥无法解密（密文由其他 Windows 用户/机器加密）：请在设置页重新填写密钥");
     const typeHint = kind === "rule"
         ? "优先抽取可作为「规则/约定」的约束（供所有 AI Agent 复用）。"
         : kind === "memory"
@@ -29,12 +82,15 @@ export async function extractFromSource(original, kind, sourceLabel) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45000); // per-call 超时防挂起
     try {
-        const res = await fetch(MIMOS_URL, {
+        const res = await fetch(conf.url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                ...(conf.key ? { Authorization: `Bearer ${conf.key}` } : {}),
+            },
             signal: controller.signal,
             body: JSON.stringify({
-                model: INGEST_MODEL,
+                model: conf.model,
                 messages: [
                     { role: "system", content: system },
                     {
@@ -47,7 +103,7 @@ export async function extractFromSource(original, kind, sourceLabel) {
             }),
         });
         if (!res.ok)
-            throw new Error(`LLM HTTP ${res.status}`);
+            throw new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
         const data = (await res.json());
         const text = String(data?.choices?.[0]?.message?.content ?? "");
         return parseItems(text);
@@ -118,23 +174,52 @@ function stripJsonFence(text) {
  * 先发一个 max_tokens=1 的极低成本请求，不可用则整轮跳过。
  */
 export async function probeLlm(timeoutMs = 5000) {
+    const conf = await llmConf();
+    return (await probeEndpoint(conf, timeoutMs)).ok;
+}
+
+/** 探测任意端点（设置页「测试连接」用）：返回结构化结果而非布尔，便于定位是 URL/密钥/模型哪一步不对 */
+export async function probeEndpoint(conf, timeoutMs = 8000) {
+    const url = normalizeLlmEndpoint(conf?.url);
+    const model = String(conf?.model ?? "").trim();
+    if (!url)
+        return { ok: false, error: "端点为空" };
+    if (!model)
+        return { ok: false, error: "模型名为空" };
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const t0 = Date.now();
     try {
-        const res = await fetch(MIMOS_URL, {
+        const res = await fetch(url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                ...(conf?.key ? { Authorization: `Bearer ${conf.key}` } : {}),
+            },
             signal: ctrl.signal,
             body: JSON.stringify({
-                model: INGEST_MODEL,
+                model,
                 messages: [{ role: "user", content: "ping" }],
                 max_tokens: 1,
             }),
         });
-        return res.ok;
+        const latencyMs = Date.now() - t0;
+        if (res.ok)
+            return { ok: true, url, model, latencyMs };
+        const body = (await res.text().catch(() => "")).slice(0, 300);
+        const hint = res.status === 401 || res.status === 403
+            ? "认证失败：检查密钥是否正确/是否填错字段"
+            : res.status === 404
+                ? "端点不存在：URL 一般应形如 https://host/v1（或 …/v1/chat/completions）"
+                : res.status === 429 ? "被限流：稍后重试或换模型" : "";
+        return { ok: false, status: res.status, url, model, latencyMs, error: body, hint };
     }
-    catch {
-        return false;
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const hint = /abort/i.test(msg)
+            ? `超时（>${timeoutMs}ms）：端点未响应，本地模型冷启动可放宽`
+            : /ENOTFOUND|EAI_AGAIN|fetch failed/i.test(msg) ? "网络不可达：检查 URL/代理/是否需科学上网" : "";
+        return { ok: false, url, model, error: msg, hint };
     }
     finally {
         clearTimeout(t);

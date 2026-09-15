@@ -311,7 +311,7 @@ export async function reembedStale(db, limit = 20) {
  * 全部幂等；异常不阻断（返回已派发/已回写统计）。
  */
 export function syncTaskBridge(db) {
-    const out = { dispatched: 0, syncedDone: 0 };
+    const out = { dispatched: 0, syncedDone: 0, syncedRunning: 0 };
     try {
         // 方向① ready 卡 → task 记忆
         const ready = db.prepare(`SELECT id, title, body, priority FROM cards WHERE status='ready'`).all();
@@ -319,6 +319,23 @@ export function syncTaskBridge(db) {
             const already = db.prepare(`SELECT 1 FROM card_memory WHERE card_id=? AND relation='dispatch'`).get(c.id);
             if (already)
                 continue;
+            // ★ 2026-09-14：跨链路同主题去重 —— 防「task_assign 直写 + dispatcher 再派生」双套。
+            // task_assign 只写 memories（不写 card_memory），dispatcher 感知不到 → 会对 ready 卡片重复派生一遍。
+            // 用卡片标题压缩锚做 LIKE 查重：命中现有 active/trial 任务即视为已派发，跳过 + 记 card_event 可审计。
+            const titleAnchor = (c.title || "")
+                .replace(/\s+/g, "")
+                .replace(/[\[\]【】():;，。：、]/g, "")
+                .slice(0, 10);
+            if (titleAnchor.length >= 6) {
+                const dup = db
+                    .prepare(`SELECT id FROM memories WHERE type='task' AND status IN ('active','trial') AND content LIKE '%'||?||'%' ORDER BY id LIMIT 1`)
+                    .get(titleAnchor);
+                if (dup) {
+                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`)
+                        .run(c.id, "dispatcher", "dedupe_skip", "ready", "ready", `已存在同主题任务 #${dup.id}，跳过再派生（防双套）`);
+                    continue;
+                }
+            }
             const deps = db.prepare(`SELECT dst_id FROM links WHERE src_kind='card' AND src_id=? AND kind='depends' AND dst_id IS NOT NULL`).all(c.id)
                 .map((d) => Number(d.dst_id)).filter(Number.isFinite);
             // 全公开池：assignee=? ；若卡指定 assignee 则顺带给该 agent
@@ -339,7 +356,7 @@ export function syncTaskBridge(db) {
             db.prepare(`UPDATE cards SET meta=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(JSON.stringify({ dispatch_memory_id: row.id }), c.id);
             out.dispatched++;
         }
-        // 方向② task done 记忆 → 关联卡片 done
+        // 方向② task 状态记忆 → 关联卡片同步（done→done, in_progress→running）
         const doneTasks = db.prepare(`SELECT cm.card_id, cm.memory_id FROM card_memory cm
        JOIN memories m ON m.id=cm.memory_id
        WHERE cm.relation='dispatch' AND m.type='task' AND m.status IN ('active','trial')`).all();
@@ -347,17 +364,32 @@ export function syncTaskBridge(db) {
             const m = db.prepare(`SELECT content, status FROM memories WHERE id=?`).get(d.memory_id);
             if (!m)
                 continue;
-            // 记忆生命周期用 internal status 判定 done：读 content 头
+            // 记忆生命周期用 internal status 判定：读 content 头
             const stm = m.content.match(/\[status:([^\]]+)\]/);
-            if (!stm || stm[1] !== "done")
+            if (!stm)
                 continue;
+            const taskStatus = stm[1];
             const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(d.card_id);
-            if (!card || card.status === "done" || card.status === "archived")
+            if (!card)
                 continue;
-            db.prepare(`UPDATE cards SET status='done', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(d.card_id);
-            db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`)
-                .run(d.card_id, "dispatcher", "auto_done", card.status, "done", `MCP 任务 #${d.memory_id} 完成，卡片同步`);
-            out.syncedDone++;
+            // done → done（不覆盖 archived 终态）
+            if (taskStatus === "done") {
+                if (card.status === "done" || card.status === "archived")
+                    continue;
+                db.prepare(`UPDATE cards SET status='done', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(d.card_id);
+                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`)
+                    .run(d.card_id, "dispatcher", "auto_done", card.status, "done", `MCP 任务 #${d.memory_id} 完成，卡片同步`);
+                out.syncedDone++;
+            }
+            // in_progress → running（不覆盖 done/archived 终态，已是 running 则跳过）
+            else if (taskStatus === "in_progress") {
+                if (card.status === "running" || card.status === "done" || card.status === "archived")
+                    continue;
+                db.prepare(`UPDATE cards SET status='running', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(d.card_id);
+                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`)
+                    .run(d.card_id, "dispatcher", "auto_running", card.status, "running", `MCP 任务 #${d.memory_id} 进行中，卡片同步`);
+                out.syncedRunning++;
+            }
         }
     }
     catch (e) {
@@ -516,8 +548,8 @@ if (mainFile === "daemon.js") {
             // ★ 2026-09-14：卡片↔MCP 任务派发桥（ready 卡→公开任务池；agent done→卡片同步）
             try {
                 const tb = syncTaskBridge(db);
-                if (tb.dispatched || tb.syncedDone) {
-                    console.log(`[taskbridge] 派发卡片→任务 ${tb.dispatched} / 任务完成→卡片 ${tb.syncedDone}`);
+                if (tb.dispatched || tb.syncedDone || tb.syncedRunning) {
+                    console.log(`[taskbridge] 派发卡片→任务 ${tb.dispatched} / 任务完成→卡片 ${tb.syncedDone} / 任务进行中→卡片 ${tb.syncedRunning}`);
                 }
             }
             catch (e) {
@@ -564,6 +596,22 @@ if (mainFile === "daemon.js") {
     }
     else {
         run().catch((e) => console.error(`[daemon] 运行失败: ${e instanceof Error ? e.message : String(e)}`));
-        setInterval(run, 60 * 60 * 1000); // 常驻每小时
+        setInterval(run, 60 * 60 * 1000); // 常驻每小时（重型治理：plan/housekeep/reembed/backup/wal）
+        // ★ 2026-09-15：任务桥独立高频调度（30s），与重型治理解耦。
+        //   任务状态（in_progress/done）需秒级同步到卡片，不能等每小时一轮的重型治理。
+        //   run() 中保留 syncTaskBridge 调用作为兜底，此处负责高频实时同步。
+        const runTaskBridge = () => {
+            try {
+                const tb = syncTaskBridge(db);
+                if (tb.dispatched || tb.syncedDone || tb.syncedRunning) {
+                    console.log(`[taskbridge-fast] 派发 ${tb.dispatched} / done→卡片 ${tb.syncedDone} / in_progress→卡片 ${tb.syncedRunning}`);
+                }
+            }
+            catch (e) {
+                console.error(`[taskbridge-fast] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        };
+        runTaskBridge();
+        setInterval(runTaskBridge, 30 * 1000); // 每 30 秒
     }
 }

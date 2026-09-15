@@ -33,17 +33,18 @@
   "summary": "MemoryOS 全维度优化计划（安全4/性能3/代码质量1/可维护性3/架构3，共14项，全部带实证与验收证据链）",
   "plan_status": "active",
   "created_at": "2026-09-14T18:23:36+08:00",
-  "updated_at": "2026-09-14T18:32:00+08:00",
+  "updated_at": "2026-09-14T23:22:00+08:00",
   "context": {
     "context_id": "ctx-20260914-fullopt",
-    "project": "MemoryOS",
+    "project": "global",
     "assumptions": [
       "分析对象为 C:\\Users\\WYX\\Desktop\\MemoryOS（Electron 壳 + 内置 Node 内核 + node:sqlite + Fastify/FastMCP + 零构建前端）。",
       "所有结论均基于可复现实证（命令 / 文件行号 / PRAGMA 读数），未做无证据归因。",
       "性能维度沿用 MemoryOS-架构与性能分析.md 的 B1-B8 编号，已闭环项不重复立项。",
       "开发库当前记忆 905 条（active 515 / merged 282 / rejected 97 / trial 9 / archived 2），主库 55.6MB。",
       "默认建议先完成 T10（git 版本控制），为其余改动提供 diff/回滚可信链；T10 未完成前各任务仍按「改前 VACUUM INTO + 文件备份」纪律执行。",
-      "改动纪律：最小改动；改前说明涉及文件与原因，改后给出可复现验收命令；禁止无实证声称已落地。"
+      "改动纪律：最小改动；改前说明涉及文件与原因，改后给出可复现验收命令；禁止无实证声称已落地。",
+      "任务记忆 scope 由 MemoryOS 改为 global（2026-09-14 21:48）：task_claim/task_next 的 project 默认值为 'global'，保持 MemoryOS scope 会让其他 Agent 用默认参数静默拿不到任务。plan 主体仍针对 MemoryOS 项目。"
     ],
     "out_of_scope": [
       "写者收敛为单权威（5 写者 → 1 写者 + N 读者）：WAL + busy_timeout(5s) + withTx×3 + 工具层锁提示已够用，单机单用户收益低于风险，待实测 busy 冲突再立项。",
@@ -58,9 +59,9 @@
     "next_action": "resume",
     "resume_hint": "计划已生成并通过零依赖校验器校验，14 项任务已推送至任务池（project=MemoryOS）等待各 Agent 认领。建议优先执行 T10 建立 git 回滚链，再并行推进安全四项。",
     "last_synced_session": "session-20260914-fullopt",
-    "lease_expires_at": "2026-09-14T19:32:00+08:00",
-    "heartbeat_at": "2026-09-14T18:32:00+08:00",
-    "version": 3,
+    "lease_expires_at": "2026-09-14T22:50:00+08:00",
+    "heartbeat_at": "2026-09-14T21:50:00+08:00",
+    "version": 8,
     "etag": "sha256:pending-recompute"
   },
   "next_checkpoint": {
@@ -146,6 +147,41 @@
       "action": "legacy_tasks.archived",
       "target": "plan:plan-20260914-fullopt",
       "reason": "用户授权归档全部存量旧任务（范围 A+B+C+D）：40 条任务记忆 status->archived（POST /api/archive，40 条 daemon_log 审计）；卡片 32 张 done->archived（CAS done->archived）、23 张非终态->cancelled（状态机不允许非 done 直达 archived）。改前快照 data/backup/memory.db.pre-archive-20260914-183059（41.4MB）。归档后任务池仅剩本计划 14 项 active。"
+    },
+    {
+      "at": "2026-09-14T21:48:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.cards_materialized",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "修复「任务地图无可领取卡片」：POST /api/cards/apply-plan 建 14 张 task 卡（#94-#107，meta 带 plan_id/task_id），逐张 triage->todo->ready 置为可领取；恢复 9 张被取消的任务卡（#69,70,71,72,74,75,77,78,84）cancelled->ready（终态无出边，直连改库并补 card_events action=restore）；14 条任务记忆 project MemoryOS->global 消除 MCP 默认参数静默失败。改前快照 data/backup/memory.db.pre-cardfix-20260914-214820（42.2MB）。复核：kind=task 且 ready 且 claim_lock IS NULL = 23 张。"
+    },
+    {
+      "at": "2026-09-14T21:52:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.task_added",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "新增 T15：修复任务双层（memories↔cards）不同步与跨 project 静默领取失败——本轮『领取不了』暴露的结构性缺陷"
+    },
+    {
+      "at": "2026-09-14T21:56:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.tasks_pushed",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "T15 已分派 #4193（project=global）并建卡 #108 置 ready；计划共 15 项，卡片层可领取共 24 张（14 计划卡 + 9 恢复卡 + T15）"
+    },
+    {
+      "at": "2026-09-14T22:58:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.task_updated",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "T15 补充 daemon 桥非幂等与 meta 覆盖缺陷（实证 dist/daemon.js:330-340），新增 S5/S6 与 A4/A5；任务池现存 15 条重复副本 #4210-#4224 待去重"
+    },
+    {
+      "at": "2026-09-14T23:22:00+08:00",
+      "actor": "agent:workbuddy",
+      "action": "plan.task_updated",
+      "target": "plan:plan-20260914-fullopt",
+      "reason": "修正 T15 根因：syncTaskBridge 本身幂等（card_memory 锚点），真因是桥对 plan 无感知导致重复派发；新增 decisions_log D-T15-1"
     }
   ],
   "tasks": [
@@ -213,7 +249,8 @@
         "max_retries": 2,
         "backoff": "exponential"
       },
-      "memory_id": 4169
+      "memory_id": 4169,
+      "card_id": 94
     },
     {
       "id": "T2",
@@ -274,7 +311,8 @@
         "max_retries": 2,
         "backoff": "exponential"
       },
-      "memory_id": 4170
+      "memory_id": 4170,
+      "card_id": 95
     },
     {
       "id": "T3",
@@ -345,7 +383,8 @@
         "max_retries": 2,
         "backoff": "exponential"
       },
-      "memory_id": 4171
+      "memory_id": 4171,
+      "card_id": 96
     },
     {
       "id": "T4",
@@ -411,7 +450,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4172
+      "memory_id": 4172,
+      "card_id": 97
     },
     {
       "id": "T5",
@@ -482,7 +522,8 @@
         "max_retries": 1,
         "backoff": "linear"
       },
-      "memory_id": 4173
+      "memory_id": 4173,
+      "card_id": 98
     },
     {
       "id": "T6",
@@ -543,7 +584,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4174
+      "memory_id": 4174,
+      "card_id": 99
     },
     {
       "id": "T7",
@@ -609,7 +651,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4165
+      "memory_id": 4165,
+      "card_id": 100
     },
     {
       "id": "T8",
@@ -675,7 +718,8 @@
         "max_retries": 2,
         "backoff": "exponential"
       },
-      "memory_id": 4168
+      "memory_id": 4168,
+      "card_id": 101
     },
     {
       "id": "T9",
@@ -736,7 +780,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4175
+      "memory_id": 4175,
+      "card_id": 102
     },
     {
       "id": "T10",
@@ -807,7 +852,8 @@
         "max_retries": 1,
         "backoff": "linear"
       },
-      "memory_id": 4176
+      "memory_id": 4176,
+      "card_id": 103
     },
     {
       "id": "T11",
@@ -873,7 +919,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4177
+      "memory_id": 4177,
+      "card_id": 104
     },
     {
       "id": "T12",
@@ -939,7 +986,8 @@
         "max_retries": 2,
         "backoff": "exponential"
       },
-      "memory_id": 4178
+      "memory_id": 4178,
+      "card_id": 105
     },
     {
       "id": "T13",
@@ -1000,7 +1048,8 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4166
+      "memory_id": 4166,
+      "card_id": 106
     },
     {
       "id": "T14",
@@ -1066,7 +1115,110 @@
         "max_retries": 2,
         "backoff": "linear"
       },
-      "memory_id": 4167
+      "memory_id": 4167,
+      "card_id": 107
+    },
+    {
+      "id": "T15",
+      "title": "修复任务双层不同步与跨 project 静默领取失败",
+      "description": "修复任务双层不同步与跨 project 静默领取失败。【问题】① 任务地图读 cards，MCP task_* 写 memories(type=task)，两者无自动同步（设计文档的 syncTaskCards 在现版代码中不存在）→ task_assign 后地图无卡可领、卡片被认领后 memories 状态头不回写；② task_claim/task_next 的 project 默认值为 'global'，查询用 project IN (?, 'global')，任务在其它 project（如 MemoryOS）时静默返回『无可领任务』且不报错。【影响】多 Agent 协作出现『任务存在但领不到』，需人工排查；本轮实测复现：14 项任务发布 3.5 小时后仍无人领取，实为地图 0 卡 + 默认 project 不可见。【建议】① 补 syncTaskCards 幂等对账（memories(type=task) ↔ cards 双向，启动时 + task_assign 后触发）② task_claim/task_next 在指定 project 无结果时，回退统计并提示其他 project 的开放任务数 ③ task_assign 增加『同时建卡』选项（默认开）。【涉及文件】resources/memoryos/dist/server.js、dist/dashboard.js。【验收】task_assign 后地图立即出现可领取卡；卡片认领后 memories 状态头同步为 in_progress；project 不匹配时 task_next 给出明确提示而非空结果。 【★ 2026-09-14 22:53 实证补充】重复条目的真正来源是 daemon 的「ready 卡→任务池」桥：dist/daemon.js:330-340 扫 ready 卡后 writeMemory({source_ref:'card:'+c.id, agent:'dispatcher'}) **新建**一条 task 记忆，再 UPDATE cards SET meta={\"dispatch_memory_id\":row.id}。两个缺陷：① 非幂等——建记忆前不查该卡是否已由任务记忆派生（meta.plan_id/task_id 或 ref_kind='memory'），导致 plan-20260914-fullopt 的 15 项产生重复副本 #4210-#4224；② meta **覆盖而非合并**——plan_id/task_id 被整段替掉，apply-plan 的幂等键 plan_id::task_id 失效，再跑会重建整批重复卡（实测 meta LIKE '%plan-20260914-fullopt%' 命中数已为 0）。另需区分：POST /api/cards/:id/push-to-task 不新建记忆，只原位改写已绑定记忆的状态头（要求 ref_kind='memory'），不是重复的来源。 【★★ 2026-09-14 23:20 根因修正（推翻前一条 22:53 的判断）】`syncTaskBridge`（dist/daemon.js:310-345）**本身是幂等的**：它以 `card_memory(card_id, relation='dispatch')` 作为「已派发」锚点，每卡只派发一次（实测 #94-#108 全部有锚点，不会重复派发）。真正的缺口是**桥对 plan 无感知**：`/api/plans/import`（或 task_assign）已经为计划建了任务记忆，`apply-plan` 又为同一计划建了卡；桥扫到 ready 卡时只查 card_memory 锚点、不查卡片的 `meta.plan_id/task_id`，于是又派发了一份 → 同一批工作两个 memory_id（#4165-4178/#4193 vs #4210-#4224）。正确修复口径：桥派发前先按 `meta.plan_id/task_id` 或 `cards.ref_kind='memory'` 反查是否已有对应任务记忆，有则只补锚点不新建；`meta` 必须**合并写入**（保留 plan_id/task_id），不要整段覆盖为 `{dispatch_memory_id}`（否则 apply-plan 幂等键失效）。",
+      "dimension": "architecture",
+      "severity": "high",
+      "assignee": "?",
+      "status": "pending",
+      "created_at": "2026-09-14T21:52:00+08:00",
+      "timeout_at": "2026-09-19T18:00:00+08:00",
+      "steps": [
+        {
+          "id": "T15-S1",
+          "text": "补 syncTaskCards 幂等对账（memories(type=task) ↔ cards 双向；启动时 + task_assign 后触发）",
+          "status": "pending"
+        },
+        {
+          "id": "T15-S2",
+          "text": "task_claim/task_next 在指定 project 无结果时回退提示其他 project 的开放任务数",
+          "status": "pending"
+        },
+        {
+          "id": "T15-S3",
+          "text": "task_assign 增加『同时建卡』选项（默认开），卡片初始态直接可领取",
+          "status": "pending"
+        },
+        {
+          "id": "T15-S4",
+          "text": "实测：task_assign → 地图出现可领卡 → 认领 → memories 状态头同步",
+          "status": "pending"
+        },
+        {
+          "id": "T15-S5",
+          "text": "daemon 桥 plan 感知化：派发前按 meta.plan_id/task_id 与 cards.ref_kind/ref_id 反查已存在任务记忆，有则只补 card_memory 锚点不新建；meta 改合并写入（保留 plan_id/task_id）",
+          "status": "pending"
+        },
+        {
+          "id": "T15-S6",
+          "text": "清理已产生的 15 条重复副本 #4210-#4224（归档去重，保留带 [plan:][taskid:] 标记的原始条目）",
+          "status": "pending"
+        }
+      ],
+      "progress": {
+        "percent": 0,
+        "done_steps": 0,
+        "total_steps": 6
+      },
+      "acceptance_criteria": [
+        {
+          "id": "T15-A1",
+          "text": "task_assign 后任务地图立即出现该任务的可领取卡片（无需人工 apply-plan）",
+          "verified": false
+        },
+        {
+          "id": "T15-A2",
+          "text": "卡片被认领（ready→running）后 memories 状态头同步为 in_progress",
+          "verified": false
+        },
+        {
+          "id": "T15-A3",
+          "text": "任务 project 与调用方 project 不匹配时，task_next 输出明确提示而非空结果",
+          "verified": false
+        },
+        {
+          "id": "T15-A4",
+          "text": "同一计划重复跑 apply-plan 与 dispatch 后，task 记忆数与卡片数不再增长（幂等）",
+          "verified": false
+        },
+        {
+          "id": "T15-A5",
+          "text": "卡片 meta 同时保留 plan_id/task_id 与 dispatch_memory_id（合并而非覆盖）",
+          "verified": false
+        }
+      ],
+      "blockers": [],
+      "attempts": [],
+      "review": {
+        "required": true,
+        "status": "pending"
+      },
+      "retry_policy": {
+        "max_retries": 2,
+        "backoff": "exponential"
+      },
+      "memory_id": 4193,
+      "card_id": 108,
+      "decisions_log": [
+        {
+          "id": "D-T15-1",
+          "scope": "plan-20260914-fullopt",
+          "task_id": "T15",
+          "decision": "桥的修复口径由『幂等化』修正为『plan 感知化』",
+          "reason": "实测 dist/daemon.js 的 syncTaskBridge 已用 card_memory(relation='dispatch') 做每卡一次性锚点，幂等成立；重复条目的真因是桥不认识 meta.plan_id/task_id，对『已由计划建过任务的卡』重复派发。",
+          "alternatives": [
+            "把桥改成完全幂等（不必要，已幂等）",
+            "禁用 apply-plan 建卡（会破坏计划卡片化能力）"
+          ],
+          "impact": "T15-S5 的实现范围收窄为『派发前按 plan 元数据反查』+『meta 合并写入』",
+          "status": "decided"
+        }
+      ]
     }
   ],
   "artifacts": [
