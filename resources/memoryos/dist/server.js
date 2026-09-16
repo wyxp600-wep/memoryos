@@ -908,7 +908,10 @@ function syncTaskToCard(memoryId, cardStatus) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, "dispatcher", "mcp_sync", card.status, cardStatus, `任务 #${memoryId} MCP 流转同步`);
         return true;
     }
-    catch {
+    catch (e) {
+        // ★ 2026-09-16（A 分区验收）：原为静默 `catch { return false }` —— 状态同步失败会完全隐身，
+        //   外观与"卡本来就对"相同（本轮 task_release 同类缺陷曾因此潜伏）。仅加一行日志，语义不变。
+        console.error(`[syncTaskToCard] 卡侧同步失败（记忆 #${memoryId} → ${cardStatus}）：${e.message}`);
         return false;
     }
 }

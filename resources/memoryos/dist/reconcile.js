@@ -60,7 +60,12 @@ export function reconcileTasksAndCards(db) {
             const st = headStatus(o.content);
             if (!st || !NON_TERMINAL.includes(st))
                 continue;
-            const cardStatus = st === "pending" ? "ready" : st;
+            // ★ 2026-09-16 修正：原为 `st === "pending" ? "ready" : st`，当头部是 in_progress 时直接把
+            //   "in_progress" 写进 cards.status —— 但**卡片状态词汇表**是 ready/running/blocked/done/archived/
+            //   cancelled（认领后为 running），"in_progress" 并非合法卡态：补建的卡会短暂处于非法状态、
+            //   不在 running 泳道，且要等下一轮对账（5 分钟后）才被自我修正为 running。
+            //   正解：复用文件顶部已定义的单一映射 EXPECT_CARD_OF（pending→ready / in_progress→running / blocked→blocked）。
+            const cardStatus = EXPECT_CARD_OF[st] ?? st;
             const title = String(o.content ?? "").slice(0, 120) || `任务 #${o.id}`;
             const info = db
                 .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES (?,?,?,?,?,?,?,?,?)`)

@@ -86,8 +86,11 @@ export function registerCards(app, ctx) {
             const newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
             db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(newContent, mem.id);
         }
-        catch {
-            /* 回写失败不阻断卡片流程 */
+        catch (e) {
+            /* 回写失败不阻断卡片流程 —— 但必须留痕：静默会让"卡已流转、任务头未跟"完全隐身
+             * （★ 2026-09-16 A 分区验收补日志；语义未变）。⚠ 另注：此处直接 UPDATE memories.content
+             * 绕过了 db.updateMemory() 的 FTS/2-gram/向量同步，属已记录的既有坑，待 B 分区评估是否改走该函数。 */
+            console.error(`[syncCardToTask] 卡片 #${cardId} → 任务头回写失败：${e.message}`);
         }
     }
     /** 请求中的自我声明身份（单机单用户，README 已声明不防恶意本机调用，R4-6） */
