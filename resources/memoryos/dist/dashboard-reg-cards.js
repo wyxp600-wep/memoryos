@@ -434,7 +434,7 @@ export function registerCards(app, ctx) {
         const lock = randomBytes(12).toString("hex");
         const info = db
             .prepare(`UPDATE cards SET status='running', assignee=?, claim_lock=?,
-           lease_expires_at=datetime('now','+30 minutes'), heartbeat_at=datetime('now'), updated_at=datetime('now')
+           lease_expires_at=datetime('now','+10 minutes'), heartbeat_at=datetime('now'), updated_at=datetime('now')
          WHERE id=? AND status='ready' AND claim_lock IS NULL`)
             .run(actor, lock, id);
         if (Number(info.changes) === 0)
@@ -605,7 +605,7 @@ export function registerCards(app, ctx) {
         const id = Number(req.params.id);
         const actor = String(req.body?.as ?? "").trim();
         const info = db
-            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=datetime('now','+30 minutes') WHERE id=? AND assignee=?`)
+            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=datetime('now','+10 minutes') WHERE id=? AND assignee=?`)
             .run(id, actor);
         if (Number(info.changes) === 0)
             return reply.code(409).send({ ok: false, error: "心跳失败：非认领者或无此卡" });

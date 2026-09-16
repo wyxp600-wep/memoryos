@@ -44,7 +44,8 @@ const ENV_DRIFT_ROUTES = new Set([
     "/api/scan-agents",                 // 上报外部 CLI 自身版本（实测 Claude Code 2.1.227→2.1.273 即变）
     "/api/ingest/sources",              // 上报 83 个来源文件的**实时 size**
     "/api/agent/status",                // 含当前工具面（随 MCP 注册数变化）与连接数
-    "/api/rules/project-candidates",    // 扫 ~/Desktop|~/WorkBuddy|~/Documents 目录 + hasAgents(AGENTS.md 是否存在)
+    "/api/rules/project-candidates",
+    "/api/skills/status",          // 上报宿主机 skill 文件目录（~60 条 *__skillhub，随 DSH/会话更新 skill 文件而变；2026-09-16 实测因目录变化 +40B）    // 扫 ~/Desktop|~/WorkBuddy|~/Documents 目录 + hasAgents(AGENTS.md 是否存在)
 ]);
 
 /* ── 固定夹具（全部确定性：显式给 created_at，避免"同秒并列"以外的抖动） ── */

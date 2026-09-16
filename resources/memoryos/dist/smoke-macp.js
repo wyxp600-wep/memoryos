@@ -91,6 +91,35 @@ try {
     const r = readMemory(db3, 1);
     check("F1.新写入行 version=1 / fencing_token=0 / epoch 为空（默认值语义）", r.version === 1 && r.fencing_token === 0 && (r.epoch == null || r.epoch === ""), `v=${r.version} ft=${r.fencing_token} epoch=${JSON.stringify(r.epoch)}`);
 
+
+    /* ── G. P2-6（C-3/C-5）：租约回收守护 + 三方对账守护 ── */
+    const { reapExpiredLeases } = await import("./daemon.js");
+    const { reconcileTasksAndCards } = await import("./reconcile.js");
+    // G1 过期租约回收（C-3）
+    db3.prepare(`INSERT INTO cards(board,kind,title,body,status,assignee,claim_lock,lease_expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+        .run("default", "task", "租约回收样本", "smoke", "running", "agentA", "lock-expired-1", "2000-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z");
+    const expiredCardId = Number(db3.prepare(`SELECT id FROM cards WHERE claim_lock=?`).get("lock-expired-1").id);
+    const rp1 = reapExpiredLeases(db3);
+    const afterReap = db3.prepare(`SELECT status, assignee, claim_lock FROM cards WHERE id=?`).get(expiredCardId);
+    check("G1a.过期租约被守护回收（running → ready 且清锁）", rp1.reaped >= 1 && afterReap.status === "ready" && afterReap.assignee === null && afterReap.claim_lock === null, `reaped=${rp1.reaped} status=${afterReap.status}`);
+    check("G1b.回收留 card_events 事件（可审计）", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_expired").c >= 1);
+    const rp2 = reapExpiredLeases(db3);
+    check("G1c.回收幂等（再跑无新增）", rp2.reaped === 0, `reaped=${rp2.reaped}`);
+    // G2 投影重建（C-5）：任务记忆无卡 → 补建
+    const taskRow = writeMemory(db3, { content: "[task][assignee:?][status:pending] 对账样本：无卡任务", type: "task", agent: "macp-smoke", agent_fpath: null, project: "global", embedding: null });
+    const rc1 = reconcileTasksAndCards(db3);
+    const rel = db3.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation=?`).get(taskRow.id, "dispatch");
+    check("G2a.无卡任务被投影重建（建卡 + dispatch 关联）", rc1.created >= 1 && !!rel, `created=${rc1.created} card=${rel?.card_id ?? "none"}`);
+    check("G2b.重建留 reconcile_created 事件", !!rel && db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(rel.card_id, "reconcile_created").c >= 1);
+    const rc2 = reconcileTasksAndCards(db3);
+    check("G2c.对账幂等（再跑 0 建卡 0 对齐）", rc2.created === 0 && rc2.aligned === 0, `created=${rc2.created} aligned=${rc2.aligned}`);
+    // G3 状态对齐（C-5）：记忆头 in_progress ↔ 卡片 ready 失配 → 修复
+    db3.prepare(`UPDATE memories SET content=? WHERE id=?`).run("[task][assignee:macp-smoke][status:in_progress] 对账样本：无卡任务", taskRow.id);
+    db3.prepare(`UPDATE cards SET status=?, updated_at=? WHERE id=?`).run("ready", new Date(Date.now() - 30 * 60000).toISOString(), rel.card_id);
+    const rc3 = reconcileTasksAndCards(db3);
+    const fixed = db3.prepare(`SELECT status FROM cards WHERE id=?`).get(rel.card_id);
+    check("G3a.失配被修复（头 in_progress → 卡 running）", rc3.aligned >= 1 && fixed.status === "running", `aligned=${rc3.aligned} card=${fixed.status}`);
+    check("G3b.镜像滞后 >5min 触发 daemon_log 告警", db3.prepare(`SELECT COUNT(*) c FROM daemon_log WHERE task=? AND op=?`).get("reconcile", "lag").c >= 1);
     db3.close();
 } catch (e) {
     fail++;
@@ -98,5 +127,5 @@ try {
 } finally {
     try { fs.rmSync(ws, { recursive: true, force: true }); } catch { /* Windows 句柄 */ }
 }
-console.log(`\n== P2-5 MACP schema 冒烟：${pass} PASS / ${fail} FAIL ==`);
+console.log(`\n== MACP 冒烟（P2-5 schema + P2-6 生命周期/守护）：${pass} PASS / ${fail} FAIL ==`);
 process.exit(fail ? 1 : 0);

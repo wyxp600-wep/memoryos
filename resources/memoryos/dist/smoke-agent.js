@@ -1,7 +1,7 @@
 /**
  * smoke-agent.js — MemoryOS Agent 冒烟
  *  ① LLM 端点工具调用直测（qwen3:8b / 任意 OpenAI 兼容，--llm-url/--llm-model 覆盖）
- *  ② MCP 客户端连通 + tools/list（18 工具）
+ *  ② MCP 客户端连通 + tools/list（22 工具）
  *  ③ 只读 agent 单轮（memory_context 注入，不触发写门禁）
  * 用法：node dist/smoke-agent.js [--llm-url U --llm-model M]
  */
@@ -55,6 +55,8 @@ const ok = (name, cond, detail = "") => {
             "memory_read", "memory_feedback", "memory_cite", "memory_report", "memory_health",
             "obsidian_import", "obsidian_export", "obsidian_write_note",
             "task_assign", "task_claim", "task_done", "task_supersede", "task_next",
+            // ★ P2-6（C-2/#4198）新增 task 生命周期工具
+            "task_heartbeat", "task_release", "task_block", "task_reopen",
         ];
         const LIFECYCLE = ["task_heartbeat", "task_release", "task_block", "task_reopen"];   // P2-6（C-2）
         const EXEC = ["file_read", "file_write", "exec_run"];                                // P0（默认关闭，需 MEMORYOS_EXEC_ON=1）
@@ -66,7 +68,7 @@ const ok = (name, cond, detail = "") => {
         ok(`MCP 工具面与分组定义一致（期望 ${expected.length} 个：基线 ${REQUIRED.length} + 生命周期 ${LIFECYCLE.length}${execOn ? " + 执行面 3" : "（执行面默认关闭）"}）`,
             names.length === expected.length && missing.length === 0 && unexpected.length === 0,
             `got ${names.length}｜缺失=[${missing.join(", ")}]｜多出=[${unexpected.join(", ")}]`);
-        ok("必备 18 工具全部注册（防静默缺失）", REQUIRED.every((n) => names.includes(n)), REQUIRED.filter((n) => !names.includes(n)).join(", ") || "0 缺失");
+        ok("必备 22 工具全部注册（防静默缺失）", REQUIRED.every((n) => names.includes(n)), REQUIRED.filter((n) => !names.includes(n)).join(", ") || "0 缺失");
         ok("P2-6 生命周期 4 工具已注册", LIFECYCLE.every((n) => names.includes(n)), LIFECYCLE.filter((n) => !names.includes(n)).join(", ") || "4/4");
         const execNames = EXEC.filter((n) => names.includes(n));
         ok("执行面 3 工具的暴露与开关一致", execOn ? execNames.length === 3 : execNames.length === 0, `实际暴露 ${execNames.length} 个${execNames.length ? `: ${execNames.join(", ")}` : ""}`);

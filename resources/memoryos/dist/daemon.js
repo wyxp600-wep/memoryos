@@ -12,6 +12,7 @@
  */
 import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
+import { reconcileTasksAndCards } from "./reconcile.js";  // ★ P2-6（C-5）三方对账守护
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 export const DEFAULT_HYGIENE_CONFIG = {
@@ -600,6 +601,28 @@ export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}
     return { ok: true, skipped: false, ts, before: Number((pct * 100).toFixed(1)), afterFreelist, afterPages, snapshot };
 }
 // —— CLI ——
+/**
+ * ★ P2-6（C-3 / #4199）：租约超时回收守护 —— 过期 running 卡 → ready（清 assignee/claim_lock，留 lease_expired 事件）。
+ *  与 /api/dispatch 内联回收同 SQL 口径；由 30s 任务桥高频调用，无需等到人工/自动派发。
+ *  纯 SQL、幂等（已 ready 的卡不会再命中），失败不阻断守护主流程。
+ */
+export function reapExpiredLeases(db) {
+  const out = { reaped: 0 };
+  try {
+    const now = new Date().toISOString();
+    const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?`).all(now);
+    for (const c of expired) {
+      db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, updated_at=? WHERE id=?`).run(now, c.id);
+      db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_expired', 'running', 'ready', `租约过期（原 ${c.assignee ?? String.fromCharCode(63)}），守护自动回收（C-3）`);
+      out.reaped++;
+    }
+  }
+  catch (e) {
+    console.error(`[reaper] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return out;
+}
+
 const mainFile = (process.argv[1] ?? "").split(/[\\/]/).pop() ?? "";
 if (mainFile === "daemon.js") {
     const args = process.argv.slice(2);
@@ -632,6 +655,8 @@ if (mainFile === "daemon.js") {
             // ★ 2026-09-14：卡片↔MCP 任务派发桥（ready 卡→公开任务池；agent done→卡片同步）
             try {
                 const tb = syncTaskBridge(db);
+                const rp = reapExpiredLeases(db);
+                if (rp.reaped) console.log(`[reaper-fast] 回收过期租约 ${rp.reaped} 张`);
                 if (tb.dispatched || tb.syncedDone || tb.syncedRunning) {
                     console.log(`[taskbridge] 派发卡片→任务 ${tb.dispatched} / 任务完成→卡片 ${tb.syncedDone} / 任务进行中→卡片 ${tb.syncedRunning}`);
                 }
@@ -705,5 +730,18 @@ if (mainFile === "daemon.js") {
         };
         runTaskBridge();
         setInterval(runTaskBridge, 30 * 1000); // 每 30 秒
+        // ★ P2-6（C-5 / #4201）：三方对账（5min 低频；幂等 SQL，重跑无副作用）
+        const runReconcile = () => {
+            try {
+                const rc = reconcileTasksAndCards(db);
+                if (rc.created || rc.aligned || rc.lagAlerts)
+                    console.log(`[reconcile] 建卡 ${rc.created} / 对齐 ${rc.aligned} / 滞后告警 ${rc.lagAlerts}`);
+            }
+            catch (e) {
+                console.error(`[reconcile-fast] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        };
+        runReconcile();
+        setInterval(runReconcile, 5 * 60 * 1000); // 每 5 分钟
     }
 }

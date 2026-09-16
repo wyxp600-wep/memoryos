@@ -172,6 +172,102 @@ try {
     }));
     const fbtext = fb.result?.content?.[0]?.text ?? "";
     check("tools/call memory_feedback soft-reject 记忆", fbtext.includes("已标记记忆 #1") && fbtext.includes("rejected"), JSON.stringify(fbtext.slice(0, 50)));
+
+    // ★ P2-6（C-2/C-4）生命周期工具 + fencing + memory_write 版本化（端到端）
+    const ta2 = (await send("tools/call", {
+        name: "task_assign",
+        arguments: { content: "P2-6 生命周期样本：验证 heartbeat/release/block/reopen 与 fencing", assignee: "smoke" },
+    }));
+    const ta2t = ta2.result?.content?.[0]?.text ?? "";
+    const tid2 = (ta2t.match(/#(\d+)/) || [])[1];
+    check("P2-6a.task_assign 建立样本任务", !!tid2, JSON.stringify(ta2t.slice(0, 50)));
+    const tcl2 = (await send("tools/call", {
+        name: "task_claim",
+        arguments: { memory_id: Number(tid2), as: "smoke" },
+    }));
+    const tcl2t = tcl2.result?.content?.[0]?.text ?? "";
+    const lease = (tcl2t.match(/lease_token=([0-9a-f]+)/) || [])[1];
+    check("P2-6b.task_claim 发放租约锁（lease_token）", !!lease, JSON.stringify(tcl2t.slice(0, 70)));
+    const tdnBad = (await send("tools/call", {
+        name: "task_done",
+        arguments: { memory_id: Number(tid2), conclusion: "伪造租约的完成写", lease_token: "bogus-lock" },
+    }));
+    const tdnBadt = tdnBad.result?.content?.[0]?.text ?? "";
+    check("P2-6c.过期/伪造租约被 fencing 拒绝", tdnBadt.includes("租约已被接管"), JSON.stringify(tdnBadt.slice(0, 60)));
+    const thb = (await send("tools/call", {
+        name: "task_heartbeat",
+        arguments: { memory_id: Number(tid2), as: "smoke" },
+    }));
+    const thbt = thb.result?.content?.[0]?.text ?? "";
+    check("P2-6d.task_heartbeat 续租成功", thbt.includes("续租成功"), JSON.stringify(thbt.slice(0, 60)));
+    const tdnOk = (await send("tools/call", {
+        name: "task_done",
+        arguments: { memory_id: Number(tid2), conclusion: "P2-6 生命周期样本完成", lease_token: lease },
+    }));
+    const tdnOkt = tdnOk.result?.content?.[0]?.text ?? "";
+    check("P2-6e.持有效租约可完成（fencing 不误杀）", tdnOkt.includes("已完成"), JSON.stringify(tdnOkt.slice(0, 60)));
+    const trp = (await send("tools/call", {
+        name: "task_reopen",
+        arguments: { memory_id: Number(tid2), reason: "冒烟：验证重开路径" },
+    }));
+    const trpt = trp.result?.content?.[0]?.text ?? "";
+    check("P2-6f.task_reopen 终态重开（done → in_progress）", trpt.includes("已重开"), JSON.stringify(trpt.slice(0, 60)));
+    const trl = (await send("tools/call", {
+        name: "task_release",
+        arguments: { memory_id: Number(tid2), reason: "冒烟：释放认领" },
+    }));
+    const trlt = trl.result?.content?.[0]?.text ?? "";
+    check("P2-6g.task_release 释放回 pending", trlt.includes("已释放"), JSON.stringify(trlt.slice(0, 60)));
+    const tcl3 = (await send("tools/call", {
+        name: "task_claim",
+        arguments: { memory_id: Number(tid2), as: "smoke", expected_version: 99 },
+    }));
+    const tcl3t = tcl3.result?.content?.[0]?.text ?? "";
+    check("P2-6h.陈旧版本领取被拒（乐观版本 fencing）", tcl3t.includes("版本漂移"), JSON.stringify(tcl3t.slice(0, 70)));
+    const tcl4 = (await send("tools/call", {
+        name: "task_claim",
+        arguments: { memory_id: Number(tid2), as: "smoke" },
+    }));
+    const tcl4t = tcl4.result?.content?.[0]?.text ?? "";
+    check("P2-6i.释放后可重新认领（pending → in_progress）", tcl4t.includes("已认领"), JSON.stringify(tcl4t.slice(0, 60)));
+    const tblk = (await send("tools/call", {
+        name: "task_block",
+        arguments: { memory_id: Number(tid2), reason: "冒烟：验证受阻态" },
+    }));
+    const tblkt = tblk.result?.content?.[0]?.text ?? "";
+    check("P2-6j.task_block 标记受阻（in_progress → blocked）", tblkt.includes("已标记受阻"), JSON.stringify(tblkt.slice(0, 60)));
+    const thb2 = (await send("tools/call", {
+        name: "task_heartbeat",
+        arguments: { memory_id: Number(tid2), as: "smoke" },
+    }));
+    const thb2t = thb2.result?.content?.[0]?.text ?? "";
+    check("P2-6k.受阻态续租被拒（状态守卫）", thb2t.includes("无需续租"), JSON.stringify(thb2t.slice(0, 50)));
+    const trl2 = (await send("tools/call", {
+        name: "task_release",
+        arguments: { memory_id: Number(tid2), reason: "冒烟：受阻态释放应被拒" },
+    }));
+    const trl2t = trl2.result?.content?.[0]?.text ?? "";
+    check("P2-6l.受阻态释放被拒（仅进行中可释放）", trl2t.includes("仅进行中任务可释放"), JSON.stringify(trl2t.slice(0, 60)));
+    // C-4：memory_write 版本化（supersedes + version 乐观校验）
+    const mw1 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "C-4 样本 v1：乐观修订基线", type: "decision", confidence: 0.6, source_task_id: Number(tid2) },
+    }));
+    const mw1t = mw1.result?.content?.[0]?.text ?? "";
+    const mid1 = (mw1t.match(/#(\d+)/) || [])[1];
+    const mw2 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "C-4 样本 v2：替代 v1 结论", type: "decision", supersedes: Number(mid1), version: 1 },
+    }));
+    const mw2t = mw2.result?.content?.[0]?.text ?? "";
+    check("P2-6m.memory_write 版本化修订（归档旧条 + 因果链）", mw2t.includes("已替代并归档"), JSON.stringify(mw2t.slice(0, 70)));
+    const mid2 = (mw2t.match(/#(\d+)/) || [])[1];
+    const mw3 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "C-4 样本 v3：陈旧版本修订（应被拒）", type: "decision", supersedes: Number(mid2), version: 99 },
+    }));
+    const mw3t = mw3.result?.content?.[0]?.text ?? "";
+    check("P2-6n.陈旧版本修订被拒（乐观版本 fencing）", mw3t.includes("版本漂移"), JSON.stringify(mw3t.slice(0, 70)));
     // memory_health：使用侧健康（P2 效果监控）
     const h = (await send("tools/call", {
         name: "memory_health",

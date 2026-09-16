@@ -79,6 +79,12 @@ server.addTool({
             .default("experience")
             .describe("记忆类型"),
         project: z.string().default("global").describe("项目 scope；'global' 存跨项目通用经验"),
+        // ★ P2-6（C-4 / #4200）版本化入参：乐观修订 + 元数据暴露（supersets 旧结论时走因果链）
+        confidence: z.number().min(0).max(1).optional().describe("P2-6：本条记忆置信度（0-1，缺省 0.8）"),
+        expires_at: z.string().optional().describe("P2-6：过期 ISO 时间（映射 valid_until，前瞻/到期由守护治理）"),
+        supersedes: z.number().int().min(1).optional().describe("P2-6：被本条替代的旧记忆 id（旧条归档 + superseded_by 回填，新条挂因果链）"),
+        version: z.number().int().min(1).optional().describe("P2-6：被替代记忆的乐观版本（配 supersedes）；不符 → 拒绝过期修订写"),
+        source_task_id: z.number().int().min(1).optional().describe("P2-6：来源任务记忆 id（追溯用，记事件流）"),
         session_id: z.string().optional().describe("当前会话/任务标识（价值度量的 inferred-cited 判定基础）"),
         task_hint: z.string().optional().describe("任务提示词/上下文标签（埋点用）"),
     }),
@@ -129,6 +135,16 @@ server.addTool({
                 return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 0.5，待 v0.3 仲裁）[${row.type}|${row.agent}]` + _gate;
             }
         }
+        // ★ P2-6（C-4 / #4200）：修订写前置 —— 乐观版本校验（指定 supersedes 且指定 version 时，旧条版本不符即拒）
+        let causalParent = null;
+        if (args.supersedes) {
+            const oldRow = readMemory(db, args.supersedes);
+            if (!oldRow)
+                return `supersedes 目标 #${args.supersedes} 不存在，无法替代。`;
+            if (args.version != null && args.version !== oldRow.version)
+                return `版本漂移：#${args.supersedes} 现为 v${oldRow.version}（期望 v${args.version}）——已有其他修订在前，本次写入拒绝（fencing）。请 memory_read 刷新后重试。`;
+            causalParent = oldRow.id;
+        }
         const row = writeMemory(db, {
             content: args.content,
             type: args.type,
@@ -136,7 +152,15 @@ server.addTool({
             agent_fpath: AGENT_FPATH,
             project: args.project,
             embedding: emb,
+            confidence: args.confidence,      // P2-6（C-4）：缺省 0.8 保持原行为
+            valid_until: args.expires_at ?? null, // P2-6（C-4）：expires_at → valid_until
+            causal_parent: causalParent,        // P2-6：修订因果链
         });
+        if (causalParent != null) {
+            db.prepare(`UPDATE memories SET superseded_by=? WHERE id=?`).run(row.id, causalParent);
+            setStatus(db, causalParent, "archived"); // 旧条归档（可恢复，移出 active 检索集）
+            appendEvent(db, { memory_id: causalParent, op: "superseded", payload: JSON.stringify({ by: AGENT, supersedes_with: row.id }), operator: `agent:${AGENT}` });
+        }
         logUsage(db, {
             memory_id: row.id,
             event: "write",
@@ -146,8 +170,11 @@ server.addTool({
             session_id: args.session_id,
             task_hint: args.task_hint,
         });
+        if (args.source_task_id != null)
+            appendEvent(db, { memory_id: row.id, op: "source_task", payload: JSON.stringify({ task: args.source_task_id, by: AGENT }), operator: `agent:${AGENT}` }); // P2-6（C-4）
         const oneLine = row.content.replace(/\s+/g, " ").slice(0, 300);
-        return `已写入记忆 #${row.id} [${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${oneLine}` + _gate;
+        const supNote = causalParent != null ? `（已替代并归档 #${causalParent}，因果链 → v${row.version}）` : "";
+        return `已写入记忆 #${row.id}[${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${supNote}${oneLine}` + _gate;
     },
 });
 server.addTool({
