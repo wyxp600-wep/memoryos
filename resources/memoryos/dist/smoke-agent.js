@@ -46,21 +46,29 @@ const ok = (name, cond, detail = "") => {
     const mcp = await createMcpClient({ agentName: "smoke", agentFpath: "dist/smoke-agent.js" });
     try {
         const tools2 = await mcp.tools();
-        // ① 计数断言（P0 执行面加入 3 工具后为 21）；② 必备清单断言 —— 只改计数会漏掉"注册缺失"
-        //   （F16 教训：`&&` 短路使计数为假时清单根本不执行，故两者分开断言）
+        /* 断言策略（★ 2026-09-16 第三次修正同类问题）：**禁止写死工具总数**。
+         *   F16 是 smoke-mcp 写死 17；随后我把它改成"18 或 21"仍属写死 —— P2-6 再加 4 个生命周期工具后总数变 22，
+         *   断言又立刻过期（本次实跑 got 22 → FAIL）。正解：期望值由**分组定义推导**，并在不符时打印差集，
+         *   这样新增工具只改分组一处，且仍能抓到"注册缺失"（清单断言）与"多出意料外工具"（差集）。 */
         const REQUIRED = [
             "memory_write", "memory_search", "memory_ask", "memory_projects", "memory_context",
             "memory_read", "memory_feedback", "memory_cite", "memory_report", "memory_health",
             "obsidian_import", "obsidian_export", "obsidian_write_note",
             "task_assign", "task_claim", "task_done", "task_supersede", "task_next",
         ];
+        const LIFECYCLE = ["task_heartbeat", "task_release", "task_block", "task_reopen"];   // P2-6（C-2）
+        const EXEC = ["file_read", "file_write", "exec_run"];                                // P0（默认关闭，需 MEMORYOS_EXEC_ON=1）
         const names = tools2.map((t) => t.name);
-        // 执行面默认关闭（P0-2）：开启时才期望 +3，否则应为基线 18 —— 两种态都必须自洽
         const execOn = process.env.MEMORYOS_EXEC_ON === "1";
-        ok(`MCP 连通 + 工具计数（执行面${execOn ? "已开启" : "默认关闭"}）`, tools2.length === (execOn ? REQUIRED.length + 3 : REQUIRED.length), `got ${tools2.length}: ${names.join(", ")}`);
-        const missing = REQUIRED.filter((n) => !names.includes(n));
-        ok("必备 18 工具全部注册（防静默缺失）", missing.length === 0, missing.length ? `缺失 ${missing.join(", ")}` : "0 缺失");
-        const execNames = ["file_read", "file_write", "exec_run"].filter((n) => names.includes(n));
+        const expected = [...REQUIRED, ...LIFECYCLE, ...(execOn ? EXEC : [])];
+        const unexpected = names.filter((n) => !expected.includes(n));
+        const missing = expected.filter((n) => !names.includes(n));
+        ok(`MCP 工具面与分组定义一致（期望 ${expected.length} 个：基线 ${REQUIRED.length} + 生命周期 ${LIFECYCLE.length}${execOn ? " + 执行面 3" : "（执行面默认关闭）"}）`,
+            names.length === expected.length && missing.length === 0 && unexpected.length === 0,
+            `got ${names.length}｜缺失=[${missing.join(", ")}]｜多出=[${unexpected.join(", ")}]`);
+        ok("必备 18 工具全部注册（防静默缺失）", REQUIRED.every((n) => names.includes(n)), REQUIRED.filter((n) => !names.includes(n)).join(", ") || "0 缺失");
+        ok("P2-6 生命周期 4 工具已注册", LIFECYCLE.every((n) => names.includes(n)), LIFECYCLE.filter((n) => !names.includes(n)).join(", ") || "4/4");
+        const execNames = EXEC.filter((n) => names.includes(n));
         ok("执行面 3 工具的暴露与开关一致", execOn ? execNames.length === 3 : execNames.length === 0, `实际暴露 ${execNames.length} 个${execNames.length ? `: ${execNames.join(", ")}` : ""}`);
         const tn = await mcp.callTool("task_next", { project: "global", as: "" });
         ok("task_next 只读调用", !tn.isError, String(tn.text).replace(/\s+/g, " ").slice(0, 120));
