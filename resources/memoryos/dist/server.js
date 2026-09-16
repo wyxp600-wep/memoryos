@@ -997,11 +997,17 @@ server.addTool({
         try {
             const c2 = cardOfTask(row.id);
             if (c2 && c2.status === "running") {
-                db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(st.assignee, c2.id);
+                // ★ 2026-09-16 修正：此处原为 `.run(st.assignee, c2.id)` 而 SQL 只有 1 个占位符（WHERE id=?）。
+                //   实测 node:sqlite 在「实参多于占位符」时抛 `column index out of range`；该异常被下方
+                //   `catch {}` **静默吞掉** ⇒ 本条 UPDATE 与紧随其后的 card_events INSERT **都没执行**——
+                //   现象＝"记忆头已释放，但卡片仍 running + 持锁、且无任何事件留痕"，只能等 C-5 对账兜底。
+                //   教训：① SQL 占位符数与 .run 实参数必须逐一核对；② 静默 catch 会把这类错误藏起来（改为仅记日志）。
+                const rel = db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
+                if (Number(rel.changes) === 0) console.error(`[task_release] ⚠ 卡片 #${c2.id} 未更新（changes=0），三方可能不一致`);
                 db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
             }
         }
-        catch { /* 卡片侧失败不阻断记忆侧 */ }
+        catch (e) { console.error(`[task_release] 卡片侧更新失败（记忆侧已释放）：${e.message}`); }
         return `任务 #${row.id} 已释放（status=pending，重新可领）：${newContent.replace(/\s+/g, " ").slice(0, 100)}`;
     },
 });server.addTool({
@@ -1061,7 +1067,7 @@ server.addTool({
                 db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_reopen", c2.status, "ready", `任务 #${row.id} 重开（${args.reason.trim().slice(0, 80)}）`);
             }
         }
-        catch { /* 卡片侧失败不阻断记忆侧 */ }
+        catch (e) { console.error(`[task_reopen] 卡片侧更新失败（记忆侧已重开）：${e.message}`); }
         return `任务 #${row.id} 已重开（${st.status} → in_progress，指派 ${who}）：${args.reason.trim().slice(0, 100)}`;
     },
 });
