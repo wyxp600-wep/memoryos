@@ -13,7 +13,7 @@
     "snapshot": "node dist/snapshot-routes.js",
     "snapshot:check": "node dist/snapshot-routes.js --check",
     "audit": "node dist/audit-probe.js",
-    "lint": "node --check dist/server.js && node --check dist/exec-tools.js && node --check dist/agent-core.js && node --check dist/agent.js && node --check dist/db.js && node --check dist/smoke-all.js && node --check dist/smoke-exec.js && node --check dist/smoke-t12.js && node --check dist/smoke-macp.js && node --check dist/snapshot-routes.js && node --check dist/audit-probe.js",
+    "lint": "node --check dist/server.js && node --check dist/exec-tools.js && node --check dist/agent-core.js && node --check dist/agent.js && node --check dist/db.js && node --check dist/smoke-all.js && node --check dist/smoke-exec.js && node --check dist/smoke-t12.js && node --check dist/smoke-macp.js && node --check dist/snapshot-routes.js && node --check dist/audit-probe.js && node --check dist/dashboard.js && node --check dist/dashboard-reg-core.js && node --check dist/dashboard-reg-memory.js && node --check dist/dashboard-reg-plans.js && node --check dist/dashboard-reg-ingest.js && node --check dist/dashboard-reg-desktop.js && node --check dist/dashboard-reg-static.js && node --check dist/dashboard-reg-cards.js && node --check dist/dashboard-reg-knowledge.js && node --check dist/dashboard-task-util.js",
     "start": "node dist/server.js",
     "obsidian:import": "node dist/obsidian-sync.js import",
     "obsidian:export": "node dist/obsidian-sync.js export",
