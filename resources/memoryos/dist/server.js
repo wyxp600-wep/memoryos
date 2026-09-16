@@ -14,6 +14,7 @@ import { importVault, exportMemories, writeNoteToVault } from "./obsidian-sync.j
 import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 // —— 运行时身份读取（R3 分工：读写自动带 agent/agent_fpath）——
 const DB_PATH = process.env.MEMORY_DB ?? fileURLToPath(new URL("../data/memory.db", import.meta.url)); // fileURLToPath 正确 decode 中文路径
 const AGENT = process.env.MEMORY_AGENT ?? "unknown";
@@ -809,6 +810,8 @@ server.addTool({
         as: z.string().optional().describe("以谁的身份领取（缺省=当前 agent）；传 'any' 领取无人认领兜底"),
         project: z.string().default("global").describe("任务 scope"),
         memory_id: z.number().int().optional().describe("指定领取某条任务 id；不填则列出当前可领的 pending 任务"),
+        expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本（你上次读到的 version）；不一致 → 拒绝陈旧领取"),
+        lease_token: z.string().optional().describe("P2-6 fencing：你持有的租约锁（若卡片已被他人接管 → 拒绝僵尸领取）"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -822,15 +825,24 @@ server.addTool({
                 return `#${args.memory_id} 任务头格式异常，无法认领。`;
             if (st.status !== "pending")
                 return `#${args.memory_id} 当前 status=${st.status}，仅 pending 可认领。`;
+            // ★ P2-6（C-2）fencing：乐观版本 + 租约锁 —— 拒绝陈旧领取 / 僵尸领取
+            const cardNowClaim = cardOfTask(row.id);
+            if (args.lease_token && cardNowClaim?.claim_lock && args.lease_token !== cardNowClaim.claim_lock)
+                return `#${args.memory_id} 租约已被他人接管（卡片 #${cardNowClaim.id} 现锁 ${String(cardNowClaim.claim_lock).slice(0, 8)}…），本次领取拒绝（fencing）；请重新 task_next 后再领。`;
+            if (args.expected_version != null && args.expected_version !== row.version)
+                return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：任务已被其他操作改写，本次领取拒绝；请刷新后再领。`;
             const who = args.as && args.as !== "any" && args.as !== AGENT ? args.as : AGENT;
             if (args.as !== "any" && st.assignee !== "?" && st.assignee !== who) {
                 return `#${args.memory_id} 指派给 ${st.assignee}，你不是接收方（可传 as=any 强制托管认领）。`;
             }
             const newContent = taskBodyWithDep("in_progress", who, st.deps, taskBody(row.content));
             updateMemory(db, row.id, { content: newContent }); // 同步 FTS
-            appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who }), operator: `agent:${AGENT}` });
+            db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：领取推进版本（fencing 基线）
+            const lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
+            appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1 }), operator: `agent:${AGENT}` });
             syncTaskToCard(row.id, "running"); // ★ 2026-09-15：认领 → 关联卡片 running，看板即时同步
-            return `已认领任务 #${row.id}（status=in_progress by ${who}）：${newContent.replace(/\s+/g, " ").slice(0, 120)}`;
+            touchCardLease(row.id, lock); // ★ P2-6：卡片租约锁定（10min 窗口，C-3）
+            return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}`;
         }
         // 列可领任务：type='task' 且状态头 pending（★ H4：secret 任务不进工具通道）
         const rows = db.prepare(`SELECT id, content, agent, created_at FROM memories
@@ -865,7 +877,7 @@ function syncTaskToCard(memoryId, cardStatus) {
         const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
         if (!card)
             return false;
-        db.prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(cardStatus, cid);
+        db.prepare(`UPDATE cards SET status=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(cardStatus, cid);
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, "dispatcher", "mcp_sync", card.status, cardStatus, `任务 #${memoryId} MCP 流转同步`);
         return true;
     }
@@ -873,12 +885,171 @@ function syncTaskToCard(memoryId, cardStatus) {
         return false;
     }
 }
+/** P2-6（C-2/#4198）：任务记忆 → 派发卡片（card_memory dispatch 关系）。无卡返回 null。 */
+function cardOfTask(memoryId) {
+    try {
+        const rel = db.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch' LIMIT 1`).get(memoryId);
+        if (!rel)
+            return null;
+        return db.prepare(`SELECT * FROM cards WHERE id=?`).get(Number(rel.card_id)) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** P2-6（C-2）：卡片租约触达（认领时发 lease token；heartbeat 续窗）——租约统一 10 分钟（C-3/#4199）。 */
+function touchCardLease(memoryId, lock) {
+    try {
+        const c = cardOfTask(memoryId);
+        if (!c || c.status !== "running")
+            return false;
+        db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=datetime('now','+10 minutes'), heartbeat_at=datetime('now'), version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, c.id);
+        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, "dispatcher", lock ? "lease_set" : "heartbeat", "running", "running", lock ? `MCP 租约锁定（lock=${String(lock).slice(0, 8)}…）` : "MCP 心跳续窗（10min）");
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * ★ P2-6（C-2 / #4198）：补齐 task 生命周期工具（MACP v3.0）。
+ *  过期写/僵尸写自此可被技术拦截（fencing）：lease token（卡片 claim_lock）+ 乐观版本（memories.version）。
+ *  全部 best-effort 记 card_events / appendEvent，不阻断主流程。
+ */
+server.addTool({
+    name: "task_heartbeat",
+    description: "多 Agent 协同·租约（C-2）：对进行中任务的关联卡片刷新租约窗口（10 分钟，C-3），防止长跑任务被守护回收。调用方应为当前认领者（身份可传 as，仅限本人任务）。无关联卡片（纯任务）时仅记事件。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("任务记忆 id"),
+        as: z.string().optional().describe("以谁的身份续租（缺省=当前 agent）；须与任务认领者一致"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const st = readTaskState(row.content);
+        if (!st || st.status !== "in_progress")
+            return `#${args.memory_id} 当前非进行中，无需续租。`;
+        const who = args.as && args.as !== "any" ? args.as : AGENT;
+        if (st.assignee !== "?" && st.assignee !== who)
+            return `#${args.memory_id} 认领者为 ${st.assignee}，${who} 无权续租。`;
+        const card = cardOfTask(row.id);
+        if (!card) {
+            appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, card: null }), operator: `agent:${AGENT}` });
+            return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。`;
+        }
+        if (card.status === "running" && card.claim_lock) {
+            touchCardLease(row.id, null);
+            appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, card: card.id }), operator: `agent:${AGENT}` });
+            return `任务 #${row.id} 续租成功（卡片 #${card.id} 租约窗口 → 10 分钟）。`;
+        }
+        return `任务 #${row.id} 续租未生效：卡片 #${card.id} 当前 status=${card.status}${card.claim_lock ? "（他方持有租约）" : ""}。`;
+    },
+});server.addTool({
+    name: "task_release",
+    description: "多 Agent 协同·租约（C-2）：释放认领 —— 任务状态头 in_progress → pending（重新可被认领），关联卡片 running → ready 并清租约锁。仅当前认领者（或 human 兜底）可释放。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("任务记忆 id"),
+        reason: z.string().optional().describe("释放原因（留痕 card_events/事件流）"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const st = readTaskState(row.content);
+        if (!st || st.status !== "in_progress")
+            return `#${args.memory_id} 当前 status=${st?.status}，仅进行中任务可释放。`;
+        const newContent = taskBodyWithDep("pending", st.assignee, st.deps, taskBody(row.content));
+        updateMemory(db, row.id, { content: newContent });
+        db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
+        appendEvent(db, { memory_id: row.id, op: "task_release", payload: JSON.stringify({ by: AGENT, reason: (args.reason ?? "").trim() || null }), operator: `agent:${AGENT}` });
+        try {
+            const c2 = cardOfTask(row.id);
+            if (c2 && c2.status === "running") {
+                db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(st.assignee, c2.id);
+                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
+            }
+        }
+        catch { /* 卡片侧失败不阻断记忆侧 */ }
+        return `任务 #${row.id} 已释放（status=pending，重新可领）：${newContent.replace(/\s+/g, " ").slice(0, 100)}`;
+    },
+});server.addTool({
+    name: "task_block",
+    description: "多 Agent 协同·租约（C-2）：把任务标记为受阻（状态头 → blocked，原因留痕）；关联卡片同步 blocked。受阻任务不进可做集；恢复走 task_reopen 或重新认领。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("任务记忆 id"),
+        reason: z.string().describe("受阻原因（必填，留痕）"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const st = readTaskState(row.content);
+        if (!st)
+            return `#${args.memory_id} 任务头格式异常，无法标记受阻。`;
+        const tErr = assertTransition(st.status, "blocked");
+        if (tErr)
+            return `#${args.memory_id} ${tErr}`;
+        const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${args.reason.trim()}`;
+        updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body) });
+        db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
+        appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        syncTaskToCard(row.id, "blocked");
+        return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}`;
+    },
+});server.addTool({
+    name: "task_reopen",
+    description: "多 Agent 协同·租约（C-2）：重开已终态任务（done/failed/cancelled → in_progress，重新指派）；关联卡片 done → ready。E-0 裁决口径：reopened 为派生态（展示层），持久态落回白名单。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("任务记忆 id"),
+        assignee: z.string().optional().describe("重开后指派给谁（缺省=原认领者）"),
+        reason: z.string().describe("重开原因（必填，留痕）"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const st = readTaskState(row.content);
+        if (!st)
+            return `#${args.memory_id} 任务头格式异常，无法重开。`;
+        if (!["done", "failed", "cancelled"].includes(st.status))
+            return `#${args.memory_id} 当前 status=${st.status}，仅终态（done/failed/cancelled）可重开。`;
+        const who = args.assignee || st.assignee || "?";
+        const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
+        updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body) });
+        db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
+        appendEvent(db, { memory_id: row.id, op: "task_reopen", payload: JSON.stringify({ by: AGENT, from: st.status, to: who, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        try {
+            const c2 = cardOfTask(row.id);
+            if (c2 && ["done", "archived", "cancelled"].includes(c2.status)) {
+                db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, assignee=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(who === "?" ? null : who, c2.id);
+                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_reopen", c2.status, "ready", `任务 #${row.id} 重开（${args.reason.trim().slice(0, 80)}）`);
+            }
+        }
+        catch { /* 卡片侧失败不阻断记忆侧 */ }
+        return `任务 #${row.id} 已重开（${st.status} → in_progress，指派 ${who}）：${args.reason.trim().slice(0, 100)}`;
+    },
+});
 server.addTool({
     name: "task_done",
     description: "多 Agent 协同：把已认领/待办任务标记为完成（状态头 → done），并把结论追加进任务正文。调用方应为当前认领者或任务接收方。",
     parameters: z.object({
         memory_id: z.number().int().min(1).describe("要完成的记忆 id"),
         conclusion: z.string().describe("完成结论/结果摘要（追加进任务正文）"),
+        // ★ P2-6（C-2）fencing 入参：校验代码（见下方 execute 内 1065-1068 区段）先前已存在，但参数表里
+        //   **未声明**这两个字段 ⇒ 值恒为 undefined、校验恒被跳过（死代码）；且曾被误插到 memory_read
+        //   造成整个 MCP 服务端起不来（SyntaxError: Unexpected identifier 'expected_version'）。
+        //   2026-09-16 修正：在此声明一次，使拒绝逻辑真正生效。**勿再重复插入（曾出现同字段重复声明）。**
+        lease_token: z.string().optional().describe("P2-6 fencing：task_claim 返回的租约锁；与卡片当前锁不符 → 拒绝过期完成写"),
+        expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本；不一致 → 拒绝陈旧完成写"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -895,12 +1066,21 @@ server.addTool({
         const tErr = assertTransition(st.status, "done");
         if (tErr)
             return `#${args.memory_id} ${tErr}`;
+        // ★ P2-6（C-2）fencing：拒绝过期完成写（lease 被接管 / 版本漂移）
+        const cardNowDone = cardOfTask(row.id);
+        if (args.lease_token && cardNowDone?.claim_lock && args.lease_token !== cardNowDone.claim_lock)
+            return `#${args.memory_id} 租约已被接管（卡片 #${cardNowDone.id} 现锁 ${String(cardNowDone.claim_lock).slice(0, 8)}…），本次完成拒绝（fencing）；请重新 task_next。`;
+        if (args.expected_version != null && args.expected_version !== row.version)
+            return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：完成请求拒绝；请刷新后重试。`;
         const body = taskBody(row.content);
         const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}`;
         updateMemory(db, row.id, { content: newContent });
+        db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：完成推进版本
         bumpConfidence(db, row.id, 0.05); // 完成任务强化
         appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT }), operator: `agent:${AGENT}` });
         syncTaskToCard(row.id, "done"); // ★ 2026-09-15：完成 → 关联卡片 done，看板即时同步
+        if (cardNowDone) // ★ P2-6：完成即释放租约锁
+            db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
         return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}`;
     },
 });
