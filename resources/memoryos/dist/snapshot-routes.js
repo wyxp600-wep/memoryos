@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, writeMemory } from "./db.js";
 import { buildApp } from "./dashboard.js";
@@ -28,8 +29,23 @@ const ROOT = path.resolve(HERE, "..");
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i !== -1 && argv[i + 1] ? argv[i + 1] : d; };
 const CHECK = argv.includes("--check");
+const STRICT = argv.includes("--strict");
 const OUT = path.resolve(ROOT, opt("out", path.join("..", "..", "outputs", "route-snapshot.json")));
 const TOKEN = "snapshot-token-fixed";
+
+/**
+ * ★ 环境依赖路由（2026-09-16 补）：这些端点的响应**随机器/磁盘/外部程序状态变化**，与代码行为无关。
+ *   实测三例：/api/scan-agents 上报外部 CLI 自身版本（Claude Code 2.1.227→2.1.273 即变）；
+ *   /api/ingest/sources 上报 83 个来源文件的**实时 size**；/api/agent/status 含当前工具面与连接数。
+ *   若把它们当硬失败，基线会快速腐烂 → 噪声吃掉告警力（与「验证器防空转」同源的教训）。
+ *   故单独列 WARN：默认不影响退出码，`--strict` 时升级为失败（用于发布前对齐环境）。
+ */
+const ENV_DRIFT_ROUTES = new Set([
+    "/api/scan-agents",                 // 上报外部 CLI 自身版本（实测 Claude Code 2.1.227→2.1.273 即变）
+    "/api/ingest/sources",              // 上报 83 个来源文件的**实时 size**
+    "/api/agent/status",                // 含当前工具面（随 MCP 注册数变化）与连接数
+    "/api/rules/project-candidates",    // 扫 ~/Desktop|~/WorkBuddy|~/Documents 目录 + hasAgents(AGENTS.md 是否存在)
+]);
 
 /* ── 固定夹具（全部确定性：显式给 created_at，避免"同秒并列"以外的抖动） ── */
 const WS = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-snap-"));
@@ -138,6 +154,14 @@ if (gettable.length < MIN_EXPECTED_GET) {
 
 const snapshot = {
     token: TOKEN,
+    // ★ meta：基线必须能自证"对应哪个代码版本"，否则重定基线会变成掩盖变更的手段
+    meta: {
+        generatedAt: new Date().toISOString(),
+        node: process.version,
+        gitRev: (() => { try { return execSync("git rev-parse --short HEAD", { cwd: ROOT, encoding: "utf8" }).trim(); } catch { return "unknown"; } })(),
+        gitDirty: (() => { try { return execSync("git status --porcelain", { cwd: ROOT, encoding: "utf8" }).trim().split("\n").filter(Boolean).length > 0; } catch { return null; } })(),
+        envDriftRoutes: [...ENV_DRIFT_ROUTES],
+    },
     routeTable: routes.map((r) => `${r.method} ${r.path}`).sort(),
     routes: [],
     probes: [],
@@ -193,7 +217,8 @@ if (!CHECK) {
 /* ── --check：结构契约 + 无参 GET 响应体 + 动态段探针 + 鉴权，逐条比对 ── */
 if (!fs.existsSync(OUT)) { console.log(`❌ 找不到基线快照：${OUT}（先不带 --check 跑一次生成）`); process.exit(1); }
 const base = JSON.parse(fs.readFileSync(OUT, "utf8"));
-let diff = 0;
+let diff = 0, drift = 0;
+if (base.meta) console.log(`基线版本：git ${base.meta.gitRev}${base.meta.gitDirty ? "（含未提交改动）" : ""} @ ${base.meta.generatedAt}（node ${base.meta.node}）\n`);
 
 // ① 结构契约：路由漏注册/改名/新增（含 100 条非 GET）
 const baseTable = new Set(base.routeTable ?? []);
@@ -207,8 +232,15 @@ const curMap = new Map(snapshot.routes.map((r) => [r.path, r]));
 for (const [p, b] of baseMap) {
     const c = curMap.get(p);
     if (!c) { console.log(`❌ GET 路由消失：${p}`); diff++; continue; }
+    const changed = c.status !== b.status || c.sha256 !== b.sha256;
+    if (!changed) continue;
+    if (ENV_DRIFT_ROUTES.has(p)) {
+        drift++;
+        console.log(`⚠ 环境漂移（非代码回归）：${p} ${b.status}/${b.contentLength}B → ${c.status}/${c.contentLength}B`);
+        continue;
+    }
     if (c.status !== b.status) { console.log(`❌ ${p} status ${b.status} → ${c.status}`); diff++; }
-    else if (c.sha256 !== b.sha256) { console.log(`❌ ${p} 响应体变化（${b.contentLength}B/${b.sha256} → ${c.contentLength}B/${c.sha256}）`); diff++; }
+    else { console.log(`❌ ${p} 响应体变化（${b.contentLength}B/${b.sha256} → ${c.contentLength}B/${c.sha256}）`); diff++; }
 }
 
 // ③ 动态段 GET 探针
@@ -216,14 +248,19 @@ const baseProbe = new Map((base.probes ?? []).map((r) => [r.path, r]));
 for (const r of snapshot.probes) {
     const b = baseProbe.get(r.path);
     if (!b) { console.log(`❌ 新增动态段 GET：${r.path}`); diff++; continue; }
-    if (r.status !== b.status || r.sha256 !== b.sha256) { console.log(`❌ ${r.path} 探针变化（${b.status}/${b.sha256} → ${r.status}/${r.sha256}）`); diff++; }
+    if (r.status !== b.status || r.sha256 !== b.sha256) {
+        if (ENV_DRIFT_ROUTES.has(r.path)) { drift++; console.log(`⚠ 环境漂移（非代码回归）：${r.path}`); continue; }
+        console.log(`❌ ${r.path} 探针变化（${b.status}/${b.sha256} → ${r.status}/${r.sha256}）`); diff++;
+    }
 }
 
 // ④ 鉴权契约
 if (snapshot.auth.noTokenStatus !== base.auth.noTokenStatus) { console.log(`❌ 鉴权契约变化：无令牌 ${base.auth.noTokenStatus} → ${snapshot.auth.noTokenStatus}`); diff++; }
 
+const strictFail = STRICT && drift > 0;
 console.log(diff
-    ? `\n== 快照比对：${diff} 处差异（T8 拆分必须 0 差异）==`
-    : `\n== 快照比对：结构契约 ${baseTable.size} 条 + 无参 GET ${baseMap.size} 条 + 动态段探针 ${snapshot.probes.length} 条 + 鉴权 逐项一致 ✅ ==`);
+    ? `\n== 快照比对：${diff} 处硬差异（T8 类重构必须 0）${drift ? ` + ${drift} 处环境漂移` : ""} ==`
+    : `\n== 快照比对：结构契约 ${baseTable.size} 条 + 无参 GET ${baseMap.size} 条 + 动态段探针 ${snapshot.probes.length} 条 + 鉴权 逐项一致 ✅${drift ? `（另有 ${drift} 处环境漂移，已单列不计入失败）` : ""} ==`);
 console.log("提示：非 GET 仅做结构契约（不比对响应体）—— 其响应需构造合法 payload 且部分端点有副作用（如 skills/sync 写盘），故不纳入自动比对。");
-process.exit(diff ? 1 : 0);
+if (drift) console.log(`环境漂移路由：${[...ENV_DRIFT_ROUTES].join(", ")}（--strict 时按失败处理）`);
+process.exit(diff || strictFail ? 1 : 0);
