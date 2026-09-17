@@ -449,6 +449,25 @@ function markIngestState(db, src) {
     catch { /* 文件消失则忽略 */ }
 }
 /** 按段落分块，每块约 ~1500 字符；单段落超长按 size 硬切，避免块膨胀 */
+/** 成本治理·渐进压缩（P1 CostGuard「渐进式压缩-降级-终止」第一级）：
+ * 预算吃紧时把输入块压缩到 ≤45% 再送 LLM（省 token），保留句首与结论性句子。 */
+function compressBlock(block, ratio = 0.45) {
+    const lines = String(block).split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length <= 4)
+        return lines.join("\n");
+    // 启发式：保留含结论/数值/路径/命令的句子（信息密度高），丢过程性叙述
+    const keep = lines.filter((l) => /(。|结论|原因|解法|路径|命令|http|\.js|\.md|exit=|错误|踩坑|决策)/.test(l));
+    const pool = keep.length ? keep : lines;
+    const cap = Math.max(2, Math.round(pool.length * ratio));
+    // 头部 + 尾部双端保留（中段截断），与 agent-core 截断口径一致
+    const head = pool.slice(0, Math.ceil(cap / 2));
+    const tail = pool.slice(-Math.ceil(cap / 2));
+    const seen = new Set(head);
+    for (const t of tail)
+        if (!seen.has(t))
+            head.push(t);
+    return head.join("\n").slice(0, 700);
+}
 function chunk(text, size = 1500) {
     const blocks = [];
     let cur = "";
@@ -532,7 +551,32 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
     const existing = getVectorsOnProject(db, "global");
     let calls = 0; // 本轮 LLM 提炼次数，达 MAX_CALLS 停止后续源
     let budgetExhausted = false;
+    // ★ P1 成本治理·三级渐进（CostGuard）：按已耗预算比例切档，不是一刀切 break
+    //   L1 正常（<50% 预算）；L2 压缩（50–80%，输入块压缩到 45% 省 token，统计记 budgetCompress）；
+    //   L3 降级+终止（≥80% 或 LLM 连续失败，剩余源跳过不再调 LLM，统计记 budgetDowngrade/budgetExhausted）。
+    const budgetLevel = () => {
+        const frac = calls / MAX_CALLS;
+        if (frac >= 0.8 || (srcLlmFailStreak >= 3))
+            return "downgrade";
+        if (frac >= 0.5)
+            return "compress";
+        return "normal";
+    };
+    let srcLlmFailStreak = 0; // LLM 连续失败计数（触发降级的信号之一）
+    let budgetCompress = 0;   // 预算治理统计
+    let budgetDowngrade = 0;
+    let budgetTerminated = 0;
+    stats.budgetLevel = "normal"; // 最终档位（dashboard 展示）
     for (const src of picked) {
+        // ★ P1 成本治理·三级渐进（CostGuard）：按已耗预算切档，不一刀切
+        const level = budgetLevel();
+        stats.budgetLevel = level; // 持续更新最终档位
+        if (level === "downgrade") {
+            // L3 降级+终止：剩余源跳过不再调 LLM（只放行 L1 免 LLM 源）
+            budgetDowngrade++;
+            if ((src.level ?? "L2") === "L2")
+                budgetTerminated++;
+        }
         if (budgetExhausted)
             break;
         if (calls >= MAX_CALLS) {
@@ -631,7 +675,7 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
         }
         for (let i = 0; i < blocks.length; i++) {
             stats.chunks++;
-            const block = blocks[i];
+            let block = blocks[i];
             const vec = vecs[i];
             // 库内去重：与已有向量 cos>0.92 视为重复跳过
             if (existing.length && vec) {
@@ -644,14 +688,22 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
             // LLM 提炼（受全局预算约束）
             if (calls >= MAX_CALLS)
                 break;
+            // ★ P1 成本治理 L2 压缩档：预算 50–80% 时压缩输入块（省 token），统计 budgetCompress
+            const lvl = budgetLevel();
+            if (lvl === "compress") {
+                block = compressBlock(block);
+                budgetCompress++;
+            }
             calls++;
             let items;
             try {
                 items = await extractFromSource(block, src.kind, `${src.agent}:${src.path}`);
+                srcLlmFailStreak = 0; // 一次成功即清零连续失败
             }
             catch (e) {
                 stats.llmFail++;
                 srcLlmFail++;
+                srcLlmFailStreak++;
                 stats.errors.push(`${src.name} 提炼失败：${String(e)}`);
                 continue;
             }
@@ -714,5 +766,10 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
         if (states && srcLlmFail === 0)
             markIngestState(db, src);
     }
+    // ★ P1 成本治理：最终档位 + 三级统计（normal/compress 次数、downgrade 终止数），供 dashboard 展示
+    stats.budgetLevel = budgetLevel();
+    stats.budgetCompress = budgetCompress;
+    stats.budgetDowngrade = budgetDowngrade;
+    stats.budgetTerminated = budgetTerminated;
     return stats;
 }

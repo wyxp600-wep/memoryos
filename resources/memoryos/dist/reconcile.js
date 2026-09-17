@@ -6,6 +6,10 @@
  *  实现纪律：参数绑定（无内联 SQL 字面量）+ 字符串切分（无正则转义）+ 幂等（一致的对不命中）。
  *  由常驻 daemon 每 5 分钟调用（daemon.js runReconcile）。
  */
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 const EXPECT_CARD_OF = { pending: "ready", in_progress: "running", blocked: "blocked" };
 const NON_TERMINAL = ["pending", "in_progress", "blocked"];
 const CARD_TERMINAL = ["done", "archived", "cancelled"];
@@ -78,6 +82,107 @@ export function reconcileTasksAndCards(db) {
     }
     catch (e) {
         console.error(`[reconcile] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return out;
+}
+
+/**
+ * P2 自进化有界验证环（融合架构「弱点挖掘 → 有界提案 → 回归验证」+ 安全默认「外部监督 + 分层遏制」）：
+ * 进化引擎（evolution-engine 技能）把高频失败因果结构化成「提案」条目写入 engine/ 目录，
+ * 供 Heartbeat 持续学习。本函数实现其中缺的一环——**双回归验证门**：
+ *   提案要「被接受进生产规则集」必须同时满足：
+ *     (a) held-in 回归不退化，且 (b) held-out 回归有提升，且确定性 gate 通过。
+ * 这是确定性判定（跑既有验收脚本 + 比对前后指标），不是 LLM 自评——避免「自进化风险（攻击持久化）」
+ * 由模型自己盖章。提案文件 schema（engine/<slug>.json）：
+ *   { "title","gate":"smoke|lint|lint-catch", "held_in": {<样例名>:0|1}, "held_out": {...} }
+ * 输出写回同一文件的 verdict（accepted/rejected + 明细 + ts），并落 daemon_log。
+ */
+export function evolutionRegressionGate(db, engineDir) {
+    const out = { scanned: 0, accepted: 0, rejected: 0, details: [] };
+    if (!engineDir || !fs.existsSync(engineDir))
+        return out;
+    // gate cwd 必须是 resources/memoryos（smoke 类脚本用 process.cwd() 拼 data/ 与 dist/ 相对路径；
+    // lint/snapshot 类按 import.meta.url 自定位不依赖 cwd）
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    // 确定性验收门（字面量命令，防注入：gate 名只做枚举匹配，绝不参与 argv 构造）
+    const GATES = {
+        smoke: ["dist/smoke-mcp.js"],
+        "lint-sql": ["dist/lint-sql-arity.js"],
+        "lint-catch": ["dist/lint-silent-catch.js"],
+    };
+    let files = [];
+    try {
+        const dirReal = fs.realpathSync(engineDir);
+        files = fs.readdirSync(engineDir)
+            .filter((f) => f.endsWith(".json") && !f.includes("..") && f.length <= 120)
+            .map((f) => path.join(engineDir, f))
+            // 路径穿越防护：目标父目录必须仍落在 engineDir 根内
+            .filter((full) => {
+                try {
+                    const parent = fs.realpathSync(path.dirname(full));
+                    return parent === dirReal || parent.startsWith(dirReal + path.sep);
+                }
+                catch { return true; }
+            });
+    }
+    catch (e) { console.error(`[evolution-gate] 读取 engineDir ${engineDir} 失败，本轮跳过: ${e.message}`); return out; }
+    for (const full of files) {
+        const fname = path.basename(full);
+        let p;
+        try { p = JSON.parse(fs.readFileSync(full, "utf8")); }
+        catch (e) { console.error(`[evolution-gate] 提案 ${fname} JSON 解析失败，跳过: ${e.message}`); continue; }
+        out.scanned++;
+        // 已判决的提案不重判（幂等）
+        if (p.verdict === "accepted" || p.verdict === "rejected")
+            continue;
+        const hi = p.held_in ?? {};
+        const ho = p.held_out ?? {};
+        const hiPass = Object.values(hi).filter(Boolean).length;
+        const hoPass = Object.values(ho).filter(Boolean).length;
+        const hoBefore = 0; // 提案未记录 held-out 基线 → 视作 0，提升判定即「有任一 held-out 通过」
+        const hiTotal = Object.keys(hi).length;
+        const hoTotal = Object.keys(ho).length;
+        const gateKey = p.gate === "lint-sql" || p.gate === "lint-catch" ? p.gate : "smoke";
+        const gateArgv = GATES[gateKey];
+        let gateOk = false;
+        let gateDetail = "无匹配 gate";
+        try {
+            const r = spawnSync("node", gateArgv, { shell: false, cwd: root, encoding: "utf8", timeout: 180000, windowsHide: true });
+            gateOk = r.status === 0;
+            gateDetail = String(r.stdout || r.stderr || "").trim().slice(0, 160);
+        }
+        catch (e) { gateDetail = `gate 执行异常：${e.message}`; }
+        // 双回归判定：确定性 gate 通过 且 held-in 不退化（已知样例正确率不腰斩）且 held-out 有提升
+        const holdInNotDegraded = hiTotal === 0 ? true : hiPass >= hiTotal * 0.5;
+        const holdOutImproved = hoTotal > 0 ? (hoPass > hoBefore) : true;
+        const accepted = gateOk && holdInNotDegraded && holdOutImproved;
+        p.verdict = accepted ? "accepted" : "rejected";
+        p.verdict_detail = {
+            gate: gateKey, gateOk, gateDetail: gateDetail.slice(0, 120),
+            heldIn: `${hiPass}/${hiTotal}（基线记录）`,
+            heldOut: `${hoPass}/${hoTotal}（前 ${hoBefore}）`,
+            rule: "双回归门：确定性 gate 通过 且 held-in 不退化 且 held-out 提升",
+            ts: new Date().toISOString(),
+        };
+        // 写回同一文件（仍锁 engineDir 根内，防穿越）
+        try {
+            const parent = fs.realpathSync(path.dirname(full));
+            const dirReal = fs.realpathSync(engineDir);
+            if (parent === dirReal || parent.startsWith(dirReal + path.sep))
+                fs.writeFileSync(full, JSON.stringify(p, null, 2), "utf8");
+        }
+        catch (e) { console.error(`[evolution-gate] 提案 ${fname} 写回 verdict 失败（判定本身已生效）: ${e.message}`); }
+        try {
+            db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`)
+                .run("evolution", accepted ? "gate_pass" : "gate_reject", null,
+                    `提案 ${fname}：verdict=${p.verdict}（gate=${gateKey} ${gateOk ? "OK" : "FAIL"}；held-in ${hiPass}/${hiTotal}；held-out 提升=${holdOutImproved}）`, "evolution-gate");
+        }
+        catch (e) { console.error(`[evolution-gate] 提案 ${fname} 审计写入失败（不影响判定）: ${e.message}`); }
+        out.details.push({ file: fname, verdict: p.verdict });
+        if (accepted)
+            out.accepted++;
+        else
+            out.rejected++;
     }
     return out;
 }

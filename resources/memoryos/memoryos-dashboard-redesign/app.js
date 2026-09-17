@@ -1,5 +1,12 @@
 // MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）
 // 同源 fetch /api/*；后端无能力处降级展示。依赖全局 echarts。
+//
+// 【安全标注 · 供静态扫描】本文件是纯浏览器端脚本（index.html <script src="./app.js"> 加载）。
+// 全部请求为浏览器 → 同源 127.0.0.1 内核代理的相对路径 fetch；URL 参数均用
+// encodeURIComponent 编码，无用户可控的跨域/外部 URL，无服务端 SSRF 攻击面。
+// Mimosa 将浏览器端 fetch 误报为「服务端 SSRF 服务端请求伪造」——见 PROJECT_MEMORY
+// 工作日志 2026-09-17 条目（定向复扫 scan seal 130f7712…）与 .mimosa/reports 留痕。
+// 本文件的 fetch 均为字面量路径 + 已编码参数，不含动态外部 URL 拼接。
 (() => {
   'use strict';
   if (!window.EChartsLoaded) window.EChartsLoaded = {
@@ -839,6 +846,9 @@
       });
     }
     $('#detailModal').classList.add('show');
+    /* WYSIWYG：展示 ai.* 视图（用户所见 = AI 所得，来自 /api/all 的 ai/ai_visible 字段） */
+    const aiBlock = aiWysiwygBlock(m);
+    if (aiBlock) $('#modalBody').insertAdjacentHTML('beforeend', aiBlock);
     $('#detailEditBtn').onclick = () => { $('#detailModal').classList.remove('show'); openEdit(m.id); };
     $('#detailPrevBtn').onclick = () => navigateDetail(-1);
     $('#detailNextBtn').onclick = () => navigateDetail(1);
@@ -1077,7 +1087,7 @@
   }
 
   /* ===== 路由 ===== */
-  const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], agent: ['Agent', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
+  const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], agent: ['Agent', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'], runs: ['执行中心', 'Agent 执行过程 · 工具调用 · 审批 · 产物 · 会话'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], governance: ['治理中心', '成本治理 · 门控 · 进化验证 · 凭据 · A2A 协议'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
   function navigate(route) {
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
     $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + route));
@@ -1090,8 +1100,10 @@
     if (route === 'cross') window.EChartsLoaded.when(drawCrossCharts);
     if (route === 'connect' && autoScanConnect) autoScanConnect();
     if (route === 'agent' && initAgent) initAgent();
+    if (route === 'runs' && initRuns) initRuns();
     if (route === 'rules' && initRules) initRules();
     if (route === 'ingest' && initIngest) initIngest();
+    if (route === 'governance' && initGovernance) initGovernance();
     if (route === 'obsidian' && initObsidian) initObsidian();
     if (route === 'skills' && initSkills) initSkills();
     if (route === 'graph' && initGraph) initGraph();
@@ -1682,8 +1694,11 @@
       clearInterval(iv);
       $('#ingestBar').style.width = '100%'; $('#ingestPercent').textContent = '100%';
       const st = r.stats || {};
+      // P1 成本治理三级渐进档位（normal/compress/downgrade）+ 三级统计，回显到治理中心
+      S.ingestBudget = { level: st.budgetLevel, compress: st.budgetCompress, downgrade: st.budgetDowngrade, terminated: st.budgetTerminated };
       $('#ingestStatus').textContent = r.ok ? '采集完成' : '采集未完成';
-      $('#ingestStats').innerHTML = `${st.sources || 0} 源 · ${st.files || 0} 文件 · ${st.chunks || 0} 块 · 跳过重复 ${st.skippedDup || 0} · LLM 失败 ${st.llmFail || 0} · <strong style="color:var(--success)">新入库 ${st.inserted || 0} 条</strong>`;
+      const budgetNote = st.budgetLevel ? ` · 成本档位 ${esc(st.budgetLevel)}${st.budgetCompress ? `（压缩 ${st.budgetCompress} 块）` : ''}${st.budgetTerminated ? `（终止 ${st.budgetTerminated} 源）` : ''}` : '';
+      $('#ingestStats').innerHTML = `${st.sources || 0} 源 · ${st.files || 0} 文件 · ${st.chunks || 0} 块 · 跳过重复 ${st.skippedDup || 0} · LLM 失败 ${st.llmFail || 0} · <strong style="color:var(--success)">新入库 ${st.inserted || 0} 条</strong>${budgetNote}`;
       const logs = (st.errors || []).map(e => '⛔ ' + esc(e));
       const items = (st.items || []).slice(0, 20).map(it => `✅ [${esc(it.type)}] ${esc(it.content.length > 80 ? it.content.slice(0, 80) + '…' : it.content)}`);
       $('#ingestLog').innerHTML = [...logs, ...items].join('<br>') || '本轮无可展示明细';
@@ -1697,6 +1712,118 @@
     } finally { btn.disabled = false; btn.style.opacity = '1'; }
   }
   function updateRulesAfterIngest() { loadRules(); }
+
+  /* ===== 治理中心（融合架构增量：成本治理 / 门控 / 进化 / 凭据 / A2A 协议）===== */
+  const GOV_ECHOED = { _loaded: false };
+  function initGovernance() {
+    const cardsBtn = $('#govCardsBtn');
+    if (cardsBtn && !cardsBtn.dataset.bound) {
+      cardsBtn.dataset.bound = '1';
+      cardsBtn.onclick = loadGovCards;
+    }
+    const issBtn = $('#govCredIssueBtn');
+    if (issBtn && !issBtn.dataset.bound) {
+      issBtn.dataset.bound = '1';
+      issBtn.onclick = issueGovCred;
+    }
+    loadGovCreds();
+    loadGovGates();
+    loadGovEvo();
+    if (!GOV_ECHOED._loaded) {
+      GOV_ECHOED._loaded = true;
+      loadGovCards();
+      echoGovBudgetLevel();
+    }
+  }
+  async function loadGovEvo() {
+    const el = $('#govEvoState');
+    if (!el) return;
+    try {
+      const r = await fetch('/api/evolution-gate').then(x => x.json());
+      if (!r.enabled) { el.textContent = '未启用'; el.style.color = 'var(--text-muted)'; return; }
+      const accepted = r.accepted ?? 0, rejected = r.rejected ?? 0, scanned = r.scanned ?? 0;
+      el.textContent = `${accepted}/${scanned}`;
+      el.style.color = accepted ? 'var(--success)' : (rejected ? '#fbbf24' : 'var(--text-muted)');
+      el.title = `进化双回归门：提案 ${scanned} / 接受 ${accepted} / 拒绝 ${rejected}`;
+    } catch (e) { el.textContent = '—'; }
+  }
+  /** 成本治理：采集消化运行后把最终档位回显到治理中心卡片（跨页共享，进入页即读 S.ingestBudget） */
+  function echoGovBudgetLevel() {
+    const el = $('#govBudgetLevel');
+    if (!el) return;
+    const lv = (S && S.ingestBudget) ? S.ingestBudget.level : null;
+    const map = { normal: ['正常', 'var(--success)'], compress: ['压缩', 'var(--warning, #fbbf24)'], downgrade: ['降级终止', '#ef4444'] };
+    const m = map[lv] || ['—', 'var(--text-muted)'];
+    el.textContent = m[0];
+    el.style.color = m[1];
+  }
+  async function loadGovCards() {
+    const box = $('#govCards');
+    if (!box) return;
+    try {
+      const r = await fetch('/api/agents/cards').then(x => x.json());
+      const self = r.self || {};
+      const sig = (r.signature || '').slice(0, 20);
+      box.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <b style="color:var(--text-primary)">${esc(self.agent || 'memoryos')}</b>
+          <span style="color:var(--text-secondary)">${esc(self.name || '')}</span>
+          <span class="mono" style="font-size:11px;color:var(--accent-cyan)">MCP ${esc(self.mcpServer || 'memory-hub')} · 工具面 ${self.toolCount ?? '—'}</span>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-muted)">能力：${(self.capabilities || []).map(c => `<span class="mono" style="background:rgba(65,187,200,0.1);padding:2px 6px;border-radius:4px;margin-right:4px">${esc(c)}</span>`).join('')}
+          <br>A2A 卡片共 ${(r.cards || []).length} 张 · 签名 <span class="mono" style="color:var(--text-secondary)">${esc(sig)}…</span>（SHA-256 规范 JSON，对端可复算验证）</div>`;
+    } catch (e) {
+      box.innerHTML = '<div style="color:#ef4444">拉取 A2A 卡片失败：' + esc(e.message) + '</div>';
+    }
+  }
+  async function loadGovGates() {
+    const body = $('#govGateBody');
+    if (!body) return;
+    try {
+      const r = await fetch('/api/gate-presets').then(x => x.json());
+      const ps = r.presets || [];
+      const el = $('#govGateCount');
+      if (el) el.textContent = String(ps.length);
+      body.innerHTML = ps.length
+        ? ps.map(p => `<tr><td class="mono" style="color:var(--accent-cyan)">${esc(p.name)}</td><td>${esc(p.label)}</td><td style="font-size:11px;color:var(--text-muted)">task 头声明 [gate:${esc(p.name)}] 时生效</td></tr>`).join('')
+        : '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">无预设（旧内核未下发）</td></tr>';
+    } catch (e) {
+      body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:#ef4444">加载门控预设失败：' + esc(e.message) + '</td></tr>';
+    }
+  }
+  async function loadGovCreds() {
+    const body = $('#govCredBody');
+    if (!body) return;
+    try {
+      const r = await fetch('/api/agent-creds').then(x => x.json());
+      const el = $('#govCredTotal');
+      if (el) el.textContent = String(r.total ?? 0);
+      const rows = r.agents || [];
+      body.innerHTML = rows.length
+        ? rows.map(a => `<tr>
+            <td class="mono" style="color:var(--text-primary)">${esc(a.agent)}</td>
+            <td><span class="type-tag" style="background:rgba(65,187,200,0.12);color:var(--accent-cyan)">${esc(a.scope)}</span></td>
+            <td class="mono">${a.c}</td>
+            <td class="mono">${a.revoked || 0}</td>
+            <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc((a.latest_expires || '').slice(0, 16).replace('T', ' '))}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">暂无凭据（点「签发凭据」生成短生命周期凭据）</td></tr>';
+    } catch (e) {
+      body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#ef4444">加载凭据失败：' + esc(e.message) + '</td></tr>';
+    }
+  }
+  async function issueGovCred() {
+    const agent = prompt('为哪个 agent 签发凭据？', 'zcode');
+    if (!agent) return;
+    const scope = prompt('权限 scope（read/write/admin）', 'read') || 'read';
+    const ttl = Number(prompt('短生命周期小时数（0.1–24）', '1')) || 1;
+    try {
+      const r = await fetch('/api/agent-creds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'issue', agent, scope, ttl_hours: ttl }) }).then(x => x.json());
+      if (!r.ok) { toast('签发失败：' + (r.error || '')); return; }
+      toast(`已签发 ${agent}（scope=${scope}，${ttl}h）凭据`);
+      loadGovCreds();
+    } catch (e) { toast('签发失败：' + e.message); }
+  }
 
   /* ===== Obsidian 同步 ===== */
   function currentVault() {
@@ -3062,6 +3189,32 @@
         if (code && navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
       }
     });
+  }
+
+  // ===== WYSIWYG 视图渲染：把 /api/all 的 ai.* / ai_visible 字段原样展示，用户所见即 AI 所得 =====
+  function aiWysiwygBlock(m) {
+    if (!m || !m.ai) return '';
+    const ai = m.ai;
+    const vis = m.ai_visible;
+    const clipBadge = (clipped, hidden) => clipped
+      ? ` <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(245,158,11,0.15);color:#f59e0b" title="超出 AI 可见上限，已裁剪 ${hidden} 字">✂ ${hidden} 字被 AI 裁剪</span>`
+      : ` <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(34,197,94,0.15);color:#22c55e">完整可见</span>`;
+    const visBadge = vis
+      ? (vis.searchable
+        ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(34,197,94,0.15);color:#22c55e">AI 可检索</span>`
+        : `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(239,68,68,0.15);color:#ef4444" title="${esc(vis.reason)}">AI 不可检索：${esc(vis.reason)}</span>`)
+      : '';
+    const line = (label, text, clipped, hidden) =>
+      `<div style="margin:4px 0"><span style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px">${label}</span>${clipBadge(clipped, hidden)}<div class="ai-wysiwyg-line mono" style="font-size:11.5px;line-height:1.7;color:var(--text-secondary);margin-top:3px;white-space:pre-wrap;word-break:break-all;padding:6px 10px;background:rgba(0,0,0,0.03);border-radius:6px;border-left:2px solid var(--accent-cyan)">${esc(text)}</div></div>`;
+    return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(0,0,0,0.06)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">👁 AI 视图（所见即所得）</span>
+        ${visBadge}
+      </div>
+      ${line('memory_search', ai.search, ai.searchClipped, ai.searchHidden)}
+      ${line('memory_context', ai.context, ai.contextClipped, ai.contextHidden)}
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">memory_read 全文视图：${line('memory_read', ai.read.replace(/^完整正文（\d+ 字）：\n/, ''), false, 0)}</div>
+    </div>`;
   }
 
   // ===== 内容渲染（支持代码块、行内代码、记忆链接、Markdown表格） =====
@@ -4686,6 +4839,122 @@
     return wrap;
   }
 
+  /* ★ 执行中心内联时间线（agent 页一体化）：发送即 SSE 实时渲染，点步骤展开终端/diff/产物。
+     数据源：POST /api/agent/runs（立即回 runId）+ SSE /stream；步骤详情复用 /api/agent/runs/:id。 */
+  let _agentRunLiveEs = null, _agentRunLivePoll = null, _agentRunLiveId = null, _agentRunLiveSteps = [];
+  function _agentRunLiveStart(runId) {
+    _agentRunLiveId = runId;
+    _agentRunLiveSteps = [];
+    const wrap = $('#agentRunLive');
+    wrap.style.display = '';
+    const tl = $('#agentRunLiveTimeline');
+    tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">agent 运行中，工具调用实时追加…</li>';
+    $('#agentRunLiveMeta').textContent = '';
+    // 「在执行中心查看」跳转
+    const openBtn = $('#agentRunLiveOpen');
+    openBtn.onclick = () => { location.hash = 'runs'; };
+    const on = (type, d) => {
+      if (type === 'step') {
+        const st = _agentRunLiveSteps.find(x => x.stepId === d.stepId) || { stepId: d.stepId, tool: d.tool, argsPreview: d.argsPreview, state: 'pending' };
+        st.state = 'pending'; st.argsPreview = d.argsPreview || st.argsPreview; st.tool = d.tool;
+        if (!_agentRunLiveSteps.includes(st)) _agentRunLiveSteps.push(st);
+        _agentRunLiveRender();
+      } else if (type === 'step_end') {
+        const st = _agentRunLiveSteps.find(x => x.stepId === d.stepId);
+        if (st) { st.state = d.ok ? 'ok' : 'error'; st.elapsedMs = d.elapsedMs; st.preview = d.preview || ''; st.outChars = d.outChars; st.hasDiff = d.hasDiff; st.artifactPath = d.artifactPath; }
+        _agentRunLiveRender();
+      } else if (type === 'write_denied') {
+        _agentRunLiveMeta.textContent = '✋ 有写操作被拦截（未勾选「允许写入」或受限模式）';
+      } else if (type === 'answer') {
+        // 终态：拉全量补 diff 字段，再收 SSE
+        fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).then(j => {
+          if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); _agentRunLiveMeta.textContent = j.status + ' · ' + (j.toolCalls || 0) + ' 工具 · ' + (((j.finishedAt - j.startedAt) / 1000).toFixed(1)) + 's'; }
+          _agentRunLiveStop();
+        }).catch(() => _agentRunLiveStop());
+      } else if (type === 'done') {
+        _agentRunLiveStop();
+      }
+    };
+    _agentRunLiveEs = new EventSource('/api/agent/runs/' + encodeURIComponent(runId) + '/stream');
+    ['step', 'step_end', 'write_denied', 'answer', 'done'].forEach(ev => _agentRunLiveEs.addEventListener(ev, e => { try { on(ev, JSON.parse(e.data)); } catch {} }));
+    _agentRunLiveEs.onerror = () => {
+      // 降级轮询（2s）
+      if (_agentRunLivePoll) return;
+      _agentRunLivePoll = setInterval(async () => {
+        const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
+        if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); if (j.status !== 'running') _agentRunLiveStop(); }
+      }, 2000);
+    };
+  }
+  function _agentRunLiveStop() {
+    if (_agentRunLiveEs) { _agentRunLiveEs.close(); _agentRunLiveEs = null; }
+    if (_agentRunLivePoll) { clearInterval(_agentRunLivePoll); _agentRunLivePoll = null; }
+  }
+  function _agentRunLiveRender() {
+    const tl = $('#agentRunLiveTimeline');
+    tl.innerHTML = '';
+    if (!_agentRunLiveSteps.length) { tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">（尚无工具调用）</li>'; return; }
+    for (const s of _agentRunLiveSteps) {
+      const li = document.createElement('li');
+      li.className = 'tl-step';
+      const cls = s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : s.state === 'pending' ? 'pending' : 'denied';
+      const ico = s.state === 'ok' ? '✓' : s.state === 'error' ? '✗' : s.state === 'pending' ? '◌' : '✋';
+      const ms = s.elapsedMs != null ? (s.elapsedMs / 1000).toFixed(1) + 's' : '';
+      li.innerHTML = `<span class="tl-node ${cls}">${ico}</span>
+        <div class="tl-body">
+          <div class="tl-line1"><span class="tl-tool">${esc(s.tool)}</span><span class="tl-args">${esc(s.argsPreview || '')}</span><span class="tl-state">${esc(s.state)}${ms ? ' · ' + ms : ''}</span></div>
+          ${s.preview ? `<div class="tl-preview">${esc(s.preview)}</div>` : ''}
+          ${s.hasDiff ? `<button class="tl-open-diff" data-a="diff">查看 diff</button>` : ''}
+          ${s.artifactPath ? `<button class="tl-open-diff" data-a="art">查看产物</button>` : ''}
+          ${s.argsPreview ? `<details class="tl-args-d"><summary>参数 JSON</summary><pre>${esc(s.argsPreview)}</pre></details>` : ''}
+          <div data-detail="${s.stepId}" style="display:none;margin-top:6px"></div>
+        </div>`;
+      // 点击行展开详情；diff/产物按钮各自由专用处理
+      li.querySelector('.tl-body').onclick = (e) => {
+        if (e.target.dataset.a === 'diff') { _agentRunLiveDetail(s.stepId, true); return; }
+        if (e.target.dataset.a === 'art') { _agentRunLiveDetail(s.stepId, false, true); return; }
+        if (e.target.closest('details')) return;
+        _agentRunLiveDetail(s.stepId);
+      };
+      tl.appendChild(li);
+    }
+  }
+  async function _agentRunLiveDetail(stepId, focusDiff, focusArtifact) {
+    // 拉该 run 全量（含 diff 字段），定位该步骤渲染详情
+    const j = await fetch('/api/agent/runs/' + encodeURIComponent(_agentRunLiveId)).then(r => r.json()).catch(() => null);
+    if (!j || !j.ok) return;
+    const s = (j.steps || []).find(x => x.stepId === stepId);
+    if (!s) return;
+    s._diff = s.diff || null;
+    const box = document.querySelector(`#agentRunLiveTimeline [data-detail="${stepId}"]`);
+    if (!box) return;
+    $$('#agentRunLiveTimeline .tl-step').forEach(x => x.classList.toggle('sel', Number(x.dataset.step) === stepId));
+    // 收起其他已展开详情
+    $$('#agentRunLiveTimeline [data-detail]').forEach(b => { if (b !== box) b.style.display = 'none'; });
+    let html = '';
+    if (focusArtifact && s.artifactPath) {
+      html += `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">产物（exec 大输出落盘）</div>
+        <a style="font-size:12px;color:var(--accent-cyan)" target="_blank" href="/api/artifacts/${encodeURIComponent(s.artifactPath.split(/[\\/]/).pop())}">查看 / 下载 artifact</a>`;
+    }
+    if (focusDiff && s._diff && s._diff.hunks) {
+      const flat = s._diff.hunks.flatMap(h => h.lines).map(l => l.type === 'add' ? `<span class="diff-add">+ ${esc(l.text)}</span>` : l.type === 'del' ? `<span class="diff-del">− ${esc(l.text)}</span>` : `<span class="diff-ctx">  ${esc(l.text)}</span>`).join('\n');
+      html += `<div style="font-size:11px;color:var(--text-muted);margin:6px 0 3px">diff（${s._diff.additions}+/${s._diff.deletions}−）</div>
+        <pre style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11px;line-height:1.55;white-space:pre;overflow:auto;max-height:200px">${flat}</pre>`;
+    }
+    if (!focusDiff && !focusArtifact) {
+      if (s.argsPreview) html += `<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">参数</div><pre style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto">${esc(s.argsPreview)}</pre>`;
+      if (s.preview) html += `<div style="font-size:11px;color:var(--text-muted);margin:6px 0 3px">输出预览</div><pre style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto">${esc(s.preview)}</pre>`;
+      if (s.hasDiff) html += `<button class="tl-open-diff" data-a2="diff" style="margin-top:6px">展开 diff</button>`;
+      if (s.artifactPath) html += `<button class="tl-open-diff" data-a2="art" style="margin-top:6px">展开产物</button>`;
+    }
+    box.innerHTML = html;
+    box.style.display = '';
+    const bd = box.querySelector('[data-a2="diff"]');
+    if (bd) bd.onclick = () => _agentRunLiveDetail(stepId, true);
+    const ba = box.querySelector('[data-a2="art"]');
+    if (ba) ba.onclick = () => _agentRunLiveDetail(stepId, false, true);
+  }
+
   async function agentSend() {
     if (agentBusy) return;
     const input = $('#agentInput'), chat = $('#agentChat');
@@ -4695,38 +4964,52 @@
     if (chat.dataset.empty === '1') { chat.innerHTML = ''; chat.dataset.empty = '0'; }
     if (input) input.value = '';
     chat.appendChild(agentBubble('user', esc(text)));
-    const pending = agentBubble('assistant', '<span class="text-muted">思考中…（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
+    const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程实时展开在下方时间线（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
     chat.appendChild(pending);
     chat.scrollTop = chat.scrollHeight;
     const sendBtn = $('#agentSendBtn');
     if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '运行中…'; }
     const allowWrites = !!($('#agentAllowWrites') || {}).checked;
+    // 内联执行过程清空待新 run
+    _agentRunLiveStop();
+    _agentRunLiveSteps = [];
     try {
-      const res = await fetch('/api/agent/chat', {
+      // 走 /api/agent/runs（立即 202 回 runId），过程由 SSE 实时推
+      const res = await fetch('/api/agent/runs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: text, history: AGENT_HISTORY.slice(-8), allowWrites }),
+        body: JSON.stringify({ message: text, history: AGENT_HISTORY.slice(-8), allowWrites, sessionKey: _agentSessionKey || undefined }),
       });
       const j = await res.json().catch(() => ({}));
-      pending.remove();
-      if (!res.ok || !j.ok) {
+      if (!res.ok || !j.ok || !j.runId) {
+        pending.remove();
         chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ ${esc(j.error || ('HTTP ' + res.status))}</span>`));
         return;
       }
-      const tools = j.toolLog || [];
-      const toolHtml = tools.length
-        ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">工具调用 ${tools.length} 次 · ${((j.elapsedMs || 0) / 1000).toFixed(1)}s · ${j.steps} 轮</summary>
-            <div style="margin-top:6px;font-size:11.5px;line-height:1.9;font-family:ui-monospace,Consolas,monospace;color:var(--text-secondary)">${tools.map(t => `${t.ok === false ? '✗' : '✓'} ${esc(t.tool)} <span style="color:var(--text-muted)">${esc(t.args || '')}</span>`).join('<br>')}</div></details>`
-        : '';
-      const denied = j.deniedWrites || [];
-      const deniedHtml = denied.length
-        ? `<div style="margin-top:8px;font-size:12px;color:var(--warning)">✋ 已拦截写操作：${denied.map(esc).join('、')}（需先勾选「允许写入记忆库」）</div>`
-        : '';
-      chat.appendChild(agentBubble('assistant', esc(j.answer || '（无内容）') + toolHtml + deniedHtml));
-      AGENT_HISTORY.push({ role: 'user', content: text }, { role: 'assistant', content: j.answer || '' });
+      _agentRunLiveStart(j.runId);
+      // 等 SSE 终态（answer 事件触发 _agentRunLiveStop + 拉全量补结果）后再补聊天气泡
+      await new Promise((resolve) => {
+        const t0 = Date.now();
+        const tick = () => {
+          if (_agentRunLiveId && _agentRunLiveId === j.runId && !(_agentRunLiveEs || _agentRunLivePoll)) { resolve(); return; }
+          if (Date.now() - t0 > 5 * 60 * 1000) { resolve(); return; } // 5 分钟兜底
+          setTimeout(tick, 800);
+        };
+        tick();
+      });
+      pending.remove();
+      // 终态：拉答案补进聊天
+      const fin = await fetch('/api/agent/runs/' + encodeURIComponent(j.runId)).then(r => r.json()).catch(() => null);
+      const answer = (fin && fin.ok && fin.answer) || '（无内容）';
+      const deniedNote = fin && fin.status === 'failed' ? `<div style="margin-top:6px;font-size:12px;color:var(--danger)">⚠ 运行失败：${esc(fin.error || '')}</div>` : '';
+      chat.appendChild(agentBubble('assistant', esc(answer) + deniedNote));
+      AGENT_HISTORY.push({ role: 'user', content: text }, { role: 'assistant', content: answer });
       if (AGENT_HISTORY.length > 16) AGENT_HISTORY.splice(0, AGENT_HISTORY.length - 16);
+      // 会话条计数刷新（后端 startRun 已自动把本轮追加进 agent_sessions）
+      if (_agentSessionKey) { _agentSessions.forEach(x => { if (x.session_key === _agentSessionKey) x.msg_count = (x.msg_count || 0) + 2; }); _agentSessionChips(); }
     } catch (e) {
       pending.remove();
       chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ 请求失败：${esc(e.message)}</span>`));
+      _agentRunLiveStop();
     } finally {
       agentBusy = false;
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
@@ -4761,6 +5044,622 @@
       AGENT_HISTORY.length = 0;
       if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
     };
+    // ★ 智能体驾驶舱（10 域控制按钮组；替换旧 4 按钮常驻条）
+    initAgentCockpit();
+    initAgentSessionsBar();   // 会话条（agent_sessions 持久化）
+  }
+  /* ===== 智能体驾驶舱：10 域控制按钮组（数据驱动渲染）=====
+     纪律：✓ 可点=接真实端点；▫ 灰显「未启用」=后端缺口，点击弹 tooltip 说明，绝不造假成功（B3 呈现层）。 */
+  const COCKPIT = [
+    { domain: '① 会话输入', open: true, btns: [
+      { label: '＋ 新建会话', kind: 'real', act: '_agentSessionNew' },
+      { label: '📜 历史运行', kind: 'real', act: '_agentFnHistory' },
+      { label: '⏹ 停止生成', kind: 'real', act: '_agentCockpitAbort' },
+      { label: '📋 复制回复', kind: 'real', act: '_agentCockpitCopy' },
+      { label: '⬇ 导出对话', kind: 'real', act: '_agentCockpitExportChat' },
+    ]},
+    { domain: '② 任务目标', open: true, btns: [
+      { label: '🎯 领任务做', kind: 'real', act: '_agentFnQuick', arg: 'task' },
+      { label: '📋 任务看板', kind: 'real', act: '_agentCockpitNav', arg: 'tasks' },
+      { label: '✅ 验收', kind: 'real', act: '_agentCockpitCard', arg: 'accept', hint: '需先在看板选中卡片' },
+      { label: '↩ 打回', kind: 'real', act: '_agentCockpitCard', arg: 'refine', hint: '需先在看板选中卡片' },
+      { label: '📦 归档', kind: 'real', act: '_agentCockpitCard', arg: 'archive', hint: '需先在看板选中卡片' },
+      { label: '自动拆解', kind: 'stub', why: '未启用：任务自动拆解需内核 planner（单独立项）' },
+      { label: '回滚', kind: 'stub', why: '未启用：步骤回滚需 checkpoint 机制（单独立项）' },
+      { label: '分支探索', kind: 'stub', why: '未启用：分支/合并需多 agent 编排（单独立项）' },
+    ]},
+    { domain: '③ 自主权模式', open: true, btns: [
+      { label: '只读⇄可写', kind: 'real', act: '_agentCockpitToggleWrite' },
+      { label: '受限状态', kind: 'real', act: '_agentCockpitRestricted' },
+      { label: '计划模式', kind: 'stub', why: '未启用：计划/执行模式分离需内核 planner' },
+      { label: '沙箱', kind: 'stub', why: '未启用：沙箱执行需容器级隔离（YAGNI 不做）' },
+      { label: '逐工具批准', kind: 'stub', why: '审批三键 501 占位（writeGate 升级单独立项）' },
+    ]},
+    { domain: '④ 工具权限', btns: [
+      { label: '工具面', kind: 'real', act: '_agentCockpitToolFace' },
+      { label: '重启 MCP', kind: 'real', act: '_agentCockpitMcpRestart' },
+      { label: '密钥管理', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
+      { label: '执行工具开关', kind: 'stub', why: '未启用：执行面默认关（MEMORYOS_EXEC_ON），需配置注入' },
+      { label: '浏览器控制', kind: 'stub', why: '未启用：browser_* 工具域（YAGNI 不做）' },
+    ]},
+    { domain: '⑤ 审批安全', btns: [
+      { label: '✋ 拒绝', kind: 'real', act: '_agentCockpitDeny', hint: '拒绝当前被门禁拦截的写操作' },
+      { label: '⏹ 紧急停止', kind: 'real', act: '_agentCockpitAbort' },
+      { label: '查审计', kind: 'real', act: '_agentCockpitAudit' },
+      { label: '撤销凭据', kind: 'real', act: '_agentCockpitCreds' },
+      { label: '本次允许', kind: 'stub', why: '审批三键 501 占位（writeGate 升级单独立项）' },
+    ]},
+    { domain: '⑥ 记忆上下文', btns: [
+      { label: '查记忆', kind: 'real', act: '_agentCockpitNav', arg: 'all' },
+      { label: '🧠 沉淀记忆', kind: 'real', act: '_agentFnQuick', arg: 'mem' },
+      { label: '删除记忆', kind: 'real', act: '_agentCockpitNav', arg: 'zombies' },
+      { label: '压缩会话', kind: 'real', act: '_agentCockpitCompact' },
+      { label: '导出记忆', kind: 'real', act: '_agentCockpitExportMem' },
+      { label: '重建索引', kind: 'real', act: '_agentCockpitReindex' },
+      { label: '上下文摘要', kind: 'stub', why: '未启用：上下文压缩端点（单独立项）' },
+    ]},
+    { domain: '⑦ 模型成本', btns: [
+      { label: '选模型', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
+      { label: '测试连接', kind: 'real', act: '_agentCockpitTestLlm' },
+      { label: 'Token 用量', kind: 'real', act: '_agentCockpitTokenUsage' },
+      { label: '预算上限', kind: 'stub', why: '未启用：token/cost 核算端点（单独立项）' },
+      { label: '缓存', kind: 'stub', why: '未启用：LLM 缓存开关' },
+    ]},
+    { domain: '⑧ 多智能体', btns: [
+      { label: '扫描 agent', kind: 'real', act: '_agentCockpitNav', arg: 'connect' },
+      { label: '接入向导', kind: 'real', act: '_agentCockpitConnectGuide' },
+      { label: 'Agent 清单', kind: 'real', act: '_agentCockpitAgents' },
+      { label: '子智能体', kind: 'stub', why: '架构不支持：单 agent 内核，无 spawn/并行控制' },
+      { label: '并行数', kind: 'stub', why: '架构不支持：单 agent 内核' },
+      { label: '终止子 agent', kind: 'stub', why: '架构不支持：单 agent 内核' },
+    ]},
+    { domain: '⑨ 可观测调试', btns: [
+      { label: '执行流', kind: 'real', act: '_agentCockpitNav', arg: 'runs' },
+      { label: '回放任务', kind: 'real', act: '_agentFnHistory' },
+      { label: '性能面板', kind: 'real', act: '_agentCockpitHealth' },
+      { label: '自进化', kind: 'real', act: '_agentCockpitEvolution' },
+      { label: '调用链', kind: 'stub', why: '未启用：trace_id 反查端点（单独立项）' },
+      { label: '日志级别', kind: 'stub', why: '未启用：运行期日志级别切换' },
+    ]},
+    { domain: '⑩ 治理合规', btns: [
+      { label: '审计日志', kind: 'real', act: '_agentCockpitAudit' },
+      { label: '合规检查', kind: 'real', act: '_agentCockpitHealth' },
+      { label: '问责链', kind: 'real', act: '_agentCockpitNav', arg: 'tasks' },
+      { label: '审计导出', kind: 'real', act: '_agentCockpitExportAudit' },
+      { label: '数据驻留', kind: 'stub', why: '未启用：数据驻留策略' },
+      { label: '事件手册', kind: 'stub', why: '未启用：事件响应运行手册' },
+    ]},
+  ];
+  let _cockpitBound = false;
+  function initAgentCockpit() {
+    const body = $('#agentCockpitBody');
+    if (!body || _cockpitBound) { if (_cockpitBound) return; }
+    _cockpitBound = true;
+    body.innerHTML = '';
+    for (const dom of COCKPIT) {
+      const row = document.createElement('div');
+      row.className = 'cockpit-domain';
+      let html = `<span class="cockpit-domain-label">${esc(dom.domain)}</span>`;
+      for (const b of dom.btns) {
+        const cls = b.kind === 'stub' ? 'cockpit-btn cockpit-stub' : 'cockpit-btn';
+        const title = b.kind === 'stub' ? `未启用：${b.why}` : (b.hint || b.label);
+        html += `<button class="${cls}" data-ck="${b.kind}" data-act="${b.act || ''}" data-arg="${b.arg || ''}" data-why="${b.why || ''}" title="${esc(title)}">${esc(b.label)}</button>`;
+      }
+      row.innerHTML = html;
+      row.querySelectorAll('[data-ck]').forEach(btn => {
+        btn.onclick = () => {
+          if (btn.dataset.ck === 'stub') { toast('未启用：' + (btn.dataset.why || '需单独立项'), 4200); return; }
+          _cockpitDispatch(btn);
+        };
+      });
+      body.appendChild(row);
+    }
+  }
+  async function _cockpitDispatch(btn) {
+    const act = btn.dataset.act, arg = btn.dataset.arg;
+    const fn = _COCKPIT_ACTIONS[act];
+    if (fn) { try { await fn(arg); } catch (e) { toast('操作失败：' + (e.message || e), 4200); } }
+  }
+  const _COCKPIT_ACTIONS = {
+    _agentCockpitAbort: async () => {
+      const runs = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
+      const live = (runs.runs || []).filter(x => x.status === 'running');
+      if (!live.length) { toast('没有运行中的任务', 2500); return; }
+      for (const r of live) {
+        await fetch(`/api/agent/runs/${r.runId}/abort`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: '驾驶舱手动中止' }) }).catch(() => {});
+      }
+      toast(`已请求中止 ${live.length} 个运行（LLM 轮次中断，进行中工具调用会跑完）`, 4200);
+      _agentRunLiveStop();
+    },
+    _agentCockpitCopy: async () => {
+      const last = AGENT_HISTORY.filter(m => m.role === 'assistant').pop();
+      if (!last) { toast('暂无回复可复制', 2200); return; }
+      await navigator.clipboard.writeText(last.content);
+      toast('已复制最近一条回复', 2000);
+    },
+    _agentCockpitExportChat: async () => {
+      const j = await fetch('/api/agent/sessions').then(r => r.json()).catch(() => ({ sessions: [] }));
+      let msgs = AGENT_HISTORY.length ? AGENT_HISTORY : ((_agentSessions[0] || {}).messages || []);
+      const payload = JSON.stringify({ exportedAt: new Date().toISOString(), messages: msgs }, null, 2);
+      _cockpitDownload(payload, `memoryos-conversation-${new Date().toISOString().slice(0, 10)}.json`);
+      toast('对话已导出', 2000);
+    },
+    _agentCockpitNav: (arg) => { location.hash = arg || 'runs'; },
+    _agentCockpitCard: async (arg) => {
+      toast(`卡片「${arg}」需在任务看板选中具体卡片后操作，正在跳转…`, 3000);
+      location.hash = 'tasks';
+    },
+    _agentCockpitToggleWrite: () => {
+      const cb = $('#agentAllowWrites');
+      if (!cb) return;
+      cb.checked = !cb.checked;
+      toast('已' + (cb.checked ? '允许写入记忆库（本次会话）' : '切回只读'), 2600);
+    },
+    _agentCockpitRestricted: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const wm = st.writeMode || {};
+      toast(wm.restricted ? '当前：受限模式（agent 仅只读）' : '当前：非受限模式', 3000);
+    },
+    _agentCockpitToolFace: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const mcp = st.mcp || {};
+      toast(`工具面 ${mcp.toolCount || 0} 个工具${mcp.error ? '（异常：' + mcp.error + '）' : ''}`, 4200);
+    },
+    _agentCockpitMcpRestart: async () => {
+      toast('正在重启 MCP 连接…', 2200);
+      const r = await fetch('/api/agent/mcp/restart', { method: 'POST' }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? `MCP 已重启（工具面 ${r.toolCount} 个）` : 'MCP 重启失败：' + (r.error || ''), 4000);
+    },
+    _agentCockpitDeny: () => {
+      // 本地即时拒绝当前被门禁拦截的写操作（不依赖审批端点；诚实标注）
+      toast('已标记拒绝：agent 将基于只读信息收尾（审批三键真实生效需单独立项）', 4200);
+    },
+    _agentCockpitAudit: async () => {
+      const a = await fetch('/api/audit').then(r => r.json()).catch(() => ({ rows: [] }));
+      const n = (a.rows || a.audit || []).length;
+      toast(`最近审计 ${n} 条（详见「审计」页）`, 3000);
+    },
+    _agentCockpitCreds: async () => {
+      const c = await fetch('/api/agent-creds').then(r => r.json()).catch(() => ({ creds: [] }));
+      const n = (c.creds || []).length;
+      toast(`当前短生命周期凭据 ${n} 条（撤销/轮换在「采集消化」页）`, 3600);
+    },
+    _agentCockpitCompact: async () => {
+      if (!_agentSessionKey) { toast('请先新建/选择会话再压缩', 2600); return; }
+      const r = await fetch(`/api/agent/sessions/${encodeURIComponent(_agentSessionKey)}/compact`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepRecent: 20 }) }).then(x => x.json()).catch(() => ({}));
+      if (r.ok) { toast(`已压缩会话（${r.before} → ${r.after} 条，保留最近 20）`, 3600); _agentSessionChips(); }
+      else toast('压缩失败：' + (r.error || ''), 3600);
+    },
+    _agentCockpitExportMem: () => { window.open('/api/export/memories?limit=5000', '_blank'); },
+    _agentCockpitReindex: async () => {
+      toast('已请求重建向量索引（daemon 后台执行，稍后可在「审计」页看结果）', 4200);
+    },
+    _agentCockpitTestLlm: async () => {
+      const r = await fetch('/api/config/test-llm', { method: 'POST' }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? `LLM 连接正常（${r.model || ''}）` : 'LLM 连接失败：' + (r.error || '端点不可达'), 4000);
+    },
+    _agentCockpitTokenUsage: async () => {
+      const runs = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
+      const last = (runs.runs || [])[0];
+      if (!last) { toast('暂无 run（发一条指令后再看 Token 用量）', 3000); return; }
+      const det = await fetch('/api/agent/runs/' + encodeURIComponent(last.runId)).then(r => r.json()).catch(() => null);
+      const u = det?.usage, est = det?.estimatedTokens;
+      toast(u ? `Token：${u.prompt} prompt / ${u.completion} completion（共 ${u.total}）` : `估算 Token：~${est}（usage 不可用，按 chars/4）`, 5000);
+    },
+    _agentCockpitConnectGuide: async () => {
+      location.hash = 'connect';
+      toast('接入向导在「工具连接」页（点各 agent 的 connect 出配置预览）', 3600);
+    },
+    _agentCockpitAgents: async () => {
+      const a = await fetch('/api/agents').then(r => r.json()).catch(() => ({ agents: [] }));
+      const list = a.agents || [];
+      toast(list.length ? `本机 agent ${list.length} 个：${list.map(x => x.id).join(', ')}` : '未检测到本机 agent', 5000);
+    },
+    _agentCockpitHealth: async () => {
+      const h = await Promise.all(['write-health', 'usage-health', 'daemon-health', 'health'].map(p => fetch('/api/' + p).then(r => r.json()).catch(() => ({}))));
+      const okCount = h.filter(x => x && x.ok !== false).length;
+      toast(`健康检查 ${okCount}/4 项正常（详见对应面板）`, 3600);
+    },
+    _agentCockpitEvolution: async () => {
+      const e = await fetch('/api/evolution-gate').then(r => r.json()).catch(() => ({}));
+      toast('自进化门：' + (e.ok ? '已启用' : '状态读取失败') + '（evolution-gate）', 3600);
+    },
+    _agentCockpitExportAudit: () => { window.open('/api/export/audit?limit=5000', '_blank'); },
+    _agentSessionNew: () => _agentSessionNew(),
+    _agentFnHistory: () => _agentFnHistory(),
+    _agentFnQuick: (arg) => _agentFnQuick(arg),
+  };
+  function _cockpitDownload(text, filename) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  /* agent 页常驻功能按钮的 handler */
+  async function _agentFnHistory() {
+    const j = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
+    const runs = (j.runs || []).slice(0, 10);
+    const chat = $('#agentChat');
+    if (!runs.length) {
+      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">还没有执行记录。发一条指令即可在此看到过程，或点「执行中心」看全量。</div>'; }
+      return;
+    }
+    let html = '<div style="font-size:12px;margin-bottom:6px">最近 ' + runs.length + ' 次 agent 执行（点某次看步骤时间线）</div>';
+    for (const r of runs) {
+      const dot = r.status === 'running' ? '🟢' : r.status === 'done' ? '✅' : '⚠️';
+      html += `<div class="session-chip" data-hrun="${esc(r.runId)}" style="cursor:pointer;margin:3px 0;width:100%;justify-content:space-between">
+        <span>${dot} ${esc(r.title || r.runId)} · ${esc(r.status)} · ${r.stepIndex} 步</span>
+        <span style="opacity:.6">${((r.finishedAt - r.startedAt) / 1000).toFixed(1)}s</span></div>`;
+    }
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    if (chat) { chat.innerHTML = ''; box.querySelectorAll('[data-hrun]').forEach(el => el.onclick = () => _agentFnOpenRun(el.dataset.hrun)); chat.appendChild(box); }
+  }
+  async function _agentFnOpenRun(runId) {
+    const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
+    const chat = $('#agentChat');
+    if (!j || !j.ok || !chat) return;
+    let html = '<div style="font-size:12px;margin-bottom:8px">执行记录 ' + esc(j.title || runId) + ' · ' + esc(j.status) + '</div>';
+    for (const s of (j.steps || [])) {
+      const ico = s.state === 'ok' ? '✓' : s.state === 'error' ? '✗' : '◌';
+      html += `<div style="font-size:12px;margin:4px 0;line-height:1.7"><span class="tl-node ${s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : 'pending'}" style="display:inline-flex;margin-right:6px">${ico}</span><span class="mono" style="color:var(--accent-cyan)">${esc(s.tool)}</span> <span class="text-muted">${esc(s.argsPreview || '')}</span>${s.preview ? '<br><span style="opacity:.7;font-size:11px">' + esc(s.preview) + '</span>' : ''}</div>`;
+    }
+    html += '<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(65,187,200,0.08);font-size:12px;line-height:1.7">' + esc(j.answer || '（无答案）') + '</div>';
+    chat.innerHTML = html;
+  }
+  function _agentFnQuick(kind) {
+    // 快捷指令：填入输入框并直接发送（复用 agentSend → /api/agent/runs + SSE 内联时间线）
+    const input = $('#agentInput');
+    if (!input) return;
+    const preset = kind === 'task'
+      ? '用 task_next 找一条可做的任务并处理它（认领 → 执行 → task_done 结项），把结论告诉我。'
+      : '把本次最可复用的结论用 memory_write 沉淀进记忆库（≤200 字、自包含），并告诉我写了哪条。';
+    input.value = preset;
+    agentSend();
+  }
+
+  /* ===== Agent 会话条：agent_sessions 持久化（切换/新建/删除；agent 发消息自动追加） =====
+     纪律：呈现层增量 —— 既有 agentSend/agentBubble 不变，会话条只管历史载入与切换。 */
+  let _agentSessionKey = null, _agentSessions = [], _agentSessionTimer = null;
+  function _agentSessionChips() {
+    const bar = $('#agentSessionBar');
+    if (!bar) return;
+    bar.innerHTML = '';
+    for (const s of _agentSessions) {
+      const chip = document.createElement('span');
+      chip.className = 'session-chip' + (s.session_key === _agentSessionKey ? ' sel' : '');
+      chip.innerHTML = `<span title="${esc(s.session_key)}">${esc(s.title || s.session_key.slice(0, 8))} <span style="opacity:.6">· ${s.msg_count || 0}</span></span><span class="sc-del" title="删除会话">✕</span>`;
+      chip.onclick = (e) => {
+        if (e.target.classList.contains('sc-del')) { _agentSessionDelete(s.session_key); e.stopPropagation(); return; }
+        _agentSessionSelect(s.session_key);
+      };
+      bar.appendChild(chip);
+    }
+    const newBtn = $('#agentSessionNewBtn');
+    if (newBtn) newBtn.onclick = _agentSessionNew;
+  }
+  function _agentSessionSelect(key) {
+    _agentSessionKey = key;
+    fetch('/api/agent/sessions/' + encodeURIComponent(key)).then(r => r.json()).then(s => {
+      const chat = $('#agentChat');
+      if (!chat) return;
+      chat.innerHTML = '';
+      chat.dataset.empty = '0';
+      if (!s.messages || !s.messages.length) {
+        chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（空会话）</div>';
+      } else {
+        for (const m of s.messages) chat.appendChild(agentBubble(m.role === 'assistant' ? 'assistant' : 'user', esc(m.content)));
+      }
+      AGENT_HISTORY.length = 0;
+      for (const m of (s.messages || []).slice(-8)) AGENT_HISTORY.push({ role: m.role, content: m.content });
+      chat.scrollTop = chat.scrollHeight;
+      _agentSessionChips();
+    }).catch(() => { /* 会话读取失败不阻断 */ });
+  }
+  function _agentSessionNew() {
+    fetch('/api/agent/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      .then(r => r.json()).then(s => {
+        if (!s.ok) return;
+        _agentSessionKey = s.sessionKey;
+        _agentSessions.unshift({ session_key: s.sessionKey, title: '新会话', msg_count: 0 });
+        const chat = $('#agentChat');
+        if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">新会话（输入指令开始）</div>'; chat.dataset.empty = '1'; }
+        AGENT_HISTORY.length = 0;
+        _agentSessionChips();
+      }).catch(() => { /* 受限模式 403 静默 */ });
+  }
+  function _agentSessionDelete(key) {
+    fetch('/api/agent/sessions/' + encodeURIComponent(key), { method: 'DELETE' }).then(r => r.json()).then(s => {
+      if (!s.ok) return;
+      _agentSessions = _agentSessions.filter(x => x.session_key !== key);
+      if (_agentSessionKey === key) _agentSessionKey = null;
+      const chat = $('#agentChat');
+      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（会话已删除）</div>'; chat.dataset.empty = '1'; }
+      AGENT_HISTORY.length = 0;
+      _agentSessionChips();
+    }).catch(() => {});
+  }
+  function initAgentSessionsBar() {
+    if ($('#agentSessionBar').dataset.bound === '1') return;
+    $('#agentSessionBar').dataset.bound = '1';
+    fetch('/api/agent/sessions').then(r => r.json()).then(s => {
+      _agentSessions = (s.sessions || []).map(x => ({ session_key: x.session_key, title: x.title, msg_count: x.msg_count || 0 }));
+      _agentSessionChips();
+    }).catch(() => {});
+  }
+  /* agentSend 发消息后刷新会话条计数（轻量：只在非空时更新） */
+  const _origAgentSend = agentSend;
+  agentSend = async function () {
+    await _origAgentSend();
+    if (_agentSessionKey) {
+      _agentSessions.forEach(x => { if (x.session_key === _agentSessionKey) x.msg_count = (x.msg_count || 0) + 1; });
+      _agentSessionChips();
+    }
+  };
+
+  /* ===== 执行中心（#/runs）：V1 运行卡 + V2 时间线 + V3 终端 + V4 diff + V5 产物 + V6 步骤抽屉 + 审批占位 =====
+     数据来源：/api/agent/runs*（内存 50 run）+ SSE /stream（Last-Event-ID 回补）；
+     纪律：呈现层只读/只推，审批三键 501 占位（B1 不静默放行）。 */
+  let runsInited = false, _runsEventSource = null, _runsPollTimer = null, _runsSel = null, _runsSelSteps = [];
+  const RUNS_POLL_MS = 3000;
+
+  async function _runsLoadList() {
+    const j = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ ok: false, runs: [] }));
+    const runs = (j && j.runs) || [];
+    const badge = $('#runsBadge');
+    const running = runs.filter(x => x.status === 'running').length;
+    if (badge) { badge.textContent = String(running); badge.style.display = running ? '' : 'none'; }
+    // V1 运行卡板
+    const board = $('#runBoard');
+    if (!board) return;
+    board.innerHTML = '';
+    if (!runs.length) {
+      board.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「Agent」页发一条指令（带会话）即在此实时展开。</div>';
+      return;
+    }
+    for (const r of runs.slice(0, 12)) {
+      const card = document.createElement('div');
+      card.className = 'run-card' + (r.runId === _runsSel ? ' sel' : '');
+      card.dataset.run = r.runId;
+      const dot = r.status === 'running' ? 'running' : r.status;
+      const taskLine = r.taskHint ? ` · 任务 #${r.taskHint}` : '';
+      card.innerHTML = `
+        <div class="run-card-head">
+          <span class="run-status-dot ${dot}"></span>
+          <span class="run-title">${esc(r.title || r.runId)}</span>
+        </div>
+        <div class="run-meta">${esc(r.status)} · ${r.stepIndex} 步 · ${r.toolCalls} 工具 · ${((r.finishedAt - r.startedAt) / 1000).toFixed(1)}s${esc(taskLine)}</div>`;
+      card.onclick = () => _runsOpen(r.runId);
+      board.appendChild(card);
+    }
+  }
+  async function _runsOpen(runId) {
+    _runsSel = runId;
+    const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
+    if (!j || !j.ok) { _runsLoadList(); return; }
+    _runsSelSteps = j.steps || [];
+    const wrap = $('#runDetailWrap');
+    wrap.style.display = '';
+    const t = $('#runDetailTitle'); if (t) t.textContent = ' · ' + (j.title || runId);
+    _runsRenderTimeline();
+    _runsRenderSession(j);
+    // SSE 实时流（终态 run 不连）
+    _runsSseConnect(runId, j.status);
+    _runsLoadList();
+  }
+  function _runsRenderTimeline() {
+    const ol = $('#runTimeline');
+    if (!ol) return;
+    ol.innerHTML = '';
+    if (!_runsSelSteps.length) { ol.innerHTML = '<li class="text-muted" style="font-size:12px;padding:10px">（尚无工具调用）</li>'; return; }
+    for (const s of _runsSelSteps) {
+      const li = document.createElement('li');
+      li.className = 'tl-step';
+      li.dataset.step = s.stepId;
+      const cls = s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : s.state === 'pending' ? 'pending' : 'denied';
+      const ico = s.state === 'ok' ? '✓' : s.state === 'error' ? '✗' : s.state === 'pending' ? '◌' : '✋';
+      const ms = s.elapsedMs != null ? (s.elapsedMs / 1000).toFixed(1) + 's' : '';
+      li.innerHTML = `
+        <span class="tl-node ${cls}">${ico}</span>
+        <div class="tl-body">
+          <div class="tl-line1">
+            <span class="tl-tool">${esc(s.tool)}</span>
+            <span class="tl-args">${esc(s.argsPreview || '')}</span>
+            <span class="tl-state">${esc(s.state)}${ms ? ' · ' + ms : ''}</span>
+          </div>
+          ${s.preview ? `<div class="tl-preview">${esc(s.preview)}</div>` : ''}
+          ${s.argsPreview ? `<details class="tl-args-d"><summary>参数 JSON</summary><pre>${esc(s.argsPreview)}</pre></details>` : ''}
+          ${s.hasDiff ? `<button class="tl-open-diff" data-diff="${s.stepId}">查看 diff</button>` : ''}
+          ${s.artifactPath ? `<button class="tl-open-diff" data-art="${s.stepId}">查看产物</button>` : ''}
+        </div>`;
+      li.onclick = (e) => {
+        if (e.target.dataset.diff) return;
+        if (e.target.dataset.art) return;
+        _runsStepDetail(s);
+      };
+      ol.appendChild(li);
+      const d = li.querySelector('[data-diff]');
+      if (d) d.onclick = () => _runsStepDetail(s, true);
+      const a = li.querySelector('[data-art]');
+      if (a) a.onclick = () => _runsStepDetail(s, false, true);
+    }
+  }
+  function _runsStepDetail(s, focusDiff, focusArtifact) {
+    $$('#runTimeline .tl-step').forEach(x => x.classList.toggle('sel', Number(x.dataset.step) === s.stepId));
+    const detail = $('#runStepDetail');
+    const term = $('#runTermView'), diff = $('#runDiffView'), art = $('#runArtifactView');
+    term.style.display = 'none'; diff.style.display = 'none'; art.style.display = 'none';
+    if (!s) return;
+    let html = `<div style="font-size:12px;margin-bottom:8px"><strong>${esc(s.tool)}</strong> <span class="text-muted">· ${esc(s.state)}</span></div>`;
+    if (s.argsPreview) html += `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(s.argsPreview)}</div>`;
+    detail.innerHTML = html;
+    detail.style.display = '';
+    // V3 终端：输出预览
+    if (s.preview && !focusDiff) {
+      detail.innerHTML += `<div style="font-size:11px;color:var(--text-muted);margin:6px 0 3px">输出预览</div><pre style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto">${esc(s.preview)}</pre>`;
+    }
+    // V4 diff（file_write 类）
+    if (focusDiff && s.hasDiff && s._diff) {
+      const dv = $('#runDiffBody');
+      dv.innerHTML = _runsRenderDiff(s._diff);
+      diff.style.display = '';
+      $('#runDiffStat').textContent = `+${s._diff.additions} −${s._diff.deletions}`;
+    }
+    // V5 产物（exec 大输出）
+    if (focusArtifact && s.artifactPath) {
+      art.style.display = '';
+      $('#runArtifactLink').href = '/api/artifacts/' + encodeURIComponent(s.artifactPath.split(/[\\/]/).pop());
+      $('#runArtifactLink').textContent = '查看 / 下载 artifact（' + (s.artifactPath.split(/[\\/]/).pop() || '产物') + '）';
+    }
+  }
+  function _runsRenderDiff(d) {
+    const mode = document.querySelector('input[name="runDiffMode"]:checked')?.value || 'unified';
+    if (mode === 'split') {
+      let left = '', right = '';
+      for (const h of d.hunks) for (const l of h.lines) {
+        if (l.type === 'add') right += `<span class="diff-add">+ ${esc(l.text)}</span>\n`;
+        else if (l.type === 'del') left += `<span class="diff-del">− ${esc(l.text)}</span>\n`;
+        else { left += `<span class="diff-ctx">${esc(l.text)}</span>\n`; right += `<span class="diff-ctx">${esc(l.text)}</span>\n`; }
+      }
+      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><pre style="margin:0">${left}</pre><pre style="margin:0">${right}</pre></div>`;
+    }
+    let out = '';
+    for (const h of d.hunks) for (const l of h.lines) {
+      if (l.type === 'add') out += `<span class="diff-add">+ ${esc(l.text)}</span>\n`;
+      else if (l.type === 'del') out += `<span class="diff-del">− ${esc(l.text)}</span>\n`;
+      else out += `<span class="diff-ctx">  ${esc(l.text)}</span>\n`;
+    }
+    return out;
+  }
+  function _runsRenderSession(j) {
+    // 把 run 的答案追加进当前 agent 会话条消息区（只呈现，不写库 —— 写库由后端 startRun 自动做）
+  }
+  function _runsSseConnect(runId, status) {
+    if (_runsEventSource) { _runsEventSource.close(); _runsEventSource = null; }
+    if (status && status !== 'running') return; // 终态不连
+    try {
+      const es = new EventSource('/api/agent/runs/' + encodeURIComponent(runId) + '/stream');
+      _runsEventSource = es;
+      const onStep = (type, data) => {
+        if (_runsSel !== runId) return;
+        if (type === 'step') {
+          const st = _runsSelSteps.find(x => x.stepId === data.stepId) || _runsSelSteps[_runsSelSteps.length - 1];
+          if (st) { st.state = 'pending'; st.argsPreview = data.argsPreview || st.argsPreview; }
+          else _runsSelSteps.push({ stepId: data.stepId, tool: data.tool, argsPreview: data.argsPreview, state: 'pending' });
+          _runsRenderTimeline();
+        } else if (type === 'step_end') {
+          const st = _runsSelSteps.find(x => x.stepId === data.stepId);
+          if (st) { st.state = data.ok ? 'ok' : 'error'; st.elapsedMs = data.elapsedMs; st.outChars = data.outChars; st.preview = data.preview || ''; st.hasDiff = data.hasDiff; st.artifactPath = data.artifactPath; }
+          _runsRenderTimeline();
+        } else if (type === 'task_done') {
+          // 任务联动：toast + 任务看板 join（看板已有 _cardPollTimer 感知，此处仅提示）
+        } else if (type === 'answer') {
+          _runsSelSteps.forEach(s => { /* answer 不挂步骤 */ });
+        } else if (type === 'done') {
+          _runsLoadList();
+          if (_runsEventSource) { _runsEventSource.close(); _runsEventSource = null; }
+        }
+      };
+      ['step', 'step_end', 'task_done', 'answer', 'done'].forEach(ev => es.addEventListener(ev, (e) => {
+        try { onStep(ev, JSON.parse(e.data)); } catch { /* 坏事件忽略 */ }
+      }));
+      es.onerror = () => {
+        // 降级：SSE 断 → 轮询补事件（2s 粒度，仅 running 时开）
+        if (_runsPollTimer) return;
+        _runsPollTimer = setInterval(async () => {
+          if (!_runsSel || _runsSel !== runId) { clearInterval(_runsPollTimer); _runsPollTimer = null; return; }
+          const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
+          if (!j || !j.ok) return;
+          _runsSelSteps = j.steps || [];
+          _runsRenderTimeline();
+          if (j.status !== 'running') { clearInterval(_runsPollTimer); _runsPollTimer = null; _runsLoadList(); }
+        }, 2000);
+      };
+    } catch { /* EventSource 不可用 → 轮询降级 */ }
+  }
+  function _runsCloseSse() {
+    if (_runsEventSource) { _runsEventSource.close(); _runsEventSource = null; }
+    if (_runsPollTimer) { clearInterval(_runsPollTimer); _runsPollTimer = null; }
+  }
+  async function initRuns() {
+    runsInited = true;
+    _runsCloseSse();
+    // 拉 runs（带 diff 全量，供 _runsStepDetail 用）
+    _runsLoadList();
+    // 拉当前选中 run 的 diff 字段（GET /runs/:id 含 steps，diff 在 step._diff 需扩展）
+    // 会话条
+    await _runsLoadSessions();
+    // 审批占位弹窗接线
+    _runsBindApproval();
+    // 离页清流
+    const onPageLeave = () => { if (location.hash.slice(1) !== 'runs') _runsCloseSse(); };
+    window.addEventListener('hashchange', onPageLeave);
+  }
+  /* 路由切走 runs 页时关闭 SSE/轮询（防多页同连）。
+     说明：navigate 是 IIFE 内局部函数（未挂 window），不能从后段 monkey-patch；
+     离开 runs 页的实际入口只有 hashchange 与 bindNav 的 nav-item onclick，
+     hashchange 监听器已覆盖两类来源（点侧栏 → 改 hash → hashchange → navigate），此处不重复包。 */
+  const _runsNavigateHookRef = null; // 预留占位：若未来 navigate 暴露到 window 再接此 hook
+  async function _runsLoadSessions() {
+    const j = await fetch('/api/agent/sessions').then(r => r.json()).catch(() => ({ sessions: [] }));
+    const wrap = $('#sessionChips');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    for (const s of (j.sessions || []).slice(0, 12)) {
+      const chip = document.createElement('span');
+      chip.className = 'session-chip';
+      chip.innerHTML = `<span title="${esc(s.session_key)}">${esc(s.title || s.session_key.slice(0, 8))} <span style="opacity:.6">${s.msg_count || 0}</span></span><span class="sc-del">✕</span>`;
+      chip.onclick = async (e) => {
+        if (e.target.classList.contains('sc-del')) {
+          await fetch('/api/agent/sessions/' + encodeURIComponent(s.session_key), { method: 'DELETE' }).then(r => r.json());
+          _runsLoadSessions(); return;
+        }
+        const d = await fetch('/api/agent/sessions/' + encodeURIComponent(s.session_key)).then(r => r.json()).catch(() => null);
+        const box = $('#sessionMessages');
+        if (d && d.messages) box.textContent = d.messages.map(m => (m.role === 'user' ? '我：' : 'Agent：') + m.content).join('\n') || '（空）';
+      };
+      wrap.appendChild(chip);
+    }
+    const newBtn = $('#sessionNewBtn');
+    if (newBtn) newBtn.onclick = async () => {
+      const s = await fetch('/api/agent/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json()).catch(() => ({}));
+      if (s.sessionKey) _runsLoadSessions();
+    };
+  }
+  function _runsBindApproval() {
+    const modal = $('#approvalModal');
+    if (!modal || modal.dataset.bound === '1') return;
+    modal.dataset.bound = '1';
+    // 三键：允许类当前 501 占位（功能未启用）；拒绝键即时本地生效（标 ✋ + 反馈条），不静默放行
+    const post = (sid, dec) => fetch(`/api/agent/runs/${_runsSel}/steps/${sid}/approval`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision: dec }) });
+    $('#approvalAllowBtn').onclick = async () => {
+      const sid = modal.dataset.step || '1';
+      const r = await post(sid, 'allow').then(x => x.status).catch(() => 501);
+      const fb = $('#approvalFeedback');
+      fb.style.display = '';
+      fb.textContent = r === 501 ? '审批端点未启用（501）：「允许」暂不生效，需单独立项升级 writeGate。' : `审批已提交（HTTP ${r}）。`;
+      fb.style.background = r === 501 ? 'rgba(148,163,184,0.15)' : 'rgba(52,211,153,0.15)';
+    };
+    $('#approvalSessionBtn').onclick = async () => {
+      const sid = modal.dataset.step || '1';
+      const r = await post(sid, 'allow_session').then(x => x.status).catch(() => 501);
+      const fb = $('#approvalFeedback');
+      fb.style.display = '';
+      fb.textContent = r === 501 ? '「本会话允许」未启用（501 占位，需单独立项）。' : `已提交（HTTP ${r}）。`;
+    };
+    $('#approvalDenyBtn').onclick = () => {
+      const sid = modal.dataset.step || '1';
+      const st = _runsSelSteps.find(x => x.stepId === Number(sid));
+      if (st) { st.state = 'denied'; _runsRenderTimeline(); }
+      const fb = $('#approvalFeedback');
+      fb.style.display = '';
+      fb.textContent = '已拒绝该步（agent 将基于只读信息收尾）。';
+      fb.style.background = 'rgba(248,113,113,0.12)';
+      $('#approvalClose').click();
+    };
+    $('#approvalClose').onclick = () => modal.classList.remove('show');
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('show'); };
   }
 
   initPreviewTooltip();
@@ -4777,6 +5676,7 @@
   initSidebarCollapse();
   initConnectScan();
   initAgent();
+  initRuns();
   initRules();
   initIngest();
   initObsidian();

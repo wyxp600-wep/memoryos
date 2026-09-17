@@ -1,7 +1,7 @@
 "use strict";
 const path = require("node:path");
 const fs = require("node:fs");
-const { spawn, execSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 /**
  * 周期调度服务：共享记忆同步 + 自动增量采集。
@@ -50,7 +50,7 @@ function createScheduler(deps) {
   function killTree(child) {
     try {
       if (process.platform === "win32") {
-        if (child.pid) execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: "ignore" });
+        if (child.pid) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
       } else {
         try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
       }

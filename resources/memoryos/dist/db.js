@@ -349,6 +349,41 @@ CREATE TABLE IF NOT EXISTS resource_locks (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_locks_active ON resource_locks(resource) WHERE released_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_resource_locks_holder ON resource_locks(holder, released_at);
 CREATE INDEX IF NOT EXISTS idx_resource_locks_expiry ON resource_locks(expires_at) WHERE released_at IS NULL;
+
+-- ★ Agent 会话（dashboard 内置 agent 的对话历史持久化）。
+--   session_key 为前端生成的稳定键（uuid）；messages 为 JSON 数组 [{role, content}]，
+--   纪律（与 exec_audit 同口径）：**不存敏感凭据**，超长历史由写入方截断（最新 200 条），
+--   行内 JSON 控制在 2KB 级（page_size 4096 不产生 overflow 页）。
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_key TEXT    NOT NULL UNIQUE,             -- 前端 uuid，稳定幂等键
+  title       TEXT    NOT NULL DEFAULT '',          -- 会话标题（前端可改）
+  messages    TEXT    NOT NULL DEFAULT '[]',        -- JSON: [{role:"user|assistant", content}]
+  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at DESC);
+
+/* ── ★ A1 身份与认证层：短生命周期凭据 + 可撤销信任 ─────────────────────────
+ * 融合架构「动态短生命周期凭据、Agent 级最小权限、可撤销信任」的落地：
+ *   - credential：随机 hex（随机数生成，非口令），不存任何明文口令
+ *   - scope：最小权限（read / write / admin），默认 read
+ *   - expires_at：短生命周期到期时刻（默认 1h），过期凭据视为无效
+ *   - revoked_at：显式撤销（可撤销信任）；NULL=未撤销
+ *   - session_id：绑定会话标识，供审计反查。
+ * 凭据验证纪律：只存 credential 本体 + 时间戳，**绝不**把凭据当命令拼接/执行。 */
+CREATE TABLE IF NOT EXISTS agent_credentials (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent       TEXT    NOT NULL,                   -- 持有方 agent（与 memories.agent 同口径）
+  credential  TEXT    NOT NULL UNIQUE,             -- 随机 hex 凭据
+  scope       TEXT    NOT NULL DEFAULT 'read',     -- read / write / admin
+  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at  TEXT    NOT NULL,                    -- 短生命周期到期（ISO8601）
+  revoked_at  TEXT,                                -- 撤销时刻；NULL=未撤销
+  session_id  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_creds_agent ON agent_credentials(agent, expires_at);
+CREATE INDEX IF NOT EXISTS idx_agent_creds_expiry ON agent_credentials(expires_at) WHERE revoked_at IS NULL;
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -1316,6 +1351,66 @@ export function logExecAudit(db, r) {
 export function recentExecAudit(db, limit = 20) {
     return db.prepare(`SELECT id,tool,agent,risk,approval,args_digest,detail,duration_ms,created_at
                        FROM exec_audit ORDER BY id DESC LIMIT ?`).all(Math.max(1, Math.min(200, Number(limit) || 20)));
+}
+/** ★ A4：导出用全量执行审计（append-only 只读；limit 上限 5000 防内存爆，超出由调用方分页）。
+ *  参数绑定（外部输入 limit 走 prepare ? 占位，绝不拼接 SQL）。 */
+export function allExecAudit(db, limit = 2000) {
+    return db.prepare(`SELECT id,tool,agent,risk,approval,args_digest,detail,duration_ms,created_at
+                       FROM exec_audit ORDER BY id DESC LIMIT ?`).all(Math.max(1, Math.min(5000, Number(limit) || 2000)));
+}
+/* ── Agent 会话（dashboard 内置 agent 对话历史）──────────────────
+ * 纪律：messages 为 JSON [{role,content}]，写入方负责截断（最新 200 条、单条 ≤3000 字，
+ * 与 /api/agent/chat 的 history 截断口径一致），不存敏感凭据。
+ * session_key 前端生成（uuid）；同 key 重复 save = upsert（幂等）。 */
+export function listAgentSessions(db, limit = 50) {
+    return db.prepare(`SELECT session_key,title,updated_at,created_at,
+                              length(messages) AS msg_bytes,
+                              (SELECT count(*) FROM json_each(messages)) AS msg_count
+                       FROM agent_sessions ORDER BY updated_at DESC
+                       LIMIT ?`).all(Math.max(1, Math.min(200, Number(limit) || 50)));
+}
+export function getAgentSession(db, sessionKey) {
+    const row = db.prepare(`SELECT session_key,title,messages,created_at,updated_at FROM agent_sessions WHERE session_key = ?`).get(sessionKey);
+    if (!row)
+        return null;
+    let messages = [];
+    try { messages = JSON.parse(row.messages || "[]"); } catch { messages = []; }
+    return { ...row, messages };
+}
+/** 新增/覆盖一个会话（upsert by session_key）。messages 数组由调用方保证已截断。 */
+export function saveAgentSession(db, { sessionKey, title = "", messages = [] }) {
+    db.prepare(`INSERT INTO agent_sessions(session_key,title,messages,updated_at)
+               VALUES (?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+               ON CONFLICT(session_key) DO UPDATE SET
+                 title = excluded.title,
+                 messages = excluded.messages,
+                 updated_at = excluded.updated_at`)
+        .run(sessionKey, String(title || "").slice(0, 200), JSON.stringify(Array.isArray(messages) ? messages : []));
+}
+/** 向既有会话追加消息（不存在则建；幂等追加，调用方控制总长与截断） */
+export function appendAgentSession(db, { sessionKey, role, content, title }) {
+    const cur = getAgentSession(db, sessionKey);
+    const msgs = cur ? cur.messages.slice() : [];
+    msgs.push({ role: role === "assistant" ? "assistant" : "user", content: String(content ?? "") });
+    // 截断：最新 200 条 + 单条 3000 字（行内 2KB 级口径，与 chat history 截断一致）
+    const trimmed = msgs.slice(-200).map((m) => ({ role: m.role, content: String(m.content || "").slice(0, 3000) }));
+    saveAgentSession(db, { sessionKey, title: title ?? cur?.title ?? "", messages: trimmed });
+    return trimmed.length;
+}
+export function deleteAgentSession(db, sessionKey) {
+    const r = db.prepare(`DELETE FROM agent_sessions WHERE session_key = ?`).run(sessionKey);
+    return r.changes > 0;
+}
+/** ★ A2：会话压缩 —— 只保留最近 keepRecent 轮（上下文管理；不改其他会话，幂等）。
+ *  keepRecent 为「消息条数」而非轮数（一轮 = user+assistant 2 条）；钳制 2..200。 */
+export function compactAgentSession(db, sessionKey, keepRecent = 20) {
+    const cur = getAgentSession(db, sessionKey);
+    if (!cur) return null;
+    const keep = Math.max(2, Math.min(200, Number(keepRecent) || 20));
+    const before = cur.messages.length;
+    const trimmed = cur.messages.slice(-keep).map((m) => ({ role: m.role, content: String(m.content || "").slice(0, 3000) }));
+    saveAgentSession(db, { sessionKey, title: cur.title, messages: trimmed });
+    return { before, after: trimmed.length };
 }
 export function daemonLogCount(db, task, op) {
     const where = [];

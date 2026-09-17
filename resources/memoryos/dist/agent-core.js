@@ -104,7 +104,9 @@ export async function callLlm(cfg, messages, tools, signal) {
         const data = await res.json();
         const msg = data?.choices?.[0]?.message;
         if (!msg) throw new Error("LLM 返回空 choices");
-        return msg;
+        // ★ A5：透传 token 用量（OpenAI 兼容 prompt_tokens/completion_tokens；
+        //   Ollama 非流式常无 usage → null，由调用侧估算兜底）。不影响既有 return 契约（msg 仍为主返回）。
+        return { msg, usage: data?.usage ?? null };
     }
     finally { clearTimeout(timer); }
 }
@@ -226,19 +228,29 @@ export async function runAgent(o) {
     const seen = new Map(); // 调用签名 → 次数（死循环护栏）
     let steps = 0;
     let toolCalls = 0;
+    let usage = null;   // ★ A5：token 用量累加（prompt/completion）
     for (;;) {
         if (signal?.aborted) throw new Error("aborted");
         // 末轮：不再给工具，强制模型基于已有结果出文本收尾（弱模型常无限调工具不收口）
         const last = steps + 1 >= maxSteps;
-        const msg = await callLlm(llm, messages, last ? [] : tools, signal);
+        const { msg, usage: u } = await callLlm(llm, messages, last ? [] : tools, signal);
+        if (u) {
+            usage = {
+                prompt: (usage?.prompt || 0) + (u.prompt_tokens ?? 0),
+                completion: (usage?.completion || 0) + (u.completion_tokens ?? 0),
+            };
+            usage.total = usage.prompt + usage.completion;
+        }
         steps++;
         const tcs = last ? [] : (msg.tool_calls || []);
         if (!tcs.length) {
             const answer = String(msg.content ?? "").trim() || "（模型未返回内容）";
             if (last) onStep({ type: "max_steps", note: `达到最大步数 ${maxSteps}，已强制收尾` });
             messages.push({ role: "assistant", content: answer });
-            onStep({ type: "answer", answer });
-            return { answer, steps, toolCalls };
+            // ★ A5：估算兜底（usage 缺失时按消息体 chars/4 粗估 token）
+            const estimatedTokens = usage ? null : Math.ceil(JSON.stringify(messages).length / 4);
+            onStep({ type: "answer", answer, usage, estimatedTokens });
+            return { answer, steps, toolCalls, usage, estimatedTokens };
         }
         messages.push({ role: "assistant", content: msg.content || null, tool_calls: tcs });
         let allRepeats = true; // 本轮是否全是重复调用

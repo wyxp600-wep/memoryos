@@ -1,5 +1,5 @@
 "use strict";
-const { spawn, execSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 const { portOpen } = require("./port");
 
@@ -126,6 +126,13 @@ function createCore(deps) {
     // 受限模式：桌面版默认关闭（MEMORY_RESTRICTED=0）——用户可在「笔记」页自建笔记、
     // 在任务看板建卡。若 config.json 显式写 "restricted": true，则恢复「仅系统采集」。
     llmEnv.MEMORY_RESTRICTED = cfg.restricted === true ? "1" : "0";
+    // 执行工具面（P0）：开启后 server.js 向 agent 暴露 file_read/file_write/exec_run（工具面 22→25）。
+    // 安全双保险：① file_write/exec_run 带 ⟨risk:L1|gate:required⟩ 前缀，agent-core writeGate 拦截
+    //   （受限模式下 allowWrites=false ⇒ 写门禁一律拒绝，agent 只能调只读 file_read）；
+    //   ② 无头 --work 模式执行类 L1 不在 HEADLESS_PREAUTHORIZED 白名单（方案 c），仍需审批。
+    // 兜底熔断：进程环境置 MEMORYOS_EXEC_OFF=1 可全局禁用（优先级最高）。
+    // 遗留（P1）：执行工具未纳入 B3 受限能力位（RESTRICTED 下按能力位隐藏 exec）。
+    llmEnv.MEMORYOS_EXEC_ON = "1";
     spawnCore("dashboard.js", llmEnv);
     spawnCore("daemon.js", llmEnv);
     const t0 = Date.now();
@@ -141,7 +148,7 @@ function createCore(deps) {
     clearTimers();                                  // 主动重启时作废待执行的自愈
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") execSync(`taskkill /PID ${c.pid} /T /F`, { stdio: "ignore" });
+        if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }
@@ -154,7 +161,7 @@ function createCore(deps) {
     clearTimers();
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") execSync(`taskkill /PID ${c.pid} /T /F`, { stdio: "ignore" });
+        if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }

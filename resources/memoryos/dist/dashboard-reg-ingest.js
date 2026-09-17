@@ -1,17 +1,23 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— ingest 域。
  * handler 自 dashboard.js 原行 1000-1242 逐字搬移，注册顺序不变；响应体逐字节一致。
- * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
+ * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。
+ * ★ 融合架构增量（非 T8 存量）：
+ *   - /api/ingest/run 的 stats 现含 budgetLevel/budgetCompress/budgetDowngrade/budgetTerminated（P1 成本治理三级渐进）
+ *   - /api/evolution-gate  GET  进化引擎提案双回归门状态（P2）
+ *   - /api/gate-presets   GET  确定性门控预设清单（P3，task_done 验收门）
+ *   - /api/agent-creds    GET/POST  短生命周期凭据（A1 身份认证层） */
 import { logDaemon, queryStats, readConfig } from "./db.js";
 import { trend } from "./report.js";
 import { loadHygieneConfig } from "./daemon.js";
 import { getSources, ingestAll, loadCustomSpecs, saveCustomSpecs, validateCustomSource, customSourcesPath } from "./ingest.js";
+import { evolutionRegressionGate } from "./reconcile.js";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 export function registerIngest(app, ctx) {
     const { db, restricted, RESTRICTED } = ctx;
     // —— 采集消化：枚举可读明文知识源 ——
     app.get("/api/ingest/sources", async () => ({ sources: getSources() }));
-    // —— 采集消化：执行一轮（读源→提炼→入库，幂等靠去重）——
+    // —— 采集消化：执行一轮（读源→提炼→入库，幂等靠去重；P1 成本治理三级渐进 stats 见上）——
     let ingestRunning = false;
     app.post("/api/ingest/run", async (req, reply) => {
         if (ingestRunning)
@@ -28,6 +34,59 @@ export function registerIngest(app, ctx) {
         finally {
             ingestRunning = false;
         }
+    });
+    // —— P2 自进化有界验证环：进化引擎提案双回归门状态（engineDir 由 MEMORYOS_ENGINE_DIR 指定）——
+    app.get("/api/evolution-gate", async () => {
+        const engineDir = (process.env.MEMORYOS_ENGINE_DIR || "").trim();
+        if (!engineDir)
+            return { enabled: false, reason: "未设 MEMORYOS_ENGINE_DIR（进化引擎提案目录未启用）" };
+        const fs = await import("node:fs");
+        if (!fs.existsSync(engineDir))
+            return { enabled: true, engineDir, proposals: 0, accepted: 0, rejected: 0 };
+        const res = evolutionRegressionGate(db, engineDir);
+        return { enabled: true, engineDir, ...res };
+    });
+    // —— P3 确定性门控：验收门预设清单（与 server.js GATE_PRESETS 同口径，前端展示用）——
+    app.get("/api/gate-presets", async () => ({
+        presets: [
+            { name: "lint-sql", label: "SQL 占位符/实参体检" },
+            { name: "lint-catch", label: "静默 catch 体检" },
+            { name: "smoke-mcp", label: "MCP 协议冒烟" },
+            { name: "smoke-task", label: "任务生命周期冒烟" },
+            { name: "smoke-p26", label: "P2-6 生命周期冒烟" },
+            { name: "snapshot", label: "路由快照 --check" },
+        ],
+        note: "task_done 时若任务头含 [gate:预设] 将先跑该验收，失败 fail-closed 回退 pending",
+    }));
+    // —— A1 身份认证层：短生命周期凭据（最小权限 scope + 可撤销信任）——
+    app.get("/api/agent-creds", async () => {
+        const rows = db.prepare(`SELECT agent, scope, COUNT(*) c, MAX(expires_at) latest_expires, SUM(CASE WHEN revoked_at IS NOT NULL THEN 1 ELSE 0 END) revoked
+            FROM agent_credentials GROUP BY agent ORDER BY c DESC`).all();
+        const total = Number(db.prepare(`SELECT COUNT(*) c FROM agent_credentials`).get()?.c ?? 0);
+        return { agents: rows, total };
+    });
+    app.post("/api/agent-creds", async (req, reply) => {
+        if (RESTRICTED)
+            return restricted(reply, "agentCreds");
+        const b = req.body ?? {};
+        const action = b.action;
+        const agent = String(b.agent || "unknown");
+        if (action === "issue") {
+            const scope = ["read", "write", "admin"].includes(b.scope) ? b.scope : "read";
+            const ttl = Math.min(24, Math.max(0.1, Number(b.ttl_hours ?? 1)));
+            const cred = randomBytes(16).toString("hex");
+            const iso = new Date(Date.now() + ttl * 3600_000).toISOString();
+            db.prepare(`INSERT INTO agent_credentials(agent, credential, scope, expires_at, session_id) VALUES (?,?,?,?,?)`)
+                .run(agent, cred, scope, iso, b.session_id ?? null);
+            return { ok: true, agent, scope, ttl_hours: ttl, credential: cred, expires_at: iso };
+        }
+        if (action === "revoke") {
+            const r = b.credential
+                ? db.prepare(`UPDATE agent_credentials SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE credential=? AND revoked_at IS NULL`).run(String(b.credential))
+                : db.prepare(`UPDATE agent_credentials SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE agent=? AND revoked_at IS NULL`).run(agent);
+            return { ok: true, agent, revoked: Number(r.changes) };
+        }
+        return reply.code(400).send({ ok: false, error: "action 必须是 issue/revoke" });
     });
     // —— 采集消化：自定义源读写（%APPDATA%\MemoryOS\sources.json，只影响自定义源，绝不动内置 SOURCE_SPECS）——
     app.get("/api/ingest/custom-sources", async () => ({

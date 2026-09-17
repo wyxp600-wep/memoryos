@@ -12,7 +12,7 @@
  */
 import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
-import { reconcileTasksAndCards } from "./reconcile.js";  // ★ P2-6（C-5）三方对账守护
+import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 export const DEFAULT_HYGIENE_CONFIG = {
@@ -743,5 +743,21 @@ if (mainFile === "daemon.js") {
         };
         runReconcile();
         setInterval(runReconcile, 5 * 60 * 1000); // 每 5 分钟
+        // ★ P2：自进化有界验证环（进化引擎提案 engine/ → 双回归门）；engine 目录由 MEMORYOS_ENGINE_DIR 指定，缺省不启用
+        const engineDir = (process.env.MEMORYOS_ENGINE_DIR || "").trim();
+        if (engineDir) {
+            const runEvoGate = () => {
+                try {
+                    const ev = evolutionRegressionGate(db, engineDir);
+                    if (ev.scanned)
+                        console.log(`[evolution-gate] 提案 ${ev.scanned} / 接受 ${ev.accepted} / 拒绝 ${ev.rejected}`);
+                }
+                catch (e) {
+                    console.error(`[evolution-gate] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+                }
+            };
+            runEvoGate();
+            setInterval(runEvoGate, 5 * 60 * 1000);
+        }
     }
 }

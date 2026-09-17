@@ -275,6 +275,49 @@ try {
     }));
     const htext = h.result?.content?.[0]?.text ?? "";
     check("tools/call memory_health 返回触发率/写读比", htext.includes("检索触发率") && htext.includes("写读比"), JSON.stringify(htext.slice(0, 50)));
+
+    // ★ 融合架构增量：A1 身份认证（短生命周期凭据）+ P3 确定性门控 + 协议层 A2A 委派
+    const EXPECT_TOOLS_V2 = ["memory_credential", "task_gate", "task_delegate"];
+    const missingV2 = EXPECT_TOOLS_V2.filter((n) => !tools.some((t) => t.name === n));
+    check(
+        `V2 工具齐全（A1 凭据 + P3 门控 + A2A 委派 共 ${EXPECT_TOOLS_V2.length} 个）`,
+        missingV2.length === 0,
+        `count=${tools.length}${missingV2.length ? " missing=" + missingV2.join(",") : ""}`,
+    );
+    // A1：签发凭据 → verify 有效
+    const iss = (await send("tools/call", {
+        name: "memory_credential",
+        arguments: { action: "issue", agent: "smoke", scope: "read", ttl_hours: 1 },
+    }));
+    const isst = iss.result?.content?.[0]?.text ?? "";
+    check("A1.issue 签发短生命周期凭据", isst.includes("已签发凭据") && isst.includes("smoke"), JSON.stringify(isst.slice(0, 60)));
+    const ver = (await send("tools/call", {
+        name: "memory_credential",
+        arguments: { action: "verify", agent: "smoke" },
+    }));
+    const vert = ver.result?.content?.[0]?.text ?? "";
+    check("A1.verify 目标持有有效凭据", vert.includes("持有 1 条有效凭据"), JSON.stringify(vert.slice(0, 60)));
+    // P3：门控预设查询（未声明 gate 的任务应提示「未声明验收门」）
+    const gateQ = (await send("tools/call", {
+        name: "task_gate",
+        arguments: { memory_id: Number(tid2) },
+    }));
+    const gateQt = gateQ.result?.content?.[0]?.text ?? "";
+    check("P3.task_gate 查询验收门（未声明 → 提示白名单）", gateQt.includes("未声明验收门") && gateQt.includes("lint-sql"), JSON.stringify(gateQt.slice(0, 60)));
+    // 协议层 A2A：对无凭据目标委派 → fail-closed 拒绝
+    const delg = (await send("tools/call", {
+        name: "task_delegate",
+        arguments: { content: "冒烟：A2A 委派无凭据目标应被拒", to: "ghost-agent", from: "smoke" },
+    }));
+    const delgt = delg.result?.content?.[0]?.text ?? "";
+    check("A2A.task_delegate 无凭据目标 fail-closed 拒绝", delgt.includes("A2A 委派拒绝") && delgt.includes("无有效凭据"), JSON.stringify(delgt.slice(0, 60)));
+    // A2A：对已签发凭据的目标（smoke）委派 → 成功建任务
+    const delgOk = (await send("tools/call", {
+        name: "task_delegate",
+        arguments: { content: "冒烟：A2A 委派有效目标", to: "smoke", from: "claude" },
+    }));
+    const delgOkT = delgOk.result?.content?.[0]?.text ?? "";
+    check("A2A.task_delegate 有效目标成功委派", delgOkT.includes("A2A 已委派任务") && delgOkT.includes("claude → smoke"), JSON.stringify(delgOkT.slice(0, 60)));
 }
 finally {
     proc.stdin.end();

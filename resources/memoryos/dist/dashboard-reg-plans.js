@@ -2,6 +2,7 @@
  * handler 自 dashboard.js 原行 670-999 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
 import { logUsage, logDaemon, writeMemory, queryByType } from "./db.js";
+import { aiViews, aiVisible } from "./format.js";
 import { scanAgents, connectGuideFor, applyConnectWrite } from "./scan.js";
 import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
@@ -278,7 +279,8 @@ export function registerPlans(app, ctx) {
         const rows = db
             .prepare(`SELECT id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, created_at
            FROM memories ${where} ORDER BY julianday(created_at) DESC, id DESC LIMIT ?`)
-            .all(...(status ? [status, limit] : [limit])).map((r) => ({
+            .all(...(status ? [status, limit] : [limit])).map((r) => {
+            const row = {
             id: r.id,
             content: r.content,
             type: r.type,
@@ -293,7 +295,13 @@ export function registerPlans(app, ctx) {
             derived_from: r.derived_from,
             hits: r.hit_count,
             created_at: r.created_at,
-        }));
+            };
+            // ★ WYSIWYG（format.js 单一真源）：AI 侧三通道视图与可见性判据，只读派生不落库。
+            //   /api/all 每行附带 ai.*（用户所见即 AI 所得）+ ai_visible（检索层过滤原因）
+            row.ai = aiViews({ ...r, eff: row.eff });
+            row.ai_visible = aiVisible(row);
+            return row;
+        });
         return { total: rows.length, rows };
     });
     // —— 工具连接：扫描本机已装 AI Agent（真实探测）+ 合并"最近连接心跳"（server 被拉起时 MEMORY_AGENT 留痕，可精确到谁真连过）——
@@ -319,6 +327,44 @@ export function registerPlans(app, ctx) {
         }));
         const connected = agents.filter((a) => a.connected).length;
         return { agents, total: agents.length, connected };
+    });
+    // —— A2A 协议层：Agent Card 端点（互操作层「智能体对等协作」的自描述卡片）。
+    //   返回本 MemoryOS 服务自身 + 各已连接 agent 的能力卡片（能力=其工具面），
+    //   带确定性签名（SHA-256 over 规范 JSON），供对端做签名验证（协议层·Agent Card 签名验证）。
+    app.get("/api/agents/cards", async () => {
+        const crypto = await import("node:crypto");
+        const scan = scanAgents();
+        // 本服务的工具面（MCP server memory-hub 的工具清单）
+        let toolCount = 0;
+        try {
+            const rows = db.prepare(`SELECT DISTINCT tool FROM exec_audit ORDER BY tool`).all();
+            toolCount = rows.length;
+        }
+        catch { /* 无执行审计时保持 0 */ }
+        const cards = scan.agents.map((a) => ({
+            protocol: "A2A",
+            agent: a.id,
+            name: a.name,
+            type: a.type,
+            connected: a.connected,
+            capabilities: ["memory-rpc", "task-delegation", "shared-memory"],
+            transport: "stdio-mcp",
+            mcpServer: "memory-hub",
+        }));
+        // 签名：对卡片集合的规范 JSON 求 SHA-256（确定性；对端可复算验证一致性）
+        const canonical = JSON.stringify(cards);
+        const signature = crypto.createHash("sha256").update(canonical).digest("hex");
+        return {
+            self: {
+                protocol: "A2A", agent: "memoryos", name: "MemoryOS 共享记忆中心",
+                mcpServer: "memory-hub",
+                capabilities: ["shared-memory", "task-coordination", "gate-verification", "short-lived-credentials"],
+                toolCount,
+            },
+            cards,
+            signature,
+            sigOver: "SHA-256 of canonical JSON(cards)",
+        };
     });
     // —— 接入向导：查某 agent 的 connect guide（可否自动写/手动步骤/配置模板）——
     app.get("/api/agent/:id/connect-guide", async (req, reply) => {

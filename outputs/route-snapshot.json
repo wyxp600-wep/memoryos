@@ -1,9 +1,9 @@
 {
   "token": "snapshot-token-fixed",
   "meta": {
-    "generatedAt": "2026-09-16T11:18:49.830Z",
+    "generatedAt": "2026-09-17T12:23:19.932Z",
     "node": "v24.18.1",
-    "gitRev": "8306c93",
+    "gitRev": "fb3f78c",
     "gitDirty": true,
     "envDriftRoutes": [
       "/api/scan-agents",
@@ -14,6 +14,7 @@
     ]
   },
   "routeTable": [
+    "DELETE /api/agent/sessions/:id",
     "DELETE /api/cards/:id",
     "DELETE /api/cards/:id/links",
     "DELETE /api/cards/:id/memory",
@@ -23,10 +24,19 @@
     "DELETE /api/notes/:id",
     "DELETE /api/working",
     "GET /",
+    "GET /api/agent-creds",
     "GET /api/agent/:id/connect-guide",
+    "GET /api/agent/runs",
+    "GET /api/agent/runs/:id",
+    "GET /api/agent/runs/:id/steps/:sid/output",
+    "GET /api/agent/runs/:id/stream",
+    "GET /api/agent/sessions",
+    "GET /api/agent/sessions/:id",
     "GET /api/agent/status",
     "GET /api/agents",
+    "GET /api/agents/cards",
     "GET /api/all",
+    "GET /api/artifacts/:id",
     "GET /api/audit",
     "GET /api/backlinks",
     "GET /api/cards",
@@ -40,7 +50,11 @@
     "GET /api/conflicts",
     "GET /api/cross-tool",
     "GET /api/daemon-health",
+    "GET /api/evolution-gate",
+    "GET /api/export/audit",
+    "GET /api/export/memories",
     "GET /api/funnel",
+    "GET /api/gate-presets",
     "GET /api/graph",
     "GET /api/health",
     "GET /api/hygiene/suggestions",
@@ -68,10 +82,19 @@
     "GET /app.js",
     "GET /echarts.min.js",
     "HEAD /",
+    "HEAD /api/agent-creds",
     "HEAD /api/agent/:id/connect-guide",
+    "HEAD /api/agent/runs",
+    "HEAD /api/agent/runs/:id",
+    "HEAD /api/agent/runs/:id/steps/:sid/output",
+    "HEAD /api/agent/runs/:id/stream",
+    "HEAD /api/agent/sessions",
+    "HEAD /api/agent/sessions/:id",
     "HEAD /api/agent/status",
     "HEAD /api/agents",
+    "HEAD /api/agents/cards",
     "HEAD /api/all",
+    "HEAD /api/artifacts/:id",
     "HEAD /api/audit",
     "HEAD /api/backlinks",
     "HEAD /api/cards",
@@ -85,7 +108,11 @@
     "HEAD /api/conflicts",
     "HEAD /api/cross-tool",
     "HEAD /api/daemon-health",
+    "HEAD /api/evolution-gate",
+    "HEAD /api/export/audit",
+    "HEAD /api/export/memories",
     "HEAD /api/funnel",
+    "HEAD /api/gate-presets",
     "HEAD /api/graph",
     "HEAD /api/health",
     "HEAD /api/hygiene/suggestions",
@@ -112,8 +139,15 @@
     "HEAD /api/zombies",
     "HEAD /app.js",
     "HEAD /echarts.min.js",
+    "POST /api/agent-creds",
     "POST /api/agent/:id/connect",
     "POST /api/agent/chat",
+    "POST /api/agent/mcp/restart",
+    "POST /api/agent/runs",
+    "POST /api/agent/runs/:id/abort",
+    "POST /api/agent/runs/:id/steps/:sid/approval",
+    "POST /api/agent/sessions",
+    "POST /api/agent/sessions/:id/compact",
     "POST /api/archive",
     "POST /api/cards",
     "POST /api/cards/:id/accept",
@@ -156,6 +190,7 @@
     "POST /api/skills/sync",
     "POST /api/task",
     "POST /api/working",
+    "PUT /api/agent/sessions/:id",
     "PUT /api/cards/:id",
     "PUT /api/memory/:id",
     "PUT /api/notes/:id"
@@ -165,9 +200,9 @@
       "path": "/",
       "status": 200,
       "contentType": "text/html",
-      "contentLength": 141519,
-      "sha256": "befbe496155a8e82",
-      "body": "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<meta http-equiv=\"Cache-Control\" content=\"no-store, no-cache, must-revalidate, max-age=0\">\n<meta http-equiv=\"Pragma\" content=\"no-cache\">\n<meta http-equiv=\"Expires\" content=\"0\">\n<title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>\n<script src=\"./echarts.min.js\"></script>\n<style>\n/* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */\n:root {\n  --bg-deep: #FCF9E8;\n  --bg-base: #F5F1E0;\n  --bg-card: rgba(255, 255, 255, 0.72);\n  --bg-card-hover: rgba(255, 255, 255, 0.92);\n  --border-glass: rgba(65, 187, 200, 0.2);\n  --border-glow: rgba(65, 187, 200, 0.45);\n  --text-primary: #1a2e35;\n  --text-secondary: #4a6570;\n  --text-muted: #8aa0aa;\n  --accent-cyan: #41BBC8;\n  --accent-purple: #2a9daf;\n  --accent-blue: #5ec9d6;\n  --success: #16a34a;\n  --warning: #d97706;\n  --danger: #dc2626;\n  --archived: #6b7280;\n  --merged: #7c3aed;\n  --superseded: #d97706;\n  --radius-lg: 20px;\n  --radius-md: 14px;\n  --radius-sm: 8px;\n  --sidebar-w: 260px;\n  --font-display: 'Space Grotesk', 'Noto Sans SC', sans-serif;\n  --font-body: 'Noto Sans SC', 'Space Grotesk', sans-serif;\n  --font-mono: 'JetBrains Mono', monospace;\n}\n\n/* ===== Dark Theme ===== */\n[data-theme=\"dark\"] {\n  --bg-deep: #0a0f14;\n  --bg-base: #0f1620;\n  --bg-card: rgba(20, 30, 42, 0.85);\n  --bg-card-hover: rgba(28, 40, 56, 0.95);\n  --border-glass: rgba(65, 187, 200, 0.15);\n  --border-glow: rgba(65, 187, 200, 0.4);\n  --text-primary: #e2e8f0;\n  --text-secondary: #94a3b8;\n  --text-muted: #64748b;\n  --accent-cyan: #22d3ee;\n  --accent-purple: #a78bfa;\n  --accent-blue: #38bdf8;\n  --success: #34d399;\n  --warning: #fbbf24;\n  --danger: #f87171;\n  --archived: #64748b;\n  --merged: #c084fc;\n  --superseded: #fbbf24;\n}\n[data-theme=\"dark\"] body {\n  background: linear-gradient(160deg, #0a0f14 0%, #0f1620 45%, #0c1420 100%);\n}\n[data-theme=\"dark\"] .glass-card { background: rgba(20, 30, 42, 0.85); }\n[data-theme=\"dark\"] .modal { background: rgba(15, 22, 32, 0.98); }\n[data-theme=\"dark\"] .form-field textarea,\n[data-theme=\"dark\"] .form-field input,\n[data-theme=\"dark\"] .form-field select { background: rgba(15, 22, 32, 0.8); color: #e2e8f0; }\n[data-theme=\"dark\"] .status-bar-track { background: rgba(255,255,255,0.06); }\n[data-theme=\"dark\"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }\n[data-theme=\"dark\"] .global-loading { background: rgba(10,15,20,0.85); }\n[data-theme=\"dark\"] .sidebar { background: rgba(15, 22, 32, 0.85); border-right-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .nav-item { color: rgba(226,232,240,0.7); }\n[data-theme=\"dark\"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }\n[data-theme=\"dark\"] .nav-item.active { background: rgba(65,187,200,0.15); color: #41bbc8; }\n[data-theme=\"dark\"] .nav-group-title { color: rgba(226,232,240,0.4); }\n[data-theme=\"dark\"] .logo-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .logo-sub { color: rgba(226,232,240,0.5); }\n[data-theme=\"dark\"] .page-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .card-title { color: #e2e8f0; }\n[data-theme=\"dark\"] .data-table th { color: rgba(226,232,240,0.6); border-bottom-color: rgba(255,255,255,0.08); }\n[data-theme=\"dark\"] .data-table td { color: rgba(226,232,240,0.85); border-bottom-color: rgba(255,255,255,0.05); }\n[data-theme=\"dark\"] .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }\n[data-theme=\"dark\"] .filter-btn { color: rgba(226,232,240,0.6); border-color: rgba(255,255,255,0.1); }\n[data-theme=\"dark\"] .filter-btn:hover { color: #e2e8f0; border-color: rgba(255,255,255,0.2); }\n[data-theme=\"dark\"] .filter-btn.active { background: rgba(65,187,200,0.15); border-color: #41bbc8; color: #41bbc8; }\n[data-theme=\"dark\"] .search-input { background: rgba(15,22,32,0.8); color: #e2e8f0; border-color: rgba(255,255,255,0.1); }\n[data-th«truncated»"
+      "contentLength": 229458,
+      "sha256": "88196ca850743cc3",
+      "body": "<!DOCTYPE html>\r\n<html lang=\"zh-CN\">\r\n<head>\r\n<meta charset=\"UTF-8\">\r\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\r\n<meta http-equiv=\"Cache-Control\" content=\"no-store, no-cache, must-revalidate, max-age=0\">\r\n<meta http-equiv=\"Pragma\" content=\"no-cache\">\r\n<meta http-equiv=\"Expires\" content=\"0\">\r\n<title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>\r\n<link rel=\"stylesheet\" href=\"https://miaoda.feishu.cn/fonts/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap\">\r\n<script src=\"./echarts.min.js\"></script>\r\n<style>\r\n/* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */\r\n:root {\r\n  --bg-deep: #FCF9E8;\r\n  --bg-base: #F5F1E0;\r\n  --bg-card: rgba(255, 255, 255, 0.72);\r\n  --bg-card-hover: rgba(255, 255, 255, 0.92);\r\n  --border-glass: rgba(65, 187, 200, 0.2);\r\n  --border-glow: rgba(65, 187, 200, 0.45);\r\n  --text-primary: #1a2e35;\r\n  --text-secondary: #4a6570;\r\n  --text-muted: #8aa0aa;\r\n  --accent-cyan: #41BBC8;\r\n  --accent-purple: #2a9daf;\r\n  --accent-blue: #5ec9d6;\r\n  --success: #16a34a;\r\n  --warning: #d97706;\r\n  --danger: #dc2626;\r\n  --archived: #6b7280;\r\n  --merged: #7c3aed;\r\n  --superseded: #d97706;\r\n  --radius-lg: 20px;\r\n  --radius-md: 14px;\r\n  --radius-sm: 8px;\r\n  --sidebar-w: 260px;\r\n  --font-display: 'Space Grotesk', 'Noto Sans SC', sans-serif;\r\n  --font-body: 'Noto Sans SC', 'Space Grotesk', sans-serif;\r\n  --font-mono: 'JetBrains Mono', monospace;\r\n}\r\n\r\n/* ===== Dark Theme ===== */\r\n[data-theme=\"dark\"] {\r\n  --bg-deep: #0a0f14;\r\n  --bg-base: #0f1620;\r\n  --bg-card: rgba(20, 30, 42, 0.85);\r\n  --bg-card-hover: rgba(28, 40, 56, 0.95);\r\n  --border-glass: rgba(65, 187, 200, 0.15);\r\n  --border-glow: rgba(65, 187, 200, 0.4);\r\n  --text-primary: #e2e8f0;\r\n  --text-secondary: #94a3b8;\r\n  --text-muted: #64748b;\r\n  --accent-cyan: #22d3ee;\r\n  --accent-purple: #a78bfa;\r\n  --accent-blue: #38bdf8;\r\n  --success: #34d399;\r\n  --warning: #fbbf24;\r\n  --danger: #f87171;\r\n  --archived: #64748b;\r\n  --merged: #c084fc;\r\n  --superseded: #fbbf24;\r\n}\r\n[data-theme=\"dark\"] body {\r\n  background: linear-gradient(160deg, #0a0f14 0%, #0f1620 45%, #0c1420 100%);\r\n}\r\n[data-theme=\"dark\"] .glass-card { background: rgba(20, 30, 42, 0.85); }\r\n[data-theme=\"dark\"] .modal { background: rgba(15, 22, 32, 0.98); }\r\n[data-theme=\"dark\"] .form-field textarea,\r\n[data-theme=\"dark\"] .form-field input,\r\n[data-theme=\"dark\"] .form-field select { background: rgba(15, 22, 32, 0.8); color: #e2e8f0; }\r\n[data-theme=\"dark\"] .status-bar-track { background: rgba(255,255,255,0.06); }\r\n[data-theme=\"dark\"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }\r\n[data-theme=\"dark\"] .global-loading { background: rgba(10,15,20,0.85); }\r\n[data-theme=\"dark\"] .sidebar { background: rgba(15, 22, 32, 0.85); border-right-color: rgba(255,255,255,0.08); }\r\n[data-theme=\"dark\"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }\r\n[data-theme=\"dark\"] .nav-item { color: rgba(226,232,240,0.7); }\r\n[data-theme=\"dark\"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }\r\n[data-theme=\"dark\"] .nav-item.active { background: rgba(65,187,200,0.15); color: #41bbc8; }\r\n[data-theme=\"dark\"] .nav-group-title { color: rgba(226,232,240,0.4); }\r\n[data-theme=\"dark\"] .logo-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .logo-sub { color: rgba(226,232,240,0.5); }\r\n[data-theme=\"dark\"] .page-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .card-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .data-table th { color: rgba(226,232,240,0.6); border-bottom-color: rgba(255,255,255,0.08); }\r\n[data-theme=\"dark\"] .data-table td { color: rgba(226,232,240,0.85); border-bottom-color: rgba(255,255,255,0.05); }\r\n[data-theme=\"dark\"] .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }\r\n[data-theme=\"dark\"] .filter-btn { color: rgba(226,232,240,0.6); border-color: rgba(255,255,255,0.1); }\r\n[data-theme=\"dark\"] .filter-btn:hover { color: #e2e8f0«truncated»"
     },
     {
       "path": "/api/summary",
@@ -261,9 +296,9 @@
       "path": "/api/health",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 381,
-      "sha256": "b7dd68330388562d",
-      "body": "{\"ok\":true,\"db\":{\"pageCount\":79,\"freelist\":0,\"freelistPct\":0,\"sizeMb\":0.3,\"autoVacuum\":0},\"analyze\":{\"ts\":\"«volatile»\",\"stat1Exists\":false,\"stat1Rows\":0,\"fresh\":false},\"vacuum\":{\"ts\":\"«volatile»\",\"enabled\":false},\"queries\":{\"enabled\":true,\"total\":121,\"slow\":0,\"sampled\":121,\"slowMs\":50,\"busyRetry\":0,\"p50\":\"«volatile»\",\"p95\":\"«volatile»\",\"max\":\"«volatile»\",\"slowTop\":[]},\"daemon\":{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true}}"
+      "contentLength": 383,
+      "sha256": "367478830034c9f6",
+      "body": "{\"ok\":true,\"db\":{\"pageCount\":87,\"freelist\":0,\"freelistPct\":0,\"sizeMb\":0.3,\"autoVacuum\":0},\"analyze\":{\"ts\":\"«volatile»\",\"stat1Exists\":false,\"stat1Rows\":0,\"fresh\":false},\"vacuum\":{\"ts\":\"«volatile»\",\"enabled\":false},\"queries\":{\"enabled\":true,\"total\":121,\"slow\":0,\"sampled\":121,\"slowMs\":50,\"busyRetry\":0,\"p50\":\"«volatile»\",\"p95\":\"«volatile»\",\"max\":\"«volatile»\",\"slowTop\":[]},\"daemon\":{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true}}"
     },
     {
       "path": "/api/funnel",
@@ -309,17 +344,9 @@
       "path": "/api/all",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 1602,
-      "sha256": "838ddbd0a5cb9894",
-      "body": "{\"total\":5,\"rows\":[{\"id\":5,\"content\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"type\":\"task\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":4,\"content\":\"快照夹具 D：已归档样本\",\"type\":\"decision\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"archived\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":1,\"content\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":2,\"content\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"},{\"id\":3,\"content\":\"快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\"}]}"
-    },
-    {
-      "path": "/api/agent/status",
-      "status": 200,
-      "contentType": "application/json",
-      "contentLength": 704,
-      "sha256": "143be5d999f65fd8",
-      "body": "{\"ok\":true,\"agent\":\"dashboard-agent\",\"llm\":{\"model\":\"qwen3:8b\",\"baseUrl\":\"http:«path»:11434/v1\",\"endpoint\":\"http:«path»:11434«path»\",\"source\":\"默认本地 Ollama\",\"keySet\":false},\"mcp\":{\"tools\":[\"memory_write\",\"memory_search\",\"memory_ask\",\"memory_projects\",\"memory_context\",\"memory_read\",\"memory_feedback\",\"memory_cite\",\"memory_report\",\"memory_health\",\"obsidian_import\",\"obsidian_export\",\"obsidian_write_note\",\"task_assign\",\"task_claim\",\"task_heartbeat\",\"task_release\",\"task_block\",\"task_reopen\",\"task_done\",\"task_supersede\",\"task_next\"],\"toolCount\":22,\"error\":null},\"writeMode\":{\"allowed\":false,\"restricted\":true,\"hint\":\"受限模式：由系统统一派发，agent 仅可读\"}}"
+      "contentLength": 5451,
+      "sha256": "00539ab5fe82af85",
+      "body": "{\"total\":5,\"rows\":[{\"id\":5,\"content\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"type\":\"task\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\",\"ai\":{\"search\":\"#5 [task|snapshot|«date»](conf=0.80) [task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"context\":\"#5 [task|snapshot] cited=0 hit=0 conf=0.80: [task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"context_focus\":\"#5 [task|snapshot] conf=0.80: [task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"read\":\"#5 [task|snapshot|global] conf=0.80 status=active 创建=«date»\\n完整正文（57 字）：\\n[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"rawLen\":57,\"normLen\":57,\"clip_search\":220,\"clip_context\":120,\"searchClipped\":false,\"contextClipped\":false,\"searchHidden\":0,\"contextHidden\":0},\"ai_visible\":{\"searchable\":true,\"eff\":0.8,\"floor\":0.15,\"reason\":\"\"}},{\"id\":4,\"content\":\"快照夹具 D：已归档样本\",\"type\":\"decision\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"archived\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\",\"ai\":{\"search\":\"#4 [decision|snapshot|«date»](conf=0.80) 快照夹具 D：已归档样本\",\"context\":\"#4 [decision|snapshot] cited=0 hit=0 conf=0.80: 快照夹具 D：已归档样本\",\"context_focus\":\"#4 [decision|snapshot] conf=0.80: 快照夹具 D：已归档样本\",\"read\":\"#4 [decision|snapshot|global] conf=0.80 status=archived 创建=«date»\\n完整正文（12 字）：\\n快照夹具 D：已归档样本\",\"rawLen\":12,\"normLen\":12,\"clip_search\":220,\"clip_context\":120,\"searchClipped\":false,\"contextClipped\":false,\"searchHidden\":0,\"contextHidden\":0},\"ai_visible\":{\"searchable\":false,\"eff\":0.8,\"floor\":0.15,\"reason\":\"status=archived（AI 检索仅返回 active）\"}},{\"id\":1,\"content\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\",\"ai\":{\"search\":\"#1 [experience|snapshot|«date»](conf=0.80) 快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"context\":\"#1 [experience|snapshot] cited=0 hit=0 conf=0.80: 快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"context_focus\":\"#1 [experience|snapshot] conf=0.80: 快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"read\":\"#1 [experience|snapshot|global] conf=0.80 status=active 创建=«date»\\n完整正文（35 字）：\\n快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"rawLen\":35,\"normLen\":35,\"clip_search\":220,\"clip_context\":120,\"searchClipped\":false,\"contextClipped\":false,\"searchHidden\":0,\"contextHidden\":0},\"ai_visible\":{\"searchable\":true,\"eff\":0.8,\"floor\":0.15,\"reason\":\"\"}},{\"id\":2,\"content\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\",\"ai\":{\"search\":\"#2 [experience|snapshot|«date»](conf=0.80) 快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"context\":\"#2 [experience|snapshot] cited=0 hit=0 conf=0.80: 快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"context_focus\":\"#2 [experience|snapshot] conf=0.80: 快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"read\":\"#2 [experience|snapshot|global] conf=0.80 status=active 创建=«date»\\n完整正文（23 字）：\\n快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"rawLen\":23,\"normLen\":23,\"clip_search\":220,\"clip_context\":120,\"searchClipped\":false,\"contextClipped\":false,\"searchHidden\":0,\"contextHidden\":0},\"ai_visible\":{\"searchable\":true,\"eff\":0.8,\"floor\":0.15,\"reason\":\"\"}},{\"id\":3,\"content\":\"快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"type\":\"experience\",\"agent\":\"snapshot\",\"agent_fpath\":null,\"project\":\"global\",\"status\":\"active\",\"confidence\":0.8,\"eff\":0.8,\"conflict_with\":null,\"superseded_by\":null,\"derived_from\":null,\"hits\":0,\"created_at\":\"«ts»\",\"ai\":{\"search\":\"#3 [experience|snapshot|«date»](conf=0.80) 快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"context\":\"#3 [experience|snapshot] cited=0 hit=0 conf=0.80: 快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）\",\"context_focus\":\"#3 [experience|sna«truncated»"
     },
     {
       "path": "/api/agents",
@@ -330,12 +357,76 @@
       "body": "{\"agents\":[{\"id\":\"OpenAI Codex CLI\",\"load\":0},{\"id\":\"Claude Code\",\"load\":0},{\"id\":\"Qwen Code\",\"load\":0},{\"id\":\"ZCode\",\"load\":0},{\"id\":\"WorkBuddy\",\"load\":0},{\"id\":\"WorkBuddy AI\",\"load\":0},{\"id\":\"TraeCode CN\",\"load\":0},{\"id\":\"TraeWork CN\",\"load\":0},{\"id\":\"智谱清言\",\"load\":0},{\"id\":\"Codex++\",\"load\":0},{\"id\":\"MiniMax Code\",\"load\":0},{\"id\":\"DeepSeek Harness\",\"load\":0},{\"id\":\"VS Code\",\"load\":0},{\"id\":\"豆包 Doubao\",\"load\":0}]}"
     },
     {
+      "path": "/api/agents/cards",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 3041,
+      "sha256": "b92580c104c9ceda",
+      "body": "{\"self\":{\"protocol\":\"A2A\",\"agent\":\"memoryos\",\"name\":\"MemoryOS 共享记忆中心\",\"mcpServer\":\"memory-hub\",\"capabilities\":[\"shared-memory\",\"task-coordination\",\"gate-verification\",\"short-lived-credentials\"],\"toolCount\":0},\"cards\":[{\"protocol\":\"A2A\",\"agent\":\"codex\",\"name\":\"OpenAI Codex CLI\",\"type\":\"CLI Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"claude\",\"name\":\"Claude Code\",\"type\":\"CLI Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"qwen\",\"name\":\"Qwen Code\",\"type\":\"CLI Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"zcode\",\"name\":\"ZCode\",\"type\":\"IDE Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy\",\"type\":\"IDE Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI\",\"type\":\"IDE Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"traecode\",\"name\":\"TraeCode CN\",\"type\":\"IDE Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"traework\",\"name\":\"TraeWork CN\",\"type\":\"IDE Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"zhipu\",\"name\":\"智谱清言\",\"type\":\"IDE Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"codexpp\",\"name\":\"Codex++\",\"type\":\"IDE Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"minimax\",\"name\":\"MiniMax Code\",\"type\":\"IDE Agent\",\"connected\":true,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"dsh\",\"name\":\"DeepSeek Harness\",\"type\":\"IDE Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"},{\"protocol\":\"A2A\",\"agent\":\"vscode\",\"name\":\"VS Code\",\"type\":\"IDE Agent\",\"connected\":false,\"capabilities\":[\"memory-rpc\",\"task-delegation\",\"shared-memory\"],\"transport\":\"stdio-mcp\",\"mcpServer\":\"memory-hub\"}],\"signature\":\"61f01a8fb44d010cbec6e11f973786e8650617f349a3db007d52f9f187f2bbd9\",\"sigOver\":\"SHA-256 of canonical JSON(cards)\"}"
+    },
+    {
+      "path": "/api/agent/status",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 752,
+      "sha256": "4b7ccbdf6e07c0d9",
+      "body": "{\"ok\":true,\"agent\":\"dashboard-agent\",\"llm\":{\"model\":\"qwen3:8b\",\"baseUrl\":\"http:«path»:11434/v1\",\"endpoint\":\"http:«path»:11434«path»\",\"source\":\"默认本地 Ollama\",\"keySet\":false},\"mcp\":{\"tools\":[\"memory_write\",\"memory_search\",\"memory_ask\",\"memory_projects\",\"memory_context\",\"memory_read\",\"memory_feedback\",\"memory_cite\",\"memory_credential\",\"memory_report\",\"memory_health\",\"obsidian_import\",\"obsidian_export\",\"obsidian_write_note\",\"task_gate\",\"task_assign\",\"task_delegate\",\"task_claim\",\"task_heartbeat\",\"task_release\",\"task_block\",\"task_reopen\",\"task_done\",\"task_supersede\",\"task_next\"],\"toolCount\":25,\"error\":null},\"writeMode\":{\"allowed\":false,\"restricted\":true,\"hint\":\"受限模式：由系统统一派发，agent 仅可读\"}}"
+    },
+    {
+      "path": "/api/agent/sessions",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 25,
+      "sha256": "7953384f4660d0e7",
+      "body": "{\"ok\":true,\"sessions\":[]}"
+    },
+    {
+      "path": "/api/agent/runs",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 31,
+      "sha256": "69025855f5eba6b2",
+      "body": "{\"ok\":true,\"runs\":[],\"total\":0}"
+    },
+    {
+      "path": "/api/agent-creds",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 23,
+      "sha256": "fe48963a07916127",
+      "body": "{\"agents\":[],\"total\":0}"
+    },
+    {
       "path": "/api/audit",
       "status": 200,
       "contentType": "application/json",
       "contentLength": 11,
       "sha256": "1633902c6cbba5e7",
       "body": "{\"rows\":[]}"
+    },
+    {
+      "path": "/api/evolution-gate",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 94,
+      "sha256": "a013524d7e184205",
+      "body": "{\"enabled\":false,\"reason\":\"未设 MEMORYOS_ENGINE_DIR（进化引擎提案目录未启用）\"}"
+    },
+    {
+      "path": "/api/export/memories",
+      "status": 403,
+      "contentType": "application/json",
+      "contentLength": 59,
+      "sha256": "19ca0567e320e260",
+      "body": "{\"ok\":false,\"error\":\"受限模式：由系统统一派发\"}"
+    },
+    {
+      "path": "/api/export/audit",
+      "status": 403,
+      "contentType": "application/json",
+      "contentLength": 59,
+      "sha256": "19ca0567e320e260",
+      "body": "{\"ok\":false,\"error\":\"受限模式：由系统统一派发\"}"
     },
     {
       "path": "/api/rules",
@@ -381,9 +472,9 @@
       "path": "/api/ingest/sources",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 20215,
-      "sha256": "de7fce3f06716eb2",
-      "body": "{\"sources\":[{\"id\":\"codex-rules\",\"agent\":\"codex\",\"name\":\"Codex 规则 default.rules\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1811,\"level\":\"L1\"},{\"id\":\"codex-agents\",\"agent\":\"codex\",\"name\":\"Codex 全局约束 AGENTS.md\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":2756,\"level\":\"L1\"},{\"id\":\"codex-mem-raw\",\"agent\":\"codex\",\"name\":\"Codex 原始记忆 raw_memories\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":37,\"level\":\"L1\"},{\"id\":\"codex-mem-diff\",\"agent\":\"codex\",\"name\":\"Codex 工作区差异记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":140,\"level\":\"L1\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":259118,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":147323,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":159912,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":950355,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":209387,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":729438,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":150109,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":12692345,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7163773,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1907665,\"level\":\"L2\"},{\"id\":\"claude-config\",\"agent\":\"claude\",\"name\":\"Claude 配置 config.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":29,\"level\":\"L2\"},{\"id\":\"claude-settings\",\"agent\":\"claude\",\"name\":\"Claude 设置 settings.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1497,\"level\":\"L2\"},{\"id\":\"wb-memory\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy MEMORY\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":9591,\"level\":\"L1\"},{\"id\":\"wb-user\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy USER\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":383,\"level\":\"L1\"},{\"id\":\"wb-soul\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy SOUL\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1792,\"level\":\"L1\"},{\"id\":\"wb-identity\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy IDENTITY\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":496,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3053,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":254,\"level\":\"L1\"},{\"id\":\"trae-user-profile\",\"agent\":\"trae\",\"name\":\"Trae 用户画像 user_profile\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5609,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7237,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":2481,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3080,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5839,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":1322,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2963,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5862,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":19908,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5335,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"na«truncated»"
+      "contentLength": 20218,
+      "sha256": "ad6f4c6f78776737",
+      "body": "{\"sources\":[{\"id\":\"codex-rules\",\"agent\":\"codex\",\"name\":\"Codex 规则 default.rules\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1811,\"level\":\"L1\"},{\"id\":\"codex-agents\",\"agent\":\"codex\",\"name\":\"Codex 全局约束 AGENTS.md\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":2756,\"level\":\"L1\"},{\"id\":\"codex-mem-raw\",\"agent\":\"codex\",\"name\":\"Codex 原始记忆 raw_memories\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":37,\"level\":\"L1\"},{\"id\":\"codex-mem-diff\",\"agent\":\"codex\",\"name\":\"Codex 工作区差异记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":140,\"level\":\"L1\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":159912,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":950355,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":209387,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":729438,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":150109,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1673849,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":9002272,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":12692345,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7163773,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1907665,\"level\":\"L2\"},{\"id\":\"claude-config\",\"agent\":\"claude\",\"name\":\"Claude 配置 config.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":29,\"level\":\"L2\"},{\"id\":\"claude-settings\",\"agent\":\"claude\",\"name\":\"Claude 设置 settings.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1497,\"level\":\"L2\"},{\"id\":\"wb-memory\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy MEMORY\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":9591,\"level\":\"L1\"},{\"id\":\"wb-user\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy USER\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":383,\"level\":\"L1\"},{\"id\":\"wb-soul\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy SOUL\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1792,\"level\":\"L1\"},{\"id\":\"wb-identity\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy IDENTITY\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":496,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3053,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":254,\"level\":\"L1\"},{\"id\":\"trae-user-profile\",\"agent\":\"trae\",\"name\":\"Trae 用户画像 user_profile\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5609,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7237,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":2481,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3080,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":5839,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":1322,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2963,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5862,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":19908,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":5335,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"«truncated»"
     },
     {
       "path": "/api/ingest/custom-sources",
@@ -392,6 +483,22 @@
       "contentLength": 80,
       "sha256": "2ce0632e7fa6a03a",
       "body": "{\"sources\":[],\"path\":\"«path»\"}"
+    },
+    {
+      "path": "/api/gate-presets",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 440,
+      "sha256": "212e20f8d1e57f47",
+      "body": "{\"presets\":[{\"name\":\"lint-sql\",\"label\":\"SQL 占位符/实参体检\"},{\"name\":\"lint-catch\",\"label\":\"静默 catch 体检\"},{\"name\":\"smoke-mcp\",\"label\":\"MCP 协议冒烟\"},{\"name\":\"smoke-task\",\"label\":\"任务生命周期冒烟\"},{\"name\":\"smoke-p26\",\"label\":\"P2-6 生命周期冒烟\"},{\"name\":\"snapshot\",\"label\":\"路由快照 --check\"}],\"note\":\"task_done 时若任务头含 [gate:预设] 将先跑该验收，失败 fail-closed 回退 pending\"}"
+    },
+    {
+      "path": "/api/graph",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 587,
+      "sha256": "185a5c7b69aa9861",
+      "body": "{\"nodes\":[{\"id\":\"memory:1\",\"kind\":\"memory\",\"label\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:2\",\"kind\":\"memory\",\"label\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:5\",\"kind\":\"memory\",\"label\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"sector\":\"social\",\"degree\":0},{\"id\":\"memory:-1\",\"kind\":\"memory\",\"label\":\"secret ×1\",\"sector\":\"secret\",\"degree\":0}],\"edges\":[],\"truncated\":false,\"secret_folded\":true}"
     },
     {
       "path": "/api/write-health",
@@ -442,14 +549,6 @@
       "body": "{\"error\":\"vault 参数必填\"}"
     },
     {
-      "path": "/api/graph",
-      "status": 200,
-      "contentType": "application/json",
-      "contentLength": 587,
-      "sha256": "185a5c7b69aa9861",
-      "body": "{\"nodes\":[{\"id\":\"memory:1\",\"kind\":\"memory\",\"label\":\"快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:2\",\"kind\":\"memory\",\"label\":\"快照夹具 B：微信回调时间戳容差需设 5 分钟\",\"sector\":\"episodic\",\"degree\":0},{\"id\":\"memory:5\",\"kind\":\"memory\",\"label\":\"[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定\",\"sector\":\"social\",\"degree\":0},{\"id\":\"memory:-1\",\"kind\":\"memory\",\"label\":\"secret ×1\",\"sector\":\"secret\",\"degree\":0}],\"edges\":[],\"truncated\":false,\"secret_folded\":true}"
-    },
-    {
       "path": "/api/backlinks",
       "status": 400,
       "contentType": "application/json",
@@ -469,8 +568,8 @@
       "path": "/app.js",
       "status": 200,
       "contentType": "application/javascript",
-      "contentLength": 283453,
-      "sha256": "b6257758ebfabc76",
+      "contentLength": 338712,
+      "sha256": "a2d1d25ed67df943",
       "body": "// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）\n// 同源 fetch /api/*；后端无能力处降级展示。依赖全局 echarts。\n(() => {\n  'use strict';\n  if (!window.EChartsLoaded) window.EChartsLoaded = {\n    // 等待 echarts 就绪\n    when(cb) {\n      const t = setInterval(() => { if (window.echarts) { clearInterval(t); cb(); } }, 200);\n      setTimeout(() => clearInterval(t), 15000);\n    },\n  };\n\n  const $ = s => document.querySelector(s);\n  const $$ = s => document.querySelectorAll(s);\n  const esc = v => String(v ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n  const fmtDate = s => s ? String(s).slice(0, 16).replace('T', ' ') : '—';\n  const fmtRelative = s => {\n    if (!s) return '—';\n    const diff = Date.now() - new Date(s).getTime();\n    const mins = Math.floor(diff / 60000);\n    if (mins < 1) return '刚刚';\n    if (mins < 60) return mins + ' 分钟前';\n    const hours = Math.floor(mins / 60);\n    if (hours < 24) return hours + ' 小时前';\n    const days = Math.floor(hours / 24);\n    if (days < 30) return days + ' 天前';\n    const months = Math.floor(days / 30);\n    if (months < 12) return months + ' 个月前';\n    return Math.floor(months / 12) + ' 年前';\n  };\n  // 文本相似度（基于字符 bigram 的 Jaccard 相似度）\n  function textSimilarity(a, b) {\n    if (!a || !b) return 0;\n    const grams = (s) => {\n      const set = new Set();\n      for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));\n      return set;\n    };\n    const ga = grams(a), gb = grams(b);\n    if (ga.size === 0 || gb.size === 0) return 0;\n    let inter = 0;\n    ga.forEach(g => { if (gb.has(g)) inter++; });\n    return inter / (ga.size + gb.size - inter);\n  }\n  // 找相似记忆\n  function findSimilar(memory, limit = 3) {\n    return S.memories\n      .filter(m => m.id !== memory.id && m.status === 'active')\n      .map(m => ({ m, sim: textSimilarity(memory.content, m.content) }))\n      .filter(x => x.sim > 0.08)\n      .sort((a, b) => b.sim - a.sim)\n      .slice(0, limit);\n  }\n  // 记忆质量评分（0-100，基于 eff/引用/置信度/长度综合）\n  function calcQuality(m) {\n    if (!m) return 0;\n    const effScore = Math.min(100, (m.eff || 0) * 100);\n    const hitScore = Math.min(100, Math.log10((m.hits || 0) + 1) * 50);\n    const confScore = (m.confidence || 0) * 100;\n    const lenScore = Math.min(100, (m.content || '').length / 5);\n    return Math.round(effScore * 0.35 + hitScore * 0.3 + confScore * 0.2 + lenScore * 0.15);\n  }\n  function qualityLabel(score) {\n    if (score >= 80) return { text: '优秀', color: '#10b981' };\n    if (score >= 60) return { text: '良好', color: '#06b6d4' };\n    if (score >= 40) return { text: '一般', color: '#f59e0b' };\n    if (score >= 20) return { text: '较差', color: '#ef4444' };\n    return { text: '待优化', color: '#6b7280' };\n  }\n  // 提取高频关键词（简单中文分词：提取2-4字常用词）\n  function extractKeywords(limit = 30) {\n    const stopWords = new Set(['的','了','是','在','我','有','和','就','不','人','都','一','一个','上','也','很','到','说','要','去','你','会','着','没有','看','好','自己','这','那','它','他','她','它们','他们','她们','这个','那个','什么','怎么','为什么','可以','因为','所以','但是','如果','虽然','而且','或者','以及','等等','之类','一下','一些','一样','这样','那样','怎么','什么样','多少','几','哪','哪里','哪个','谁','什么时候','以前','以后','现在','今天','昨天','明天','时候','时间','地方','东西','事情','问题','办法','方法','方式','情况','状态','结果','效果','作用','功能','特点','优势','缺点','原因','理由','目的','目标','计划','安排','准备','开始','结束','完成','继续','停止','开始','进行','执行','实施','落实','推进','推动','促进','提升','提高','增加','减少','降低','优化','改进','改善','完善','解决','处理','应对','面对','面临','存在','出现','发生','产生','形成','变成','成为','属于','关于','对于','通过','根据','按照','基于','由于','鉴于','因此','因而','从而','进而','甚至','尤其','特别','更加','越来越','越','最','更','比较','相当','非常','十分','极其','极为','太','真','确实','的确','显然','明显','当然','自然','其实','实际上','事实上','基本上','大致','大概','大约','约','左右','上下','前后','之间','以内','以上','以下','之中','之外','旁边','附近','周围','周边','上面','下面','里面','外面','前面','后面','左边','右边','中间','中央','中心','核心','重点','关键','主要','重要','必要','必须','需要','需求','要求','期望','期待','希望','愿望','理想','目标','方向','路径','道路','途径','渠道','方式','方法','办法','措施','手段','工具','平台','系统','体系','机制','模式','模型','框架','结构','架构','设计','开发','测试','部署','运维','运营','管理','治理«truncated»"
     },
     {
@@ -510,6 +609,41 @@
       "status": 404,
       "sha256": "d7cb406b42fbfa99",
       "body": "{\"ok\":false,\"error\":\"卡片不存在\"}"
+    },
+    {
+      "path": "/api/artifacts/:id",
+      "probedUrl": "/api/artifacts/1",
+      "status": 403,
+      "sha256": "19ca0567e320e260",
+      "body": "{\"ok\":false,\"error\":\"受限模式：由系统统一派发\"}"
+    },
+    {
+      "path": "/api/agent/sessions/:id",
+      "probedUrl": "/api/agent/sessions/1",
+      "status": 404,
+      "sha256": "b7790e93377df110",
+      "body": "{\"ok\":false,\"error\":\"会话不存在\"}"
+    },
+    {
+      "path": "/api/agent/runs/:id",
+      "probedUrl": "/api/agent/runs/1",
+      "status": 404,
+      "sha256": "9cd4ff41197b89a4",
+      "body": "{\"ok\":false,\"error\":\"run 不存在（内存保留最近 50 个）\"}"
+    },
+    {
+      "path": "/api/agent/runs/:id/stream",
+      "probedUrl": "/api/agent/runs/1/stream",
+      "status": 404,
+      "sha256": "ccb8f3ef629a5042",
+      "body": "{\"ok\":false,\"error\":\"run 不存在\"}"
+    },
+    {
+      "path": "/api/agent/runs/:id/steps/:sid/output",
+      "probedUrl": "/api/agent/runs/1/steps/1/output",
+      "status": 404,
+      "sha256": "ccb8f3ef629a5042",
+      "body": "{\"ok\":false,\"error\":\"run 不存在\"}"
     },
     {
       "path": "/api/agent/:id/connect-guide",
@@ -572,12 +706,30 @@
       "HEAD /api/tasks",
       "HEAD /api/zombies",
       "POST /api/archive",
+      "HEAD /api/artifacts/:id",
       "HEAD /api/all",
+      "HEAD /api/agents",
+      "HEAD /api/agents/cards",
       "HEAD /api/agent/status",
+      "HEAD /api/agent/sessions",
+      "POST /api/agent/sessions",
+      "HEAD /api/agent/sessions/:id",
+      "PUT /api/agent/sessions/:id",
+      "DELETE /api/agent/sessions/:id",
+      "POST /api/agent/sessions/:id/compact",
       "POST /api/agent/chat",
+      "POST /api/agent/runs",
+      "HEAD /api/agent/runs",
+      "HEAD /api/agent/runs/:id",
+      "HEAD /api/agent/runs/:id/stream",
+      "HEAD /api/agent/runs/:id/steps/:sid/output",
+      "POST /api/agent/runs/:id/steps/:sid/approval",
+      "POST /api/agent/runs/:id/abort",
+      "POST /api/agent/mcp/restart",
       "POST /api/agent/:id/connect",
       "HEAD /api/agent/:id/connect-guide",
-      "HEAD /api/agents",
+      "HEAD /api/agent-creds",
+      "POST /api/agent-creds",
       "HEAD /api/audit",
       "POST /api/memory",
       "POST /api/memory/hit",
@@ -585,6 +737,9 @@
       "DELETE /api/memory/:id",
       "POST /api/memory/:id/secret-view",
       "POST /api/embed/recompute/:id",
+      "HEAD /api/evolution-gate",
+      "HEAD /api/export/memories",
+      "HEAD /api/export/audit",
       "HEAD /api/rules",
       "POST /api/rules/sync",
       "HEAD /api/rules/sync-targets",
@@ -602,6 +757,8 @@
       "POST /api/ingest/custom-sources/:id/enabled",
       "POST /api/ingest/validate-source",
       "POST /api/inject",
+      "HEAD /api/gate-presets",
+      "HEAD /api/graph",
       "HEAD /api/write-health",
       "HEAD /api/working",
       "POST /api/working",
@@ -613,7 +770,6 @@
       "HEAD /api/obsidian/status",
       "POST /api/obsidian/import",
       "POST /api/obsidian/export",
-      "HEAD /api/graph",
       "HEAD /api/backlinks",
       "HEAD /api/notes",
       "POST /api/notes",

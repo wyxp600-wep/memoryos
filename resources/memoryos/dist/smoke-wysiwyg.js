@@ -71,6 +71,16 @@ proc.stdout.on("data", (d) => {
     }
 });
 const text = (r) => r?.result?.content?.[0]?.text ?? "";
+/** MCP 的 memory_read 把 ai.read 正文套进 fenceUntrusted（随机 nonce，提示注入防御 R5-1）。
+ *  逐字比对时须把 MCP 全文还原为「无围栏」的 ai.read 形态（保留 #id 头，只去围栏头尾），
+ *  不能把围栏搬进 format.js（那是 WYSIWYG 单一真源，只描述正文视图，不描述 MCP 包装）。 */
+function stripReadFence(s) {
+    // 去围栏头：「完整正文（N 字）：\n<<<UNTRUSTED_MEMORY ...>>>\n【...】\n」→「完整正文（N 字）：\n」
+    let t = s.replace(/(完整正文（\d+ 字）：\n)<<<UNTRUSTED_MEMORY nonce=[^>]+>>>\n【[\s\S]*?】\n/, "$1");
+    // 去围栏尾：「\n<<<END_UNTRUSTED_MEMORY nonce=...>>>」→「」
+    t = t.replace(/\n*<<<END_UNTRUSTED_MEMORY nonce=[^>]*>>>\s*$/, "");
+    return t;
+}
 /** 从 MCP 多行返回里取出 `#id ...` 行，按 id 索引 */
 function indexLines(s) {
     const map = new Map();
@@ -107,7 +117,7 @@ try {
     const readTexts = new Map();
     for (const id of [1, 2, 3]) {
         const rd = await send("tools/call", { name: "memory_read", arguments: { memory_id: id } });
-        readTexts.set(id, text(rd));
+        readTexts.set(id, stripReadFence(text(rd)));
     }
     // ④ 用户侧：同库起 dashboard，取 ai.* 视图（此时 hit_count 与上面 MCP 返回同刻）
     const db = openDb(DB_PATH);
@@ -126,7 +136,7 @@ try {
     let okSearch = 0, okContext = 0, okRead = 0;
     for (const r of rows) {
         const aiLine = sLines.get(r.id);
-        if (aiLine) {
+        if (aiLine && r.ai) {
             const same = aiLine === r.ai.search;
             if (same)
                 okSearch++;
@@ -134,7 +144,7 @@ try {
                 check(`#${r.id} memory_search 逐字一致`, false, `MCP=${JSON.stringify(aiLine.slice(0, 90))} / API=${JSON.stringify(r.ai.search.slice(0, 90))}`);
         }
         const cLine = cLines.get(r.id);
-        if (cLine) {
+        if (cLine && r.ai) {
             const same = cLine === r.ai.context;
             if (same)
                 okContext++;
@@ -142,10 +152,12 @@ try {
                 check(`#${r.id} memory_context 逐字一致`, false, `MCP=${JSON.stringify(cLine.slice(0, 90))} / API=${JSON.stringify(r.ai.context.slice(0, 90))}`);
         }
         const rd = readTexts.get(r.id) ?? "";
-        if (rd === r.ai.read)
+        // readTexts 已经剥掉 fenceUntrusted 围栏（随机 nonce），形态与 ai.read 完全一致；
+        // 围栏是 MCP 通道独有的包装（提示注入防御 R5-1），不属于 ai.read 视图本身
+        if (r.ai && rd === r.ai.read)
             okRead++;
         else
-            check(`#${r.id} memory_read 逐字一致`, false, `MCP=${JSON.stringify(rd.slice(0, 90))} / API=${JSON.stringify(r.ai.read.slice(0, 90))}`);
+            check(`#${r.id} memory_read 逐字一致（剥围栏后）`, false, `MCP=${JSON.stringify(rd.slice(0, 90))} / API=${JSON.stringify(r.ai?.read?.slice(0, 90))}`);
     }
     check("memory_search：每条用户侧视图 == AI 侧原文", okSearch === Math.min(rows.length, sLines.size) && okSearch >= 3, `${okSearch}/${rows.length}`);
     check("memory_context：每条用户侧视图 == AI 侧原文", okContext === Math.min(rows.length, cLines.size) && okContext >= 3, `${okContext}/${rows.length}`);
