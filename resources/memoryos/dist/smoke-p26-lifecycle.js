@@ -57,6 +57,7 @@ try {
     await send("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "p26-life", version: "1" } });
     proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
     db = new DatabaseSync(DB, { readOnly: true });
+    const dbFix = new DatabaseSync(DB); // 夹具专用可写连接：仅制造「列状态漂移」场景（归档/merged），不参与断言
 
     /* ── A. 领取 + 租约窗口（C-3 实测值） ── */
     const a = Number((await call("task_assign", { content: "生命周期验收任务 A", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
@@ -115,6 +116,43 @@ try {
     check("F5.reopen 后头=in_progress 且原因留痕（派生态不落库）", /已重开/.test(reopenOk) && headStatus(c) === "in_progress", `head=${headStatus(c)}｜${reopenOk.replace(/\s+/g, " ").slice(0, 60)}`);
     const cardC2 = cardOf(c);
     check("F6.★reopen 卡侧回 ready 且清锁", cardC2?.status === "ready" && !cardC2?.claim_lock, `card=${cardC2?.status}`);
+
+    /* ── G. 实操复盘「立刻」档回归（2026-09-19）：按 id 列守卫 / supersede 头同步 / task_verify / 依赖死锁修复 ── */
+    const dG = Number((await call("task_assign", { content: "守卫验收任务 D（列将被归档）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
+    const eG = Number((await call("task_assign", { content: "守卫验收任务 E（supersede loser）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
+    const fG = Number((await call("task_assign", { content: "守卫验收任务 F（supersede winner）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
+    const gG = Number((await call("task_assign", { content: "守卫验收任务 G（实际已完成待第三方验收）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
+    dbFix.prepare(`UPDATE memories SET status='archived' WHERE id=?`).run(dG); // 制造 P0 场景：头 pending、列 archived
+    const claimArchived = await call("task_claim", { memory_id: dG });
+    check("G1.★列已归档的头 pending 任务按 id 领取被拒（列守卫，P0#1）", /不可按 id 操作/.test(claimArchived) && headStatus(dG) === "pending", claimArchived.replace(/\s+/g, " ").slice(0, 90));
+    await call("task_supersede", { memory_id: eG, superseded_by: fG });
+    check("G2.★supersede 后 loser 头文本同步 [status:merged]（P0#2）", headStatus(eG) === "merged", `head=${headStatus(eG)}`);
+    const claimMerged = await call("task_claim", { memory_id: eG });
+    check("G3.merged 任务按 id 领取被拒（双保险）", /不可按 id 操作/.test(claimMerged), claimMerged.replace(/\s+/g, " ").slice(0, 90));
+    const reopenMerged = await call("task_reopen", { memory_id: eG, reason: "试复活被取代任务" });
+    check("G4.merged 任务不可 reopen（应操作 winner）", !/已重开/.test(reopenMerged), reopenMerged.replace(/\s+/g, " ").slice(0, 90));
+    const asgBefore = (db.prepare(`SELECT content FROM memories WHERE id=?`).get(gG).content.match(/\[assignee:([^\]]*)\]/) ?? [])[1];
+    const verifyMsg = await call("task_verify", { memory_id: gG, reason: "守卫验收：证据=smoke G5" });
+    check("G5.★task_verify pending→done（不改归属不发租约）", /已验收关闭/.test(verifyMsg) && headStatus(gG) === "done", verifyMsg.replace(/\s+/g, " ").slice(0, 90));
+    const asgAfter = (db.prepare(`SELECT content FROM memories WHERE id=?`).get(gG).content.match(/\[assignee:([^\]]*)\]/) ?? [])[1];
+    check("G6.verify 不改归属（assignee 原样）", asgBefore === asgAfter, `${asgBefore}→${asgAfter}`);
+    const cardG = cardOf(gG);
+    check("G7.★verify 卡侧同步 done 且清锁", cardG?.status === "done" && !cardG?.claim_lock, `card=${cardG?.status} lock=${cardG?.claim_lock ?? "null"}`);
+    const verifyEvt = db.prepare(`SELECT COUNT(*) n FROM memory_events WHERE memory_id=? AND op='task_verify'`).get(gG)?.n;
+    check("G8.verify 事件留痕（verified_by，非 claim 噪音）", Number(verifyEvt) >= 1, `events=${verifyEvt}`);
+    const verifyAgain = await call("task_verify", { memory_id: gG, reason: "重复验收" });
+    check("G9.重复验收被拒（幂等负路径）", !/已验收关闭/.test(verifyAgain), verifyAgain.replace(/\s+/g, " ").slice(0, 90));
+    // G10：依赖死锁修复 —— 依赖「头 done 但列归档」的任务不再永久阻塞
+    const iG = Number((await call("task_assign", { content: "守卫验收任务 I（done 后列将被归档）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
+    const hG = Number((await call("task_assign", { content: "守卫验收任务 H（依赖 I，I done 后应可做）", assignee: "p26-life", project: "global", depends_on: String(iG) })).match(/#(\d+)/)?.[1]);
+    await call("task_claim", { memory_id: iG, as: "p26-life" });
+    await call("task_done", { memory_id: iG, conclusion: "I 完成，随后列被归档（模拟归档不改头的存量场景）" });
+    dbFix.prepare(`UPDATE memories SET status='archived' WHERE id=?`).run(iG);
+    const nextAfterFix = await call("task_next", { project: "global", as: "" });
+    const availSection = (nextAfterFix.split("可做（")[1] ?? "").split("阻塞（")[0] ?? "";
+    const hAvail = new RegExp(`#${hG}\\b`).test(availSection);
+    const hBlocked = new RegExp(`阻塞（[\\s\\S]*?#${hG}\\b`).test(nextAfterFix);
+    check("G10.★依赖「头done列归档」不再永久阻塞（done 集按头判定）", hAvail && !hBlocked, `H 可做=${hAvail} 误阻塞=${hBlocked}`);
 
     db.close();
 } catch (e) {

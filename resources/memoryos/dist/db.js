@@ -384,6 +384,28 @@ CREATE TABLE IF NOT EXISTS agent_credentials (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_creds_agent ON agent_credentials(agent, expires_at);
 CREATE INDEX IF NOT EXISTS idx_agent_creds_expiry ON agent_credentials(expires_at) WHERE revoked_at IS NULL;
+
+/* ── ★ DSH 参考「持久 run 日志」：run 终态落 SQLite（跨重启可查回放；内存态仅保留最近 50）
+ *  run_id = 内存 registry 的 runId（幂等键；同 run 重复 finish 走 upsert 更新终态字段）。
+ *  纪律（与 agent_sessions/exec_audit 同口径）：写入方负责截断 —— answer ≤2000 字、
+ *  error ≤500 字、steps_json ≤200 步且单 JSON ≤32KB（超即截断 + 标记），不存敏感凭据。 */
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id      TEXT    NOT NULL UNIQUE,             -- 内存 registry 的 runId
+  title       TEXT    NOT NULL DEFAULT '',          -- run 标题（≤120 字，写入方截断）
+  status      TEXT    NOT NULL,                     -- done / failed / aborted
+  answer      TEXT    NOT NULL DEFAULT '',          -- 最终答案（≤2000 字）
+  steps_json  TEXT    NOT NULL DEFAULT '[]',        -- JSON: 步骤摘要（≤200 步，≤32KB）
+  tool_calls  INTEGER NOT NULL DEFAULT 0,
+  usage       TEXT,                                  -- JSON {prompt,completion,total}；无则 NULL
+  fanout      INTEGER NOT NULL DEFAULT 1,            -- fan-out 子执行数（1=单 run）
+  elapsed_ms  INTEGER NOT NULL DEFAULT 0,
+  error       TEXT    NOT NULL DEFAULT '',          -- 失败原因（≤500 字）
+  llm_model   TEXT    NOT NULL DEFAULT '',
+  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  finished_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_finished ON agent_runs(finished_at DESC);
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -1412,6 +1434,48 @@ export function compactAgentSession(db, sessionKey, keepRecent = 20) {
     saveAgentSession(db, { sessionKey, title: cur.title, messages: trimmed });
     return { before, after: trimmed.length };
 }
+/* ── ★ DSH 参考「持久 run 日志」：run 终态写读（agent_runs 表；写入方截断纪律见 schema 注释）──
+ * insertAgentRun 幂等（run_id UNIQUE upsert）：内存 registry 的 finish 只在首次终态落库，
+ * 重放/补写同 run_id 不产生重复行。steps_json 由调用方（路由层）做 ≤200 步 / ≤32KB 截断。 */
+export function insertAgentRun(db, { runId, title = "", status, answer = "", steps = [], toolCalls = 0, usage = null, fanout = 1, elapsedMs = 0, error = "", llmModel = "" }) {
+    db.prepare(`INSERT INTO agent_runs(run_id,title,status,answer,steps_json,tool_calls,usage,fanout,elapsed_ms,error,llm_model,finished_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+               ON CONFLICT(run_id) DO UPDATE SET
+                 status = excluded.status,
+                 answer = excluded.answer,
+                 steps_json = excluded.steps_json,
+                 tool_calls = excluded.tool_calls,
+                 usage = COALESCE(excluded.usage, agent_runs.usage),
+                 fanout = excluded.fanout,
+                 elapsed_ms = excluded.elapsed_ms,
+                 error = excluded.error,
+                 llm_model = excluded.llm_model,
+                 finished_at = excluded.finished_at`)
+        .run(runId, String(title || "").slice(0, 120), String(status || "failed"),
+            String(answer || "").slice(0, 2000), JSON.stringify(Array.isArray(steps) ? steps : []),
+            Math.max(0, Number(toolCalls) || 0),
+            usage ? JSON.stringify(usage) : null,
+            Math.max(1, Math.min(4, Number(fanout) || 1)),
+            Math.max(0, Number(elapsedMs) || 0), String(error || "").slice(0, 500), String(llmModel || "").slice(0, 120));
+}
+/** 历史 run 列表（终态落库；limit 上限 100；steps_json 返回解析后数组，坏 JSON 回落 []） */
+export function listAgentRuns(db, limit = 50) {
+    const rows = db.prepare(`SELECT run_id,title,status,answer,tool_calls,usage,fanout,elapsed_ms,error,llm_model,created_at,finished_at
+                              FROM agent_runs ORDER BY finished_at DESC LIMIT ?`)
+        .all(Math.max(1, Math.min(100, Number(limit) || 50)));
+    return rows.map((r) => ({ ...r, usage: r.usage ? safeParseJson(r.usage) : null }));
+}
+/** 单 run 全量（含 steps_json）；不存在返回 null */
+export function getAgentRun(db, runId) {
+    const row = db.prepare(`SELECT run_id,title,status,answer,steps_json,tool_calls,usage,fanout,elapsed_ms,error,llm_model,created_at,finished_at
+                             FROM agent_runs WHERE run_id = ?`).get(runId);
+    if (!row)
+        return null;
+    return { ...row, usage: row.usage ? safeParseJson(row.usage) : null, steps: safeParseJson(row.steps_json || "[]") };
+}
+function safeParseJson(s) {
+    try { const v = JSON.parse(s); return v; } catch { return null; }
+}
 export function daemonLogCount(db, task, op) {
     const where = [];
     const args = [];
@@ -1445,8 +1509,30 @@ export function setEff(db, id, eff) {
     db.prepare(`UPDATE memories SET eff_confidence = ? WHERE id = ?`).run(eff, id);
 }
 /** 归档 active 记忆（daemon 与 human 共用；留痕由调用方 logDaemon 负责） */
+/** ★ 2026-09-19（实操复盘查漏）：列状态落 archived/merged 时同步任务头文本 —— 归档/合并只改列不碰头
+ *  是「27 条 pending|archived 可被按 id 领取」脏数据的生产侧根源（消费侧已由 server.js assertTaskAlive 堵住）。
+ *  规则：merged 列 → 头一律归一为 merged；archived 列 → 仅开放态头（pending/in_progress/blocked/review）
+ *  改写为 archived（done/failed/cancelled 等终态头信息量更大，保留不动）。非任务记忆正文不动。 */
+function syncTaskHeaderOnTerminal(db, id, colStatus) {
+    const row = db.prepare(`SELECT content FROM memories WHERE id = ?`).get(id);
+    if (!row)
+        return;
+    const content = String(row.content ?? "");
+    const m = content.match(/^\[task\]\[assignee:[^\]]*\]\[status:([a-z_]+)\]/);
+    if (!m)
+        return;
+    const OPEN = new Set(["pending", "in_progress", "blocked", "review"]);
+    const to = colStatus === "merged" ? "merged" : (OPEN.has(m[1]) ? "archived" : m[1]);
+    if (m[1] === to)
+        return;
+    db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(
+        content.replace(/^(\[task\]\[assignee:[^\]]*\]\[status:)[a-z_]+(\])/, `$1${to}$2`),
+        id,
+    );
+}
 export function archiveMemory(db, id) {
     db.prepare(`UPDATE memories SET status='archived' WHERE id = ? AND status='active'`).run(id);
+    syncTaskHeaderOnTerminal(db, id, "archived"); // ★ 2026-09-19：开放态任务头随归档归一（堵脏数据生产侧）
     invalidateVectorCache(db); // P0-4.1：active → archived 会缩小 activeOnly 候选池
 }
 /**
@@ -1457,11 +1543,16 @@ export function archiveMemory(db, id) {
  */
 export function archiveTrial(db, id) {
     db.prepare(`UPDATE memories SET status='archived' WHERE id = ? AND status='trial'`).run(id);
+    syncTaskHeaderOnTerminal(db, id, "archived"); // ★ 2026-09-19：同 archiveMemory（堵脏数据生产侧）
     invalidateVectorCache(db); // P0-4.1
 }
-/** 去重合并：把 loser 置 merged + superseded_by；递增算子放在 daemon 单事务内 */
+/** 去重合并：把 loser 置 merged + superseded_by；递增算子放在 daemon 单事务内
+ *  ★ 2026-09-18（实操问题 #2，P0）：同步重写任务头文本 [status:xxx]→[status:merged]。
+ *  原实现只改列 —— 头仍 pending，「移出可做集」在按 id 分支不成立（readMemory 不看列，#4256/#4257 实证）。
+ *  仅当内容带任务头时改写，非任务记忆正文不动。 */
 export function markMerged(db, loserId, winnerId) {
     db.prepare(`UPDATE memories SET status='merged', superseded_by = ? WHERE id = ?`).run(winnerId, loserId);
+    syncTaskHeaderOnTerminal(db, loserId, "merged"); // ★ 2026-09-18（实操问题 #2，P0）：头文本同步 merged
     invalidateVectorCache(db); // P0-4.1：merged 不再进入检索候选
 }
 export { joinPrefix }; // 保留出口（格式工具，备用）
@@ -1573,6 +1664,8 @@ export function setStatus(db, id, status, supersededBy) {
     else {
         db.prepare(`UPDATE memories SET status=? WHERE id=?`).run(status, id);
     }
+    if (status === "archived" || status === "merged")
+        syncTaskHeaderOnTerminal(db, id, status); // ★ 2026-09-19：终态列流转同步任务头（堵脏数据生产侧）
     // P0-4.1：状态流转直接决定 activeOnly 候选池；本次带出的 rejectMemory / applyArbitration 亦经此路径。
     invalidateVectorCache(db);
 }

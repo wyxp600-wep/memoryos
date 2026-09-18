@@ -114,6 +114,31 @@ server.addTool({
         const _gate = _searched > 0 ? "" : "\n⚠ 本会话近 24h 未调用 memory_search：写前先检索，避免重复沉淀（rule #671 硬门禁）";
         const embedder = await getEmbedder();
         const [emb] = await embedder.embedTexts([args.content]);
+        // ★ P2-6（C-4 / #4200）修订写前置：乐观版本校验 + 归档副作用。
+        //   **必须早于下方去重/冲突预检**——预检命中 merge/conflict 时会提前 return，
+        //   若把本段放在其后，supersedes 会被静默丢弃（旧条不归档、无 superseded 事件、causal_parent 丢失）。
+        //   2026-09-18 缺陷修复（实测复现：supersedes=4309 被冲突预检拦截 → 未归档；证据 记忆 #4312 / 文档附录 H）。
+        let causalParent = null;
+        if (args.supersedes) {
+            const oldRow = readMemory(db, args.supersedes);
+            if (!oldRow)
+                return `supersedes 目标 #${args.supersedes} 不存在，无法替代。`;
+            if (args.version != null && args.version !== oldRow.version)
+                return `版本漂移：#${args.supersedes} 现为 v${oldRow.version}（期望 v${args.version}）——已有其他修订在前，本次写入拒绝（fencing）。请 memory_read 刷新后重试。`;
+            causalParent = oldRow.id;
+        }
+        // 修订副作用：三条写入路径共用（普通 / 冲突 / 合并）。
+        //   newId = 承接本次内容的那条记忆 id（合并路径下即被合并到的既有条目）。
+        const applyRevision = (newId) => {
+            // 自指不归档：合并路径下若「承接者」就是被替代者本身，说明内容未变，无可归档对象。
+            if (causalParent != null && newId !== causalParent) {
+                db.prepare(`UPDATE memories SET superseded_by=? WHERE id=?`).run(newId, causalParent);
+                setStatus(db, causalParent, "archived"); // 旧条归档（可恢复，移出 active 检索集）
+                appendEvent(db, { memory_id: causalParent, op: "superseded", payload: JSON.stringify({ by: AGENT, supersedes_with: newId }), operator: `agent:${AGENT}` });
+            }
+            if (args.source_task_id != null)
+                appendEvent(db, { memory_id: newId, op: "source_task", payload: JSON.stringify({ task: args.source_task_id, by: AGENT }), operator: `agent:${AGENT}` });
+        };
         // M-1.3 去重/冲突预检（★ P0-2.1 快速路径：先用 gram 粗筛候选，再 cosine 精排）
         const existing = getVectorsOnProject(db, args.project);
         if (existing.length) {
@@ -122,9 +147,11 @@ server.addTool({
             if (d.action === "merge" && d.targetId) {
                 bumpConfidence(db, d.targetId, 0.1);
                 const t = readMemory(db, d.targetId);
+                applyRevision(d.targetId); // 合并即由既有条目承接内容 → 修订指向它（勿静默丢弃 supersedes）
                 return `已与 #${t.id} 重复，已合并（confidence+0.1）[${t.type}|${t.agent}|${t.created_at.slice(0, 10)}] ${t.content.replace(/\s+/g, " ").slice(0, 120)}` + _gate;
             }
             if (d.action === "conflict") {
+                const conf = args.confidence ?? 0.5; // 缺省 0.5：疑似冲突低置信入库，供 v0.3 仲裁；显式传入则尊重调用方
                 const row = writeMemory(db, {
                     content: args.content,
                     type: args.type,
@@ -132,7 +159,9 @@ server.addTool({
                     agent_fpath: AGENT_FPATH,
                     project: args.project,
                     embedding: emb,
-                    confidence: 0.5, // 疑似冲突低置信入库，供 v0.3 仲裁
+                    confidence: conf,
+                    valid_until: args.expires_at ?? null, // P2-6（C-4）：早退路径同样透传，勿丢
+                    causal_parent: causalParent,          // P2-6（C-4）：早退路径同样挂因果链
                 });
                 // v0.3 M-2.4：落 conflict_with 指向旧记忆，仲裁队列才有来源
                 db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(d.targetId, row.id);
@@ -141,6 +170,7 @@ server.addTool({
                     op: "possible-conflict",
                     payload: JSON.stringify({ conflict_with: d.targetId, sim: Number(d.sim.toFixed(3)) }),
                 });
+                applyRevision(row.id); // 修订副作用必须与主路径一致
                 logUsage(db, {
                     memory_id: row.id,
                     event: "write",
@@ -150,18 +180,9 @@ server.addTool({
                     session_id: args.session_id,
                     task_hint: args.task_hint,
                 });
-                return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 0.5，待 v0.3 仲裁）[${row.type}|${row.agent}]` + _gate;
+                const _sup = causalParent != null ? `（已替代并归档 #${causalParent}）` : "";
+                return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 ${conf}，待 v0.3 仲裁）${_sup}[${row.type}|${row.agent}]` + _gate;
             }
-        }
-        // ★ P2-6（C-4 / #4200）：修订写前置 —— 乐观版本校验（指定 supersedes 且指定 version 时，旧条版本不符即拒）
-        let causalParent = null;
-        if (args.supersedes) {
-            const oldRow = readMemory(db, args.supersedes);
-            if (!oldRow)
-                return `supersedes 目标 #${args.supersedes} 不存在，无法替代。`;
-            if (args.version != null && args.version !== oldRow.version)
-                return `版本漂移：#${args.supersedes} 现为 v${oldRow.version}（期望 v${args.version}）——已有其他修订在前，本次写入拒绝（fencing）。请 memory_read 刷新后重试。`;
-            causalParent = oldRow.id;
         }
         const row = writeMemory(db, {
             content: args.content,
@@ -174,11 +195,7 @@ server.addTool({
             valid_until: args.expires_at ?? null, // P2-6（C-4）：expires_at → valid_until
             causal_parent: causalParent,        // P2-6：修订因果链
         });
-        if (causalParent != null) {
-            db.prepare(`UPDATE memories SET superseded_by=? WHERE id=?`).run(row.id, causalParent);
-            setStatus(db, causalParent, "archived"); // 旧条归档（可恢复，移出 active 检索集）
-            appendEvent(db, { memory_id: causalParent, op: "superseded", payload: JSON.stringify({ by: AGENT, supersedes_with: row.id }), operator: `agent:${AGENT}` });
-        }
+        applyRevision(row.id); // 修订归档 + source_task 追溯事件（三条路径统一出口）
         logUsage(db, {
             memory_id: row.id,
             event: "write",
@@ -188,8 +205,6 @@ server.addTool({
             session_id: args.session_id,
             task_hint: args.task_hint,
         });
-        if (args.source_task_id != null)
-            appendEvent(db, { memory_id: row.id, op: "source_task", payload: JSON.stringify({ task: args.source_task_id, by: AGENT }), operator: `agent:${AGENT}` }); // P2-6（C-4）
         const oneLine = row.content.replace(/\s+/g, " ").slice(0, 300);
         const supNote = causalParent != null ? `（已替代并归档 #${causalParent}，因果链 → v${row.version}）` : "";
         return `已写入记忆 #${row.id}[${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${supNote}${oneLine}` + _gate;
@@ -835,6 +850,15 @@ function assertTransition(from, to) {
     }
     return null;
 }
+/** ★ 2026-09-18（实操问题 #1，P0）：按 id 分支的列守卫。readMemory 是裸 `WHERE id=?`（无 status 过滤），
+ *  实测 29 条任务「头 pending 但列已 archived/merged」——列表分支有列过滤挡住，按 id 分支只看头文本会放行。
+ *  返回错误文案（不可操作）或 null（放行）。 */
+function assertTaskAlive(row) {
+    if (!["active", "trial"].includes(String(row.status ?? ""))) {
+        return `#${row.id} 列状态为 ${row.status}（${row.status === "merged" ? "已被其他任务取代" : "已归档"}），不可按 id 操作；请用 task_next 取当前可做集。`;
+    }
+    return null;
+}
 /** content 头正则：兼容七态 + 存量三态（open/claimed/done） */
 const TASK_HEAD_RE = /^\[task\]\[assignee:[^\]]*\]\[status:([a-z_]+)\]/;
 function taskHead(status, assignee) {
@@ -861,9 +885,7 @@ function taskBodyWithDep(status, assignee, deps, body) {
     return `${taskHead(status, assignee)}${depStr} ${body}`;
 }
 /** 依赖是否全部 done */
-function depsSatisfied(deps, doneIds) {
-    return deps.every((d) => doneIds.has(d));
-}
+/**（depsSatisfied 已于 2026-09-19 移除：done 判据并入 task_next 内的 depDoneOf —— 按头文本判定 + merged 传递解析，见该处注释） */
 /**
  * P3 确定性门控（融合架构「不信任 Agent 报告，由确定性代码验证目标是否真正达成」）：
  * 任务头可声明 [gate:预设名]。task_done 前先跑该验收——通过才标 done；
@@ -1081,6 +1103,9 @@ server.addTool({
             const row = readMemory(db, args.memory_id);
             if (!row || row.type !== "task")
                 return `#${args.memory_id} 不存在或非任务。`;
+            const aliveErr = assertTaskAlive(row); // ★ 列守卫：archived/merged 不可领（2026-09-18 P0 修复）
+            if (aliveErr)
+                return aliveErr;
             const st = readTaskState(row.content);
             if (!st)
                 return `#${args.memory_id} 任务头格式异常，无法认领。`;
@@ -1101,7 +1126,7 @@ server.addTool({
             db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：领取推进版本（fencing 基线）
             const lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
             appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1 }), operator: `agent:${AGENT}` });
-            syncTaskToCard(row.id, "running"); // ★ 2026-09-15：认领 → 关联卡片 running，看板即时同步
+            syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
             touchCardLease(row.id, lock); // ★ P2-6：卡片租约锁定（10min 窗口，C-3）
             return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}`;
         }
@@ -1129,7 +1154,7 @@ server.addTool({
 /** ★ 2026-09-15 根治「智能体领取/上传与看板不一致」：任务状态变更 → 关联卡片同步。
  *  反向于 dashboard.syncCardToTask()：MCP 的 task_claim/task_done 改 memories 状态头后，
  *  立即把对应卡片 status 同步（in_progress→running / done→done），消除「MCP 领取但看板仍 ready」的不一致。 */
-function syncTaskToCard(memoryId, cardStatus) {
+function syncTaskToCard(memoryId, cardStatus, opts = {}) {
     try {
         const rel = db.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch' LIMIT 1`).get(memoryId);
         if (!rel)
@@ -1138,8 +1163,15 @@ function syncTaskToCard(memoryId, cardStatus) {
         const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
         if (!card)
             return false;
-        db.prepare(`UPDATE cards SET status=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(cardStatus, cid);
-        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, "dispatcher", "mcp_sync", card.status, cardStatus, `任务 #${memoryId} MCP 流转同步`);
+        // ★ 2026-09-18：opts.assignee 三态 —— undefined=保持原值 / null=清空 / 字符串=设为该值。
+        //   task_claim 传认领者 → 卡片即时显示「已领取·谁」；task_release 侧清空走专用 UPDATE（见下）。
+        const setAssignee = opts.assignee === undefined ? "" : ", assignee=?";
+        const upd = db.prepare(`UPDATE cards SET status=?${setAssignee}, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`);
+        if (opts.assignee === undefined)
+            upd.run(cardStatus, cid);
+        else
+            upd.run(cardStatus, opts.assignee, cid);
+        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, opts.actor ?? "dispatcher", opts.action ?? "mcp_sync", card.status, cardStatus, opts.detail ?? `任务 #${memoryId} MCP 流转同步`);
         return true;
     }
     catch (e) {
@@ -1193,6 +1225,9 @@ server.addTool({
         const row = readMemory(db, args.memory_id);
         if (!row || row.type !== "task")
             return `#${args.memory_id} 不存在或非任务。`;
+        const aliveErr = assertTaskAlive(row); // ★ 列守卫（2026-09-19：按 id 分支统一 fail-closed）
+        if (aliveErr)
+            return aliveErr;
         const st = readTaskState(row.content);
         if (!st || st.status !== "in_progress")
             return `#${args.memory_id} 当前非进行中，无需续租。`;
@@ -1224,6 +1259,9 @@ server.addTool({
         const row = readMemory(db, args.memory_id);
         if (!row || row.type !== "task")
             return `#${args.memory_id} 不存在或非任务。`;
+        const aliveErr = assertTaskAlive(row); // ★ 列守卫（2026-09-19：按 id 分支统一 fail-closed）
+        if (aliveErr)
+            return aliveErr;
         const st = readTaskState(row.content);
         if (!st || st.status !== "in_progress")
             return `#${args.memory_id} 当前 status=${st?.status}，仅进行中任务可释放。`;
@@ -1239,7 +1277,7 @@ server.addTool({
                 //   `catch {}` **静默吞掉** ⇒ 本条 UPDATE 与紧随其后的 card_events INSERT **都没执行**——
                 //   现象＝"记忆头已释放，但卡片仍 running + 持锁、且无任何事件留痕"，只能等 C-5 对账兜底。
                 //   教训：① SQL 占位符数与 .run 实参数必须逐一核对；② 静默 catch 会把这类错误藏起来（改为仅记日志）。
-                const rel = db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
+                const rel = db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
                 if (Number(rel.changes) === 0) console.error(`[task_release] ⚠ 卡片 #${c2.id} 未更新（changes=0），三方可能不一致`);
                 db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
             }
@@ -1260,6 +1298,9 @@ server.addTool({
         const row = readMemory(db, args.memory_id);
         if (!row || row.type !== "task")
             return `#${args.memory_id} 不存在或非任务。`;
+        const aliveErr = assertTaskAlive(row); // ★ 列守卫（2026-09-19：按 id 分支统一 fail-closed）
+        if (aliveErr)
+            return aliveErr;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法标记受阻。`;
@@ -1270,7 +1311,7 @@ server.addTool({
         updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body) });
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
         appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
-        syncTaskToCard(row.id, "blocked");
+        syncTaskToCard(row.id, "blocked", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 标记受阻` });
         return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}`;
     },
 });server.addTool({
@@ -1287,11 +1328,15 @@ server.addTool({
         const row = readMemory(db, args.memory_id);
         if (!row || row.type !== "task")
             return `#${args.memory_id} 不存在或非任务。`;
+        if (row.status === "merged")
+            return `#${args.memory_id} 已被 #${row.superseded_by ?? "?"} 取代（merged），不可重开；如需该工作请操作取代它的主任务。`;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法重开。`;
         if (!["done", "failed", "cancelled"].includes(st.status))
             return `#${args.memory_id} 当前 status=${st.status}，仅终态（done/failed/cancelled）可重开。`;
+        if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
+            db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
         const who = args.assignee || st.assignee || "?";
         const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
         updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body) });
@@ -1327,6 +1372,9 @@ server.addTool({
         const row = readMemory(db, args.memory_id);
         if (!row || row.type !== "task")
             return `#${args.memory_id} 不存在或非任务。`;
+        const aliveErr = assertTaskAlive(row); // ★ 列守卫：archived/merged 不可完成（2026-09-18 P0 修复）
+        if (aliveErr)
+            return aliveErr;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法完成。`;
@@ -1365,10 +1413,50 @@ server.addTool({
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：完成推进版本
         bumpConfidence(db, row.id, 0.05); // 完成任务强化
         appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT }), operator: `agent:${AGENT}` });
-        syncTaskToCard(row.id, "done"); // ★ 2026-09-15：完成 → 关联卡片 done，看板即时同步
+        syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
         if (cardNowDone) // ★ P2-6：完成即释放租约锁
             db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
         return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}`;
+    },
+});
+server.addTool({
+    name: "task_verify",
+    description: "多 Agent 协同·第三方验收关闭（2026-09-19，实操复盘 P1#4）：任务实际已完成（如代码已落地/已由他人完成）但任务头未闭环时，由验收方直接把状态头置 done —— 不改 assignee（归属保留）、不发租约、不写 claim 事件，只写 task_verify 事件（verified_by 留痕）。用于消除「为收口而伪造 task_claim」对审计链的污染。不走 [gate] 门控（验收依据由验收方在 reason 中留痕）。",
+    parameters: z.object({
+        memory_id: z.number().int().min(1).describe("要验收关闭的任务记忆 id"),
+        reason: z.string().describe("验收依据（必填，留痕）：对应提交/冒烟结果/证据位置"),
+        as: z.string().optional().describe("验收方身份（缺省=当前 agent）"),
+        expected_version: z.number().int().optional().describe("P2-6 fencing：乐观版本；不一致 → 拒绝陈旧验收写"),
+        session_id: z.string().optional(),
+        task_hint: z.string().optional(),
+    }),
+    async execute(args) {
+        const row = readMemory(db, args.memory_id);
+        if (!row || row.type !== "task")
+            return `#${args.memory_id} 不存在或非任务。`;
+        const aliveErr = assertTaskAlive(row); // ★ 列守卫：archived/merged 不可验收（2026-09-19）
+        if (aliveErr)
+            return aliveErr;
+        const st = readTaskState(row.content);
+        if (!st)
+            return `#${args.memory_id} 任务头格式异常，无法验收。`;
+        if (st.status === "done")
+            return `#${args.memory_id} 已是 done，无需验收。`;
+        if (!["pending", "in_progress"].includes(st.status))
+            return `#${args.memory_id} 当前 status=${st.status}，仅 pending/in_progress 可验收关闭（review 走 task_done，终态走 task_reopen）。`;
+        if (args.expected_version != null && args.expected_version !== row.version)
+            return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：验收写拒绝；请刷新后重试。`;
+        const verifier = args.as && args.as !== "any" ? args.as : AGENT;
+        // 不改 assignee（归属保留原文）、不发租约、不动 claim_lock 语义 —— 只闭环状态头 + 留痕
+        const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, taskBody(row.content))}\n→ 验收(${verifier})：${args.reason.trim()}`;
+        updateMemory(db, row.id, { content: newContent }); // 同步 FTS
+        db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
+        appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        syncTaskToCard(row.id, "done", { actor: `agent:${verifier}`, action: "verify", detail: `任务 #${row.id} 第三方验收关闭（${verifier}）` });
+        const card = cardOfTask(row.id);
+        if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致
+            db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(card.id);
+        return `任务 #${row.id} 已验收关闭（status=done，verified_by=${verifier}，未改归属/未发租约）：${args.reason.trim().slice(0, 100)}`;
     },
 });
 server.addTool({
@@ -1424,15 +1512,37 @@ server.addTool({
        ORDER BY julianday(created_at), id ASC LIMIT 500`).all(args.project);
         // 全体任务状态/依赖解码 + done 集合
         const states = new Map();
-        const doneIds = new Set();
         for (const r of rows) {
             const st = readTaskState(r.content);
             if (!st)
                 continue;
             states.set(r.id, { st });
-            if (st.status === "done")
-                doneIds.add(r.id);
         }
+        // ★ 2026-09-19（实操复盘查漏）：依赖判定不能只看 active/trial 行 —— 实测 31 条「头 done 但列已归档」
+        //   的任务不在上面查询结果里，依赖它们的 pending 任务被永久误判阻塞（生产库实证 6 条假阻塞）。
+        //   done 判据改为「头文本 done，不看列」；列 merged 的行不播种（由 winner 状态裁决），
+        //   依赖指向 merged 的沿 superseded_by 传递解析到 winner（带环保护）。
+        const allTasks = db.prepare(`SELECT id, content, status, superseded_by FROM memories WHERE type='task' AND sensitivity != 'secret'`).all();
+        const mergeTo = new Map();
+        for (const t of allTasks) {
+            if (t.status === "merged" && t.superseded_by != null)
+                mergeTo.set(Number(t.id), Number(t.superseded_by));
+        }
+        const resolveTaskId = (id, seen = new Set()) => {
+            let cur = Number(id);
+            while (mergeTo.has(cur) && !seen.has(cur)) {
+                seen.add(cur);
+                cur = mergeTo.get(cur);
+            }
+            return cur;
+        };
+        const doneIds = new Set();
+        for (const t of allTasks) {
+            const st = readTaskState(t.content);
+            if (st?.status === "done" && t.status !== "merged")
+                doneIds.add(resolveTaskId(t.id));
+        }
+        const depDoneOf = (deps) => deps.every((d) => doneIds.has(resolveTaskId(d)));
         const who = !args.as || args.as === "any" ? AGENT : args.as;
         const avail = [];
         const blocked = [];
@@ -1464,8 +1574,8 @@ server.addTool({
             const s = states.get(r.id)?.st;
             if (!s)
                 continue;
-            const depDone = depsSatisfied(s.deps, doneIds);
-            const blockedBy = s.deps.filter((d) => !doneIds.has(d));
+            const depDone = depDoneOf(s.deps);
+            const blockedBy = s.deps.filter((d) => !doneIds.has(resolveTaskId(d)));
             if (s.status === "pending") {
                 if (!args.as || args.as === "any" || s.assignee === who || s.assignee === "?") {
                     if (depDone)
