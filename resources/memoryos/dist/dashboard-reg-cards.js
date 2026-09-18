@@ -115,8 +115,8 @@ export function registerCards(app, ctx) {
             const st = mem.content.match(/\[status:([^\]]+)\]/);
             if (!st)
                 return;
-            // 卡片状态 → 任务状态头映射
-            const map = { ready: "pending", running: "in_progress", done: "done", failed: "failed", blocked: "blocked", review: "review", cancelled: "cancelled", archived: "cancelled" };
+            // 卡片状态 → 任务状态头映射（★ E-0：review→in_progress / failed→blocked / archived→archived，无 review/failed 任务态）
+            const map = { ready: "pending", running: "in_progress", done: "done", failed: "blocked", blocked: "blocked", review: "in_progress", cancelled: "cancelled", archived: "archived" };
             const toSt = map[card.status];
             if (!toSt || st[1] === toSt)
                 return;
@@ -980,8 +980,8 @@ export function registerCards(app, ctx) {
         const m = db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(memoryId);
         if (!m)
             return reply.code(404).send({ ok: false, error: "绑定任务记忆不存在" });
-        // 卡片状态 → task 七态（迁移矩阵；与看板状态机一致）
-        const TASK_MAP = { triage: "pending", todo: "pending", ready: "pending", running: "in_progress", review: "review", done: "done", failed: "failed", blocked: "blocked", cancelled: "cancelled" };
+        // 卡片状态 → task 状态（迁移矩阵；★ E-0：review→in_progress / failed→blocked，与 syncCardToTask 同口径）
+        const TASK_MAP = { triage: "pending", todo: "pending", ready: "pending", running: "in_progress", review: "in_progress", done: "done", failed: "blocked", blocked: "blocked", cancelled: "cancelled" };
         const toStatus = TASK_MAP[c.status] ?? c.status;
         const toAssignee = c.assignee ?? "";
         // 解析现有 content 头

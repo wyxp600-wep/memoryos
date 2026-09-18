@@ -2427,12 +2427,12 @@
     pending: { label: '待处理', color: '#94a3b8' },
     in_progress: { label: '进行中', color: '#06b6d4' },
     blocked: { label: '阻塞', color: '#f59e0b' },
-    review: { label: '待审核', color: '#a855f7' },
     done: { label: '已完成', color: '#10b981' },
-    failed: { label: '失败', color: '#ef4444' },
     cancelled: { label: '已取消', color: '#64748b' },
+    merged: { label: '已合并', color: '#a855f7' },
+    archived: { label: '已归档', color: '#64748b' },
   };
-  const TASK_ORDER = ['pending', 'in_progress', 'blocked', 'review', 'done', 'failed', 'cancelled'];
+  const TASK_ORDER = ['pending', 'in_progress', 'blocked', 'done', 'cancelled', 'merged', 'archived']; // ★ E-0 六持久态 + archived（review/failed 已取消）
   let _taskAll = []; // 任务看板全量（供详情弹窗查询）
   let _taskViewMode = 'map'; // ★ 2026-09-13：任务地图为唯一任务模块（看板/任务视图功能已并入地图）
   let _taskMapFilter = null; // 状态过滤（看板列式速览并入地图）

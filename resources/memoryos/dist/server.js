@@ -829,19 +829,23 @@ server.addTool({
         }
     },
 });
-const TASK_STATUSES = ["pending", "in_progress", "blocked", "review", "done", "failed", "cancelled"];
-/** 合法迁移白名单：源状态 → 允许的目标状态（done/cancelled 为终态，无 out-edge） */
+/** ★ E-0 裁决落码（2026-09-19，附录 G）：持久状态集合 = {pending, in_progress, blocked, done, cancelled, merged}。
+ *  相对旧 7 态取消 review/failed（存量头经 TASK_NORMALIZE 归一为 in_progress），新增 merged（task_supersede 产生，终态）；
+ *  archived 为记忆轴终态（列归档时由 db.js syncTaskHeaderOnTerminal 同步进头，占一席但无 out-edge）。
+ *  dependency_blocked / reopened 为展示层派生态，不落库、不可迁移进入（task_next 阻塞段 / task_reopen 留痕）。 */
+const TASK_STATUSES = ["pending", "in_progress", "blocked", "done", "cancelled", "merged", "archived"];
+/** 合法迁移白名单：源状态 → 允许的目标状态；终态（done/cancelled/merged/archived）不可直接转回，重开走 task_reopen（reopened 语义留痕） */
 const TASK_TRANSITIONS = {
     pending: ["in_progress", "cancelled"],
-    in_progress: ["blocked", "review", "done", "failed", "cancelled"],
-    blocked: ["in_progress", "cancelled", "failed"],
-    review: ["done", "in_progress", "failed"],
+    in_progress: ["blocked", "done", "cancelled"],
+    blocked: ["in_progress", "cancelled"],
     done: [],
-    failed: ["in_progress", "cancelled"],
     cancelled: [],
+    merged: [],
+    archived: [],
 };
-/** 存量状态 → v1.1 标准态 归一 */
-const TASK_NORMALIZE = { open: "pending", claimed: "in_progress", done: "done" };
+/** 存量状态 → E-0 标准态 归一（open/claimed 为 v1.1 前历史值；review/failed 为 E-0 取消态，归一回 in_progress） */
+const TASK_NORMALIZE = { open: "pending", claimed: "in_progress", done: "done", review: "in_progress", failed: "in_progress" };
 /** 校验迁移合法性，非法返回错误提示；空/可写由调用方决定 */
 function assertTransition(from, to) {
     const allowed = TASK_TRANSITIONS[from] || [];
@@ -889,7 +893,7 @@ function taskBodyWithDep(status, assignee, deps, body) {
 /**
  * P3 确定性门控（融合架构「不信任 Agent 报告，由确定性代码验证目标是否真正达成」）：
  * 任务头可声明 [gate:预设名]。task_done 前先跑该验收——通过才标 done；
- * 失败或未命中预设则 fail-closed 回退 review。
+ * 失败或未命中预设则 fail-closed 回退 pending（E-0 前曾标注回退 review，该态已取消）。
  * 安全口径（Mimosa 命令注入防御）：预设名 → {label, argv}，argv 全部为字面量常量，
  * 固定 node 解释器 + 参数数组、shell:false，请求值仅做枚举匹配，绝不参与命令构造。
  */
@@ -937,7 +941,7 @@ function runTaskGate(db, gate, memoryId) {
 }
 server.addTool({
     name: "task_gate",
-    description: "多 Agent 协同·确定性验收门：查看任务的 [gate:预设] 声明与最近一次验收结果。预设白名单（lint-sql/lint-catch/smoke-mcp/smoke-task/smoke-p26/snapshot）——task_done 会先跑该验收，通过才 done，失败 fail-closed 回退 review。",
+    description: "多 Agent 协同·确定性验收门：查看任务的 [gate:预设] 声明与最近一次验收结果。预设白名单（lint-sql/lint-catch/smoke-mcp/smoke-task/smoke-p26/snapshot）——task_done 会先跑该验收，通过才 done，失败 fail-closed 回退 pending（E-0 后无 review 态）。",
     parameters: z.object({
         memory_id: z.number().int().min(1).describe("要查看验收门的任务记忆 id"),
         session_id: z.string().optional(),
@@ -1333,8 +1337,8 @@ server.addTool({
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法重开。`;
-        if (!["done", "failed", "cancelled"].includes(st.status))
-            return `#${args.memory_id} 当前 status=${st.status}，仅终态（done/failed/cancelled）可重开。`;
+        if (!["done", "cancelled"].includes(st.status)) // E-0：failed 已取消（存量归一 in_progress），merged 已在上方单独拒绝
+            return `#${args.memory_id} 当前 status=${st.status}，仅终态（done/cancelled）可重开。`;
         if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
             db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
         const who = args.assignee || st.assignee || "?";
