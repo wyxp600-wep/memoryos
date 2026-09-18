@@ -202,15 +202,30 @@ function writeDiskConfig(cfg) {
  * 惰性拉起：首次用到 agent 端点时才 spawn，避免拖慢 dashboard 启动。
  * smoke-dashboard 等会多次调用 buildApp —— 放模块级可避免重复 spawn 与 exit 监听堆积。 */
 let _agentMcp = null;
+/* ★ 驾驶舱「执行工具开关」：MCP 子进程的 env 覆盖（默认 {} = 继承 shell 注入的 MEMORYOS_EXEC_ON）。
+ *  setAgentMcpEnv({MEMORYOS_EXEC_ON:"0"}) 后须 resetAgentMcp() 再 getAgentMcp() 才按新 env 重 spawn。 */
+let _agentMcpEnv = {};
 async function getAgentMcp() {
     if (!_agentMcp) {
         _agentMcp = await createMcpClient({
             agentName: "dashboard-agent",
             agentFpath: fileURLToPath(new URL("./dashboard.js", import.meta.url)),
+            env: _agentMcpEnv,   // 覆盖项（MEMORYOS_EXEC_ON 等）；createMcpClient 内部与 process.env 合并
         });
     }
     return _agentMcp;
 }
+/* ★ 驾驶舱「日志级别」：内核诊断输出（统一错误处理器的 5xx stderr）按级别门控。
+ *  级别 debug<info<warn<error；默认 info（保留 5xx 诊断行）。audit 表（daemon_log/exec_audit）
+ *  不受此级别影响（审计纪律 B2：治理留痕永不降级静默）。 */
+const _LOG_ORDER = ["debug", "info", "warn", "error"];
+let _logLevel = _LOG_ORDER.includes(process.env.MEMORY_LOG_LEVEL) ? process.env.MEMORY_LOG_LEVEL : "info";
+export function getLogLevel() { return _logLevel; }
+export function setLogLevel(lv) {
+    if (_LOG_ORDER.includes(lv)) { _logLevel = lv; return true; }
+    return false;
+}
+export function logLevelShouldDiagnose() { return _LOG_ORDER.indexOf(_logLevel) <= _LOG_ORDER.indexOf("info"); }
 // dashboard 退出时收掉 MCP 子进程（stdio 子进程随父进程 stdin EOF 退出，这里是显式兜底）
 process.once("exit", () => { try { _agentMcp?.close(); } catch { /* 已断 */ } _agentMcp = null; });
 export function buildApp(db, opts = {}) {
@@ -228,15 +243,18 @@ export function buildApp(db, opts = {}) {
         const status = Number(err?.statusCode ?? err?.status ?? 500) || 500;
         const code = status >= 500 ? "INTERNAL" : (err?.code ?? "BAD_REQUEST");
         if (status >= 500) {
-            const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-            console.error(`[err] ${req?.method ?? "?"} ${req?.url ?? "?"} → ${status}\n${msg}`);
+            // ★ 驾驶舱「日志级别」门控：level=warn/error 时静默 5xx 诊断行（默认 info 保留）
+            if (logLevelShouldDiagnose()) {
+                const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+                console.error(`[err] ${req?.method ?? "?"} ${req?.url ?? "?"} → ${status}\n${msg}`);
+            }
         }
         // 5xx 只回通用文案（不泄漏内部信息）；4xx 回自身 message（Fastify 校验错误对调用方有用）
         const message = status >= 500 ? "内部错误（详见服务端日志）" : String(err?.message ?? "请求无效");
         return reply.code(status).type("application/json; charset=utf-8").send({ ok: false, error: message, code });
     });
     // T8（P2-3）：路由域拆分 —— 8 个 dashboard-reg-*.js；handler 逐字搬移，注册顺序不变；共享顶层名经 ctx 注入
-    const ctx = { db, app, restricted, RESTRICTED, RESTRICTED_MSG, UI_DIR, _staticCache, clampLimit, PLANS_DIR, LOOPBACK_HOSTS, TOKEN_COOKIE, CSP, dataDirOf, configFilePath, readDiskConfig, writeDiskConfig, getAgentMcp, ALLOWED_TYPES, DEFAULT_PORT, resetAgentMcp: () => { _agentMcp = null; } };
+    const ctx = { db, app, restricted, RESTRICTED, RESTRICTED_MSG, UI_DIR, _staticCache, clampLimit, PLANS_DIR, LOOPBACK_HOSTS, TOKEN_COOKIE, CSP, dataDirOf, configFilePath, readDiskConfig, writeDiskConfig, getAgentMcp, ALLOWED_TYPES, DEFAULT_PORT, resetAgentMcp: () => { _agentMcp = null; }, setAgentMcpEnv: (env) => { _agentMcpEnv = env || {}; }, getLogLevel: () => _logLevel, setLogLevel, };
     registerCore(app, ctx);
     registerMemory(app, ctx);
     registerPlans(app, ctx);

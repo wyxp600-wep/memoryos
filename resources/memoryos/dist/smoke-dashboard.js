@@ -33,7 +33,9 @@ try {
     const w = async (content, type, agent, project = "p1") => writeMemory(db, { content, type, agent, agent_fpath: null, project, embedding: (await emb.embedTexts([content]))[0] });
     // F1 首页
     const home = await inj({ method: "GET", url: "/" });
-    check("F1.首页内嵌前端下发", home.statusCode === 200 && home.body.includes("MemoryOS Dashboard"));
+    // ★ 2026-09-18：断言从旧标题串 "MemoryOS Dashboard" 放宽为品牌词 "MemoryOS" ——
+    //   外部 V1 重构改了 index.html 的 <title>（「MemoryOS — 跨工具…」），断言不该耦合呈现层文案（同 smoke-agent 工具面断言纪律）。
+    check("F1.首页内嵌前端下发", home.statusCode === 200 && home.body.includes("MemoryOS"));
     // F2 summary（空表→注入后）
     const s0 = await inj({ method: "GET", url: "/api/summary" });
     const sum0 = s0.json();

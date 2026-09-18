@@ -6,6 +6,7 @@
  * 用法：node dist/smoke-mcp.js
  */
 import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite"; // P2-6o：直接读终态判定早退路径的归档不变量
 import path from "node:path";
 import fs from "node:fs";
 const DB_PATH = path.join(process.cwd(), "data", "memory-mcp-smoke.db");
@@ -268,6 +269,36 @@ try {
     }));
     const mw3t = mw3.result?.content?.[0]?.text ?? "";
     check("P2-6n.陈旧版本修订被拒（乐观版本 fencing）", mw3t.includes("版本漂移"), JSON.stringify(mw3t.slice(0, 70)));
+    // ★ P2-6o（2026-09-18 缺陷回归）：去重/冲突**早退路径**同样必须执行 supersedes 归档。
+    //   缺陷：修订写块曾位于 dedupeDecisionFast 预检之后，而预检命中 merge/conflict 时提前 return
+    //   ⇒ supersedes 被静默丢弃（旧条不归档、无 superseded 事件、causal_parent 丢失）。
+    //   本断言走**确定性的 merge 分支**（同 project 内写入与 #mid4 完全一致的正文 → sim=1.0 ≥ 0.92），
+    //   并以 DB 终态判定，故与文案无关。
+    const mw4 = await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "P2-6o 哨兵基线：ALPHA-7 的唯一判据是 X", type: "decision" },
+    });
+    const mid4 = ((mw4.result?.content?.[0]?.text ?? "").match(/#(\d+)/) || [])[1];
+    const mw4b = await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "P2-6o 无关对照：BETA-9 的唯一判据是 Y（与哨兵无语义重叠）", type: "decision" },
+    });
+    const mid4b = ((mw4b.result?.content?.[0]?.text ?? "").match(/#(\d+)/) || [])[1];
+    // 正文与 #mid4 逐字一致 ⇒ 必落 merge 早退分支；supersedes 指向无关的 #mid4b ⇒ 承接者 ≠ 被替代者
+    const mw5 = await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "P2-6o 哨兵基线：ALPHA-7 的唯一判据是 X", type: "decision", supersedes: Number(mid4b), version: 1 },
+    });
+    const mw5t = mw5.result?.content?.[0]?.text ?? "";
+    const sdb = new DatabaseSync(DB_PATH, { readOnly: true });
+    const oldRow = sdb.prepare(`SELECT status,superseded_by FROM memories WHERE id=?`).get(Number(mid4b));
+    const supEv = sdb.prepare(`SELECT COUNT(*) c FROM memory_events WHERE memory_id=? AND op='superseded'`).get(Number(mid4b)).c;
+    sdb.close();
+    check(
+        "P2-6o.合并早退路径仍执行 supersedes 归档（已合并 + 旧条 archived + superseded_by + 事件）",
+        mw5t.includes("已合并") && !!oldRow && oldRow.status === "archived" && Number(oldRow.superseded_by) === Number(mid4) && supEv > 0,
+        `merged=${mw5t.includes("已合并")} status=${oldRow?.status} superseded_by=${oldRow?.superseded_by}(期望 ${mid4}) events=${supEv}`,
+    );
     // memory_health：使用侧健康（P2 效果监控）
     const h = (await send("tools/call", {
         name: "memory_health",

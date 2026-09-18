@@ -99,9 +99,11 @@ export function createRunRegistry() {
 
     /**
      * @param {object} o { sessionId?, title?, taskHint? }
+     * @param {object} [opts] { deferred?: boolean } 并发上限排队（★ 驾驶舱「并行数」）：
+     *   deferred=true 时 run 以 status="queued" 建入（不跑），路由层空位腾出后 markRunning + 启动。
      * @returns {run, onStep}  onStep(step) 喂 agent-core 的 onStep 事件；run.finished() 标记终态
      */
-    function createRun(o = {}) {
+    function createRun(o = {}, opts = {}) {
         const id = newRunId();
         const abortCtrl = new AbortController();      // ★ A1：中止运行 —— signal 传给 runAgent（agent-core 轮次间 + LLM fetch 可中断）
         const run = {
@@ -109,7 +111,8 @@ export function createRunRegistry() {
             sessionId: o.sessionId || id,
             title: String(o.title || "").slice(0, 120),
             taskHint: o.taskHint || null,          // 关联任务号（呈现层 join 用，不自动 claim）
-            status: "running",                      // running / done / failed / aborted
+            status: opts.deferred ? "queued" : "running",  // queued / running / done / failed / aborted
+            queuedAt: opts.deferred ? Date.now() : null,
             startedAt: Date.now(),
             finishedAt: null,
             steps: [],                               // [{stepId, tool, argsPreview, risk, state, ok, elapsedMs, outChars, artifactPath?, diff?, preview, denied?}]
@@ -122,6 +125,7 @@ export function createRunRegistry() {
             error: null,
             usage: null,                             // ★ A5：LLM token 用量 {prompt, completion, total}（有则真值）
             estimatedTokens: 0,                      // ★ A5：估算（usage 缺失时的 chars/4 兜底）
+            cache: null,                             // ★ 驾驶舱「缓存」：{enabled, hits}（本次 run 的 LLM 缓存命中）
             abortCtrl,                                // 路由侧 abortRun(id) → abortCtrl.abort()
         };
         runs.set(id, run);
@@ -131,7 +135,8 @@ export function createRunRegistry() {
             runs.delete(oldest);
         }
 
-        let curStep = null;
+        let curStep = null;          // tool_call 时的构造暂存（随后入 pendingSteps 队列）
+        const pendingSteps = [];     // ★ 并行池：pending 步骤 FIFO 队列（tool_result 按模型序出队匹配）
         function onStep(s) {
             switch (s.type) {
                 case "tool_face":
@@ -146,11 +151,16 @@ export function createRunRegistry() {
                         t0: Date.now(),
                     };
                     run.steps.push(curStep);
+                    pendingSteps.push(curStep);   // ★ 并行池：一轮可有多条 pending，结果按模型序（=创建序）FIFO 出队
                     ev(run, "step", { stepId: curStep.stepId, tool: s.tool, argsPreview: curStep.argsPreview, t: Date.now() });
                     break;
                 }
-                case "tool_result":
-                    if (curStep) {
+                case "tool_result": {
+                    // ★ 并行池兼容：tool_result 按模型序批量到达（先全部 tool_call 再全部 tool_result），
+                    //   用 FIFO 队列出队匹配（agent-core 的模型序回填保证与创建序一致）
+                    const doneStep = pendingSteps.shift() || null;
+                    if (doneStep) {
+                        const curStep = doneStep;
                         const ms = Date.now() - curStep.t0;
                         curStep.state = s.ok ? "ok" : "error";
                         curStep.ok = s.ok;
@@ -180,9 +190,9 @@ export function createRunRegistry() {
                             hasDiff: !!curStep.hasDiff,
                             artifactPath: curStep.artifactPath || null,
                         });
-                        curStep = null;
                     }
                     break;
+                }
                 case "tool_repeat":
                     ev(run, "tool_repeat", { tool: s.tool, count: s.count });
                     break;
@@ -201,10 +211,13 @@ export function createRunRegistry() {
                         run.usage.total = run.usage.prompt + run.usage.completion;
                     }
                     if (s.estimatedTokens) run.estimatedTokens = s.estimatedTokens;
+                    // ★ 驾驶舱「缓存」：LLM 缓存命中计数随 answer 事件回报（前端「Token 用量」旁展示）
+                    if (s.cache) run.cache = s.cache;
                     ev(run, "answer", {
                         preview: String(s.answer || "").slice(0, PREVIEW_MAX),
                         usage: run.usage,
                         estimatedTokens: run.estimatedTokens,
+                        cache: run.cache || null,
                     });
                     break;
                 case "max_steps":
@@ -216,16 +229,24 @@ export function createRunRegistry() {
         }
 
         function finish(status, extra = {}) {
-            if (run.status !== "running") return;
+            if (run.status !== "running" && run.status !== "queued") return;
             run.status = status;
             run.finishedAt = Date.now();
             Object.assign(run, extra);
             ev(run, "done", {
                 status, answer: run.answer, toolCalls: run.toolCalls,
-                elapsedMs: run.finishedAt - run.startedAt,
-                usage: run.usage, estimatedTokens: run.estimatedTokens,   // ★ A5
+                elapsedMs: run.finishedAt - (run.startedAt || run.queuedAt || Date.now()),
+                usage: run.usage, estimatedTokens: run.estimatedTokens, cache: run.cache || null,   // ★ A5 + 缓存
                 ...extra,
             });
+        }
+        /** ★ 驾驶舱「并行数」排队：queued → running（路由层空位腾出后调用；不合法状态为 no-op） */
+        function markRunning() {
+            if (run.status !== "queued") return false;
+            run.status = "running";
+            run.startedAt = Date.now();
+            ev(run, "started", { note: "从排队启动" });
+            return true;
         }
         /** ★ A1：中止运行 —— 触发 runAgent 的 AbortSignal（轮次间 + LLM fetch 可中断；
          *  进行中的 mcp.callTool 会跑完，不硬杀进程）。调用侧（路由）：handle.abort(reason)。 */
@@ -263,29 +284,42 @@ export function createRunRegistry() {
 
         // ★ 暴露 run 对象本体给路由侧（abort/mcp 端点直接读 status/abortCtrl；
         //   getRun 此前误返回 runs.get(id) = run 对象，与 createRun 的 handle{run} 结构不一致）
-        return { run, onStep, finish, abort, subscribe, ev, evSince, list, setStepDiff };
+        return { run, onStep, finish, abort, subscribe, ev, evSince, list, setStepDiff, markRunning };
     }
 
     function getRun(id) {
         const r = runs.get(id);
         if (!r) return null;
-        // ★ 返回 {run, abort, list} 形态 handle（路由侧读 h.run.status / 调 h.abort() / h.list()）。
-        //   finish/abort/list 逻辑内联在 getRun 作用域（不复用 createRun 的局部闭包，因跨 run 不可共享）。
+        // ★ 返回 {run, abort, list, markRunning} 形态 handle（路由侧读 h.run.status / 调 h.abort() / h.markRunning()）。
+        //   finish/abort 逻辑内联在 getRun 作用域（不复用 createRun 的局部闭包，因跨 run 不可共享）。
         const finishOf = (status, extra = {}) => {
-            if (r.status !== "running") return;
+            if (r.status !== "running" && r.status !== "queued") return;
             r.status = status;
             r.finishedAt = Date.now();
             Object.assign(r, extra);
             ev(r, "done", {
                 status, answer: r.answer, toolCalls: r.toolCalls,
-                elapsedMs: r.finishedAt - r.startedAt,
-                usage: r.usage, estimatedTokens: r.estimatedTokens, ...extra,
+                elapsedMs: r.finishedAt - (r.startedAt || r.queuedAt || Date.now()),
+                usage: r.usage, estimatedTokens: r.estimatedTokens, cache: r.cache || null, ...extra,
             });
+        };
+        const markRunningOf = () => {
+            if (r.status !== "queued") return false;
+            r.status = "running";
+            r.startedAt = Date.now();
+            ev(r, "started", { note: "从排队启动" });
+            return true;
         };
         return {
             run: r,
             abort: (reason) => { try { r.abortCtrl.abort(); } catch { } finishOf("aborted", { error: reason }); },
             list: () => listRun(r),
+            markRunning: markRunningOf,
+            ev: (type, data) => ev(r, type, data),
+            // ★ SSE 端点依赖：createRun handle 此前有 subscribe/evSince，getRun 重构时漏补 →
+            //   /stream 路由在 writeHead(200) 之后抛 TypeError（headers 已发出，500 回不去）→ 进程崩、前端零事件。
+            subscribe: (sub) => { r.subscribers.add(sub); return () => r.subscribers.delete(sub); },
+            evSince: (run, sinceSeq, out) => evSince(run, sinceSeq, out),
         };
     }
     /** 单 run 全量（与 createRun.list 同构；路由侧 h.list() 用） */
@@ -311,8 +345,19 @@ export function createRunRegistry() {
             startedAt: r.startedAt, finishedAt: r.finishedAt, error: r.error,
         }));
     }
+    /** ★ 驾驶舱「并行数」：当前 running 数（排队判定用）+ queued 数（排队位置展示） */
+    function runningCount() {
+        let n = 0;
+        for (const r of runs.values()) if (r.status === "running") n++;
+        return n;
+    }
+    function queuedCount() {
+        let n = 0;
+        for (const r of runs.values()) if (r.status === "queued") n++;
+        return n;
+    }
 
-    return { createRun, getRun, allRuns };
+    return { createRun, getRun, allRuns, runningCount, queuedCount };
 }
 
 /** 读 exec artifact 全文（呈现层只读；越界/不存在返回 null，不抛） */

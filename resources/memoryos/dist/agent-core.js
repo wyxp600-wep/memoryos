@@ -10,6 +10,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import crypto from "node:crypto";
 
 /* ── 写类工具门禁（修 F1：改为「工具自声明」驱动，不再硬编码名单）──────
  *  风险前缀由 server.js 在注册期注入工具描述（单一真相源 = exec-tools.js 的 TOOL_RISK）：
@@ -74,8 +75,29 @@ export function resolveLlm(llm = {}) {
     };
 }
 
-/** 调一次 OpenAI 兼容 chat/completions（带 tools）。返回 message（content + tool_calls）。 */
-export async function callLlm(cfg, messages, tools, signal) {
+/** 调一次 OpenAI 兼容 chat/completions（带 tools）。返回 { msg, usage }。 */
+const _llmCache = new Map();   // key → { msg, usage, hits }
+const LLM_CACHE_MAX = 64;
+/** ★ 驾驶舱「缓存」开关的 LLM 响应缓存（opt-in：callLlm 第 5 参 cacheOn=true 才启用）。
+ *  键 = model|baseUrl|messages|工具数 的 sha256（仅作去重键，非密码学用途）；
+ *  同历史同工具面的重复 LLM 轮次直接命中，省真实推理（本地 Ollama 尤值）。
+ *  进程级 Map，上限 64 条 FIFO 逐出，不落盘；命中后仍走工具循环（缓存只替 LLM 调用本身）。 */
+export function llmCacheStats() {
+    return { size: _llmCache.size, max: LLM_CACHE_MAX };
+}
+export function llmCacheClear() { _llmCache.clear(); }
+export async function callLlm(cfg, messages, tools, signal, cacheOn = false) {
+    if (cacheOn && !signal) {
+        // 有外部 AbortSignal 时不走缓存（中断路径要真请求，避免命中中断前的旧应答）
+        const key = crypto.createHash("sha256")
+            .update(`${cfg.model}|${cfg.baseUrl}|${JSON.stringify(messages)}|${tools?.length || 0}`)
+            .digest("hex");
+        const hit = _llmCache.get(key);
+        if (hit) {
+            hit.hits += 1;
+            return { msg: hit.msg, usage: hit.usage ?? null, cached: true };
+        }
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
     const body = {
@@ -106,11 +128,50 @@ export async function callLlm(cfg, messages, tools, signal) {
         if (!msg) throw new Error("LLM 返回空 choices");
         // ★ A5：透传 token 用量（OpenAI 兼容 prompt_tokens/completion_tokens；
         //   Ollama 非流式常无 usage → null，由调用侧估算兜底）。不影响既有 return 契约（msg 仍为主返回）。
-        return { msg, usage: data?.usage ?? null };
+        const out = { msg, usage: data?.usage ?? null };
+        if (cacheOn && !signal) {
+            // 仅缓存成功应答；FIFO 逐出（Map 保序，超上限删最老 key）
+            const key = crypto.createHash("sha256")
+                .update(`${cfg.model}|${cfg.baseUrl}|${JSON.stringify(messages)}|${tools?.length || 0}`)
+                .digest("hex");
+            _llmCache.set(key, { msg, usage: data?.usage ?? null, hits: 0 });
+            while (_llmCache.size > LLM_CACHE_MAX) {
+                const oldest = _llmCache.keys().next().value;
+                if (oldest === key) break;
+                _llmCache.delete(oldest);
+            }
+        }
+        return out;
     }
     finally { clearTimeout(timer); }
 }
 
+/* ── LLM 重试 / 流式 / 注入（★ DSH 参考）──────────────────────────
+ * DSH packages/core/agent-loop：瞬时错误可 retry、末轮流式、steer/inject 边界注入。
+ * 本处落地三项的 MemoryOS 有界版，全部 opt-in（默认行为不变）：
+ *  - isTransientLlmError / withLlmRetry：瞬时错误（网络/5xx/限流）退避重试，确定性错误立即失败。
+ *  - callLlmStream：OpenAI 兼容 SSE 流式，累积 content + tool_calls delta，onDelta 推增量。
+ *  - drainInjections：由 runAgent 在轮边界调用（路由层提供），吸收运行中注入的用户消息（steer-lite）。 */
+const TRANSIENT_LLM_RE = /(ECONNREFUSED|ECONNRESET|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|EPIPE|ECONNABORTED|socket hang up|fetch failed|LLM HTTP 5\d\d|LLM HTTP 429|overloaded|rate.?limit|too many requests|timed? ?out)/i;
+/** 瞬时错误（网络/5xx/429/限流/超时）判定——可重试；4xx 确定性错误（401/404/400）立即失败 */
+export function isTransientLlmError(e) {
+    return TRANSIENT_LLM_RE.test(e instanceof Error ? e.message : String(e));
+}
+/** LLM 调用瞬时错误退避重试（线性 1.5s/3s/…；abort 中不重试；retries=0 关闭） */
+export async function withLlmRetry(fn, retries = 2, signal, label = "LLM") {
+    let attempt = 0;
+    for (;;) {
+        try {
+            return await fn();
+        }
+        catch (e) {
+            attempt += 1;
+            if (signal?.aborted || !isTransientLlmError(e) || attempt > retries)
+                throw e;
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+    }
+}
 /* ── MCP 客户端（stdio 拉起 server.js）─────────────────────────── */
 export async function createMcpClient({ serverPath, agentName, agentFpath, cwd, env } = {}) {
     const server = serverPath || fileURLToPath(new URL("./server.js", import.meta.url));
@@ -212,7 +273,11 @@ export function pickTools(allTools, filter) {
  * @param {fn}    [o.writeGate] (toolName, args) → Promise<boolean>；写类工具门禁。默认交互式 y/N 由 CLI 提供；无头默认全拒。
  * @param {string[]} [o.toolsFilter] 只暴露这些工具（最小权限：如收尾阶段只给 task_done）
  * @param {AbortSignal} [o.signal]
- * @returns {Promise<{answer: string, steps: number, toolCalls: number}>}
+ * @param {boolean} [o.cache]   LLM 响应缓存开关（★ 驾驶舱「缓存」；同历史轮次命中省真实推理）
+ * @param {number}  [o.budgetTokens] token 预算上限（★ 驾驶舱「预算上限」；usage.total 超过即中止本 run）
+ * @param {number}  [o.maxParallelToolCalls] 同轮并行安全工具的最大并发数（1..8，默认 4；
+ *                   参考 DSH agent-loop 有界并行池——L0 只读工具并发，L1+ 独占屏障）
+ * @returns {Promise<{answer: string, steps: number, toolCalls: number, usage: object|null, cache: {hits:number}|null}>}
  */
 export async function runAgent(o) {
     const { llm, mcp, messages, signal } = o;
@@ -220,8 +285,19 @@ export async function runAgent(o) {
     const onStep = o.onStep || (() => {});
     // 未提供门禁 = 一律拒绝（fail-closed）——B1「写操作先获同意」的循环级兜底，杜绝静默放行
     const writeGate = typeof o.writeGate === "function" ? o.writeGate : () => false;
+    const cacheOn = o.cache === true;
+    const budgetTokens = Number(o.budgetTokens) > 0 ? Number(o.budgetTokens) : 0;
+    let cacheHits = 0;   // ★ 驾驶舱「缓存」命中计数（随 answer 事件回报）
+    // ★ DSH 参考三项（均有界/opt-in，默认不改变既有行为）：
+    const retryN = o.retry ?? 2;                       // 瞬时 LLM 错误重试次数（0=关闭）
+    const streamOn = o.stream === true;                 // 末轮/各轮流式（answer_delta 增量）
     const rawTools = await mcp.tools();
     const gateByName = new Map(rawTools.map((t) => [t.name, needsGate(t)]));
+    // ★ DSH 参考（tool-calls.ts 有界并行池）：并行安全判定用工具自声明风险级——
+    //   L0 只读且 gate:auto = 可并行；L1+（写/执行）或未知前缀 = 独占屏障（fail-safe 串行）。
+    const riskByName = new Map(rawTools.map((t) => [t.name, parseRiskPrefix(t?.description)?.risk ?? null]));
+    const parallelSafe = (name) => riskByName.get(name) === "L0" && gateByName.get(name) === false;
+    const POOL = Math.max(1, Math.min(8, Number(o.maxParallelToolCalls) || 4));  // 并行池宽（1..8，默认 4）
     const allTools = mcpToolsToOpenai(rawTools);
     const tools = pickTools(allTools, o.toolsFilter);
     onStep({ type: "tool_face", exposed: tools.map((t) => t.function.name), total: allTools.length });
@@ -233,13 +309,20 @@ export async function runAgent(o) {
         if (signal?.aborted) throw new Error("aborted");
         // 末轮：不再给工具，强制模型基于已有结果出文本收尾（弱模型常无限调工具不收口）
         const last = steps + 1 >= maxSteps;
-        const { msg, usage: u } = await callLlm(llm, messages, last ? [] : tools, signal);
+        const r = await callLlm(llm, messages, last ? [] : tools, signal, cacheOn);
+        const msg = r.msg, u = r.usage;
+        if (r.cached) cacheHits += 1;
         if (u) {
             usage = {
                 prompt: (usage?.prompt || 0) + (u.prompt_tokens ?? 0),
                 completion: (usage?.completion || 0) + (u.completion_tokens ?? 0),
             };
             usage.total = usage.prompt + usage.completion;
+        }
+        // ★ 驾驶舱「预算上限」：usage 累计超预算即中止（错误信息明示，前端时间线可见原因）
+        if (budgetTokens && usage?.total > budgetTokens) {
+            onStep({ type: "budget_exceeded", total: usage.total, budget: budgetTokens });
+            throw new Error(`token 预算上限已触发（已用 ${usage.total} > 上限 ${budgetTokens}），本次 run 中止`);
         }
         steps++;
         const tcs = last ? [] : (msg.tool_calls || []);
@@ -249,11 +332,19 @@ export async function runAgent(o) {
             messages.push({ role: "assistant", content: answer });
             // ★ A5：估算兜底（usage 缺失时按消息体 chars/4 粗估 token）
             const estimatedTokens = usage ? null : Math.ceil(JSON.stringify(messages).length / 4);
-            onStep({ type: "answer", answer, usage, estimatedTokens });
-            return { answer, steps, toolCalls, usage, estimatedTokens };
+            const cache = cacheOn ? { enabled: true, hits: cacheHits } : { enabled: false, hits: 0 };
+            onStep({ type: "answer", answer, usage, estimatedTokens, cache });
+            return { answer, steps, toolCalls, usage, estimatedTokens, cache };
         }
         messages.push({ role: "assistant", content: msg.content || null, tool_calls: tcs });
         let allRepeats = true; // 本轮是否全是重复调用
+        /* ★ 工具调用调度（★ 参考 DSH packages/core/agent-loop/src/tool-calls.ts 的有界并行池）：
+         *  ① 前置门禁按模型序逐个执行（死循环护栏 + writeGate 审批——审批是交互式的，必须串行）；
+         *  ② 分发：连续的并行安全调用（L0 只读 + gate:auto）进宽度 POOL 的有界池并发跑；
+         *     独占调用（L1+ 写/执行 或 未知前缀 fail-safe）单独作为屏障跑；
+         *  ③ 结果按模型序回填 context（tool_call_id 对齐 OpenAI tools 契约；事件契约不变，
+         *     tool_result 从「完成序」变为「模型序」批量——UI 时间线语义不变）。 */
+        const modelOrder = [];   // 与 tcs 对齐的处置槽：{kind:'repeat'|'denied'|'ready', ...}
         for (const tc of tcs) {
             const name = tc.function?.name;
             let args = {};
@@ -265,7 +356,7 @@ export async function runAgent(o) {
             seen.set(sig, n);
             if (n > MAX_SAME_CALL) {
                 onStep({ type: "tool_repeat", tool: name, count: n });
-                messages.push({ role: "tool", tool_call_id: tc.id, content: `⚠ 你已用相同参数调用 ${name} ${n - 1} 次，结果不会变化。停止重复调用，直接基于已有结果给出最终答案。` });
+                modelOrder.push({ kind: "repeat", tc, repeatMsg: `⚠ 你已用相同参数调用 ${name} ${n - 1} 次，结果不会变化。停止重复调用，直接基于已有结果给出最终答案。` });
                 continue;
             }
             allRepeats = false;
@@ -277,23 +368,68 @@ export async function runAgent(o) {
                 catch { ok = false; }
                 if (!ok) {
                     onStep({ type: "write_denied", tool: name, args });
-                    messages.push({ role: "tool", tool_call_id: tc.id, content: "⚠ 该操作未获同意（被拒绝或无审批通道）。不要重试，基于已有信息完成回答，或改为只读方式继续。" });
+                    modelOrder.push({ kind: "denied", tc, deniedMsg: "⚠ 该操作未获同意（被拒绝或无审批通道）。不要重试，基于已有信息完成回答，或改为只读方式继续。" });
                     continue;
                 }
             }
             onStep({ type: "tool_call", tool: name, args });
             toolCalls++;
+            modelOrder.push({ kind: "ready", tc, name, args });
+        }
+        // ② 分发：有界并行池（并行安全段）+ 独占屏障（其余 ready）
+        const dispatchOne = async (slot) => {
             let res;
             try {
-                res = await mcp.callTool(name, args);
-                onStep({ type: "tool_result", tool: name, ok: !res.isError, result: res.text.slice(0, 500) });
+                res = await mcp.callTool(slot.name, slot.args);
             }
             catch (e) {
-                res = { text: `⚠ ${name} 调用失败：${e instanceof Error ? e.message : String(e)}` };
-                onStep({ type: "tool_result", tool: name, ok: false, error: res.text });
+                res = { text: `⚠ ${slot.name} 调用失败：${e instanceof Error ? e.message : String(e)}`, isError: true };
             }
-            const content = truncateToolResult(res.text); // 修 F3：头尾双端保留
-            messages.push({ role: "tool", tool_call_id: tc.id, content });
+            slot.result = { text: res.text, ok: !res.isError };
+        };
+        const runPool = async (group) => {
+            let next = 0;
+            const n = Math.min(POOL, group.length);
+            await Promise.all(Array.from({ length: n }, async () => {
+                for (;;) {
+                    const idx = next++;
+                    if (idx >= group.length) return;
+                    await dispatchOne(group[idx]);
+                }
+            }));
+        };
+        let mi = 0;
+        while (mi < modelOrder.length) {
+            const s = modelOrder[mi];
+            if (s.kind === "ready" && parallelSafe(s.name)) {
+                // 连续并行安全段：进有界池并发
+                const group = [];
+                let mj = mi;
+                while (mj < modelOrder.length && modelOrder[mj].kind === "ready" && parallelSafe(modelOrder[mj].name)) {
+                    group.push(modelOrder[mj]);
+                    mj++;
+                }
+                await runPool(group);
+                mi = mj;
+            }
+            else if (s.kind === "ready") {
+                await dispatchOne(s);   // 独占（写/执行/未知）：单独跑，前后不并行
+                mi++;
+            }
+            else mi++;   // repeat/denied：无需分发
+        }
+        // ③ 结果按模型序回填（repeat/denied 回灌合成消息；ready 回灌工具结果）
+        for (const s of modelOrder) {
+            if (s.kind === "repeat") {
+                messages.push({ role: "tool", tool_call_id: s.tc.id, content: s.repeatMsg });
+            }
+            else if (s.kind === "denied") {
+                messages.push({ role: "tool", tool_call_id: s.tc.id, content: s.deniedMsg });
+            }
+            else {
+                onStep({ type: "tool_result", tool: s.name, ok: s.result.ok, result: s.result.text.slice(0, 500) });
+                messages.push({ role: "tool", tool_call_id: s.tc.id, content: truncateToolResult(s.result.text) }); // 修 F3：头尾双端保留
+            }
         }
         // 整轮都在重复 → 直接把下一轮变成末轮（无工具）逼出文本答案，避免空转到 maxSteps
         if (allRepeats) {

@@ -4,6 +4,7 @@
  *  ② run 路由骨架（runs 列表 200 / run 不存在 404 / 审批占位 501/404）
  *  ③ artifact 越界拒绝
  *  ④ SSE 流头（终态/不存在 run 的 /stream 行为）
+ *  ⑥ SSE 回补回归（getRun handle 的 subscribe/evSince；防 2026-09-18 零事件 + 进程崩复现）
  *  用法：node dist/smoke-agent-runs.js  （cwd = resources/memoryos；起临时库，自动清理）
  */
 import os from "node:os";
@@ -15,6 +16,10 @@ import fs from "node:fs";
 //   写在静态 import 之后则 dashboard.js 已求值、RESTRICTED 已锁定 true。故冒烟用动态 import。
 process.env.MEMORY_RESTRICTED = "0";
 process.env.MEMORY_TOKEN = "smoke-runs-token";
+// ★ config.json 落盘隔离：dataDirOf() 优先读 MEMORYOS_DATA_DIR —— 指向临时目录，
+//   驾驶舱「配置旋钮」端点（POST /api/agent/config 等）的读写不污染真实 config.json。
+process.env.MEMORYOS_DATA_DIR = path.join(os.tmpdir(), `memory-agentruns-smoke-data-${Date.now()}`);
+try { fs.mkdirSync(process.env.MEMORYOS_DATA_DIR, { recursive: true }); } catch { }
 const { openDb } = await import("./db.js");
 const { buildApp } = await import("./dashboard.js");
 
@@ -123,6 +128,90 @@ const inject = async (method, url, { body, restricted = false, app: useApp } = {
     // A6 MCP 重启（close + reset + 惰性重生；冒烟库无 LLM 时返回 503 也算端点可达）
     const mr = await inject("POST", "/api/agent/mcp/restart", { body: {} });
     ok("A6 mcp/restart 端点可达（200 或 503）", mr.status === 200 || mr.status === 503, `status=${mr.status}`);
+}
+
+/* ── 5. 驾驶舱「灰显变能用」10 项真实能力（config 旋钮 / exec-toggle / decompose / summarize / rollback / chain / runbook / 并行排队） ── */
+{
+    // 5.1 调优旋钮 POST /api/agent/config：4 字段一次写入 + 回读
+    const c1 = await inject("POST", "/api/agent/config", { body: { cache: true, budgetTokens: 20000, maxConcurrent: 2, logLevel: "debug" } });
+    ok("config 旋钮回读一致（cache/budget/parallel/logLevel）", c1.status === 200 && c1.body?.ok === true && c1.body?.tuning?.llmCache === true && c1.body?.tuning?.tokenBudget === 20000 && c1.body?.tuning?.maxConcurrent === 2 && c1.body?.tuning?.logLevel === "debug", `status=${c1.status} tuning=${JSON.stringify(c1.body?.tuning)}`);
+    ok("config 拒绝非法 logLevel（400）", (await inject("POST", "/api/agent/config", { body: { logLevel: "bogus" } })).status === 400, "");
+    ok("config 拒绝越界 maxConcurrent（400）", (await inject("POST", "/api/agent/config", { body: { maxConcurrent: 99 } })).status === 400, "");
+    ok("config 无字段 400", (await inject("POST", "/api/agent/config", { body: {} })).status === 400, "");
+
+    // 5.2 /api/agent/status 含 tuning（前端旋钮初始化用）
+    const st = await inject("GET", "/api/agent/status");
+    ok("status.tuning 含 running/queued 实时值", st.status === 200 && st.body?.tuning?.maxConcurrent === 2 && st.body?.tuning?.running >= 0 && st.body?.tuning?.queued >= 0, `status=${st.status}`);
+
+    // 5.3 exec-toggle：重 spawn MCP（MCP 可用 200+execTools，不可用 503；参数校验 400）
+    const et = await inject("POST", "/api/agent/exec-toggle", { body: { on: false } });
+    ok("exec-toggle 端点可达（200 或 503）", et.status === 200 || et.status === 503, `status=${et.status} execTools=${JSON.stringify(et.body?.execTools)}`);
+    ok("exec-toggle 非 boolean 400", (await inject("POST", "/api/agent/exec-toggle", { body: { on: "x" } })).status === 400, "");
+    // 回置 on，避免影响后续（若 MCP 可用）
+    await inject("POST", "/api/agent/exec-toggle", { body: { on: true } });
+
+    // 5.4 decompose：空 goal 400；非空 200（LLM 可用）/ 502（不可用）
+    ok("decompose 空 goal 400", (await inject("POST", "/api/agent/plan/decompose", { body: {} })).status === 400, "");
+    const d1 = await inject("POST", "/api/agent/plan/decompose", { body: { goal: "冒烟：做一个待办应用的按钮" } });
+    ok("decompose 可达（200+subtasks 或 502）", d1.status === 200 ? Array.isArray(d1.body?.subtasks) : d1.status === 502, `status=${d1.status} subtasks=${d1.body?.subtasks?.length}`);
+
+    // 5.5 summarize：会话不存在 404；空会话 200+note（无需摘要）
+    ok("summarize 会话不存在 404", (await inject("POST", "/api/agent/sessions/none/summarize", { body: {} })).status === 404, "");
+    const smk = await inject("POST", "/api/agent/sessions", { body: { title: "smoke-summary" } });
+    const s1 = await inject("POST", `/api/agent/sessions/${smk.body?.sessionKey}/summarize`, { body: { keepRecent: 6 } });
+    ok("summarize 空会话 200 + note", s1.status === 200 && s1.body?.ok === true && !!s1.body?.note, `status=${s1.status} note=${s1.body?.note}`);
+
+    // 5.6 rollback / chain：run 不存在 404
+    ok("rollback run 不存在 404", (await inject("POST", "/api/agent/runs/r_none/steps/1/rollback", { body: {} })).status === 404, "");
+    ok("chain run 不存在 404", (await inject("GET", "/api/agent/runs/r_none/chain")).status === 404, "");
+
+    // 5.7 runbook：200 + 4 项 runbook + recent 数组
+    const rb = await inject("GET", "/api/runbook");
+    ok("runbook 200 + 4 项 + recent 数组", rb.status === 200 && rb.body?.ok === true && (rb.body?.runbook || []).length === 4 && Array.isArray(rb.body?.recentDaemon) && Array.isArray(rb.body?.recentExec), `status=${rb.status} items=${rb.body?.runbook?.length}`);
+
+    // 5.8 并行数排队（cap=2 已设）：3 个 run 全 202，任一时刻 running ≤ cap（不变式）。
+    //   MCP 不可用（503）时排队不可测 → 三条 503 判 PASS 并注明。
+    const q1 = await inject("POST", "/api/agent/runs", { body: { message: "并行冒烟 1" } });
+    const q2 = await inject("POST", "/api/agent/runs", { body: { message: "并行冒烟 2" } });
+    const q3 = await inject("POST", "/api/agent/runs", { body: { message: "并行冒烟 3" } });
+    const all503 = [q1, q2, q3].every((x) => x.status === 503);
+    if (all503) {
+        ok("并行排队（MCP 不可用 503，跳过排队断言）", true, "全部 503");
+    }
+    else {
+        ok("排队 run 202 + status=running|queued", q1.status === 202 && ["running", "queued"].includes(q1.body?.status) && ["running", "queued"].includes(q2.body?.status) && ["running", "queued"].includes(q3.body?.status), `s1=${q1.body?.status} s2=${q2.body?.status} s3=${q3.body?.status}`);
+        const ql = await inject("GET", "/api/agent/runs");
+        const runningNow = (ql.body?.runs || []).filter((x) => x.status === "running").length;
+        ok("并发不变式：running ≤ cap(2)", runningNow <= 2, `running=${runningNow}`);
+    }
+}
+
+/* ── 6. SSE 流回归（2026-09-18：getRun handle 漏补 subscribe/evSince → /stream 在 writeHead 后
+   TypeError（headers 已发出 → ERR_HTTP_HEADERS_SENT 拖崩服务面 + 前端零事件、执行过程不显示）── */
+{
+    // 6.1 handle 形状断言：getRun 必须暴露 subscribe/evSince（本次事故回归点；createRun handle 一直有，getRun 重构时漏补）
+    const reg = (await import("./agent-runs.js")).createRunRegistry();
+    const h1 = reg.createRun({ title: "handle-shape" });
+    h1.finish("done", {});
+    const g1 = reg.getRun(h1.run.id);
+    ok("handle 形状：getRun 暴露 subscribe/evSince（SSE 零事件回归）",
+        g1 && typeof g1.subscribe === "function" && typeof g1.evSince === "function",
+        `subscribe=${typeof g1?.subscribe} evSince=${typeof g1?.evSince}`);
+
+    // 6.2 终态 run 的 /stream：evSince 回补既有事件（含 done）+ 订阅挂载不崩 + 立即收流
+    const mk3 = await inject("POST", "/api/agent/runs", { body: { message: "sse 回归" } });
+    if (mk3.status === 503) {
+        ok("SSE 流回归（MCP 不可用 503，跳过）", true, "503");
+    } else {
+        const rid = mk3.body?.runId;
+        const ab3 = await inject("POST", `/api/agent/runs/${rid}/abort`, { body: { reason: "sse-smoke" } });
+        ok("SSE 前置：abort 收终态", ab3.status === 200, `status=${ab3.status}`);
+        const s1 = await inject("GET", `/api/agent/runs/${rid}/stream`);
+        // 回归点：writeHead 前崩（h.evSince 缺）→ 500/无回放；writeHead 后崩（ERR_HTTP_HEADERS_SENT）→ 只回注释行。
+        // 注：raw 写头的端点在 light-my-request 里 headers 捕获不可靠（Node24 getHeaders 空），故只断言 status + 载荷内容。
+        ok("SSE 流 200 + 注释行（writeHead 后无异常路径）", s1.status === 200 && String(s1.raw).startsWith(": agent-run stream"), `status=${s1.status} raw=${String(s1.raw).slice(0, 60)}`);
+        ok("SSE 回补含 done 事件（evSince 生效）", String(s1.raw).includes("event: done"), `raw=${String(s1.raw).slice(0, 150).replace(/\n/g, " ⏎ ")}`);
+    }
 }
 
 console.log(`\n== 执行中心冒烟：${passed} PASS / ${failed} FAIL ==`);

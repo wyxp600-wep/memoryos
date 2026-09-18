@@ -4,22 +4,41 @@
 import { syncNotesIndex, demoteNoteLinks, writeNoteToVault } from "./obsidian-sync.js";
 import { getEmbedder } from "./embed.js";
 import { detectSkillTargets } from "./skill-sync.js";
-import { resolveLlm, runAgent, buildSystemPrompt } from "./agent-core.js";
+import { resolveLlm, runAgent, buildSystemPrompt, callLlm } from "./agent-core.js";
 import { unprotectSecret } from "./secret-store.js";
 import { createRunRegistry, readArtifact, extractArtifactPath, extractTaskHint, simpleDiff } from "./agent-runs.js";
 import { resolveInside } from "./exec-tools.js";
-import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit } from "./db.js";
+import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit } from "./db.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 export function registerKnowledge(app, ctx) {
-    const { db, restricted, RESTRICTED, readDiskConfig, getAgentMcp, resetAgentMcp, dataDirOf } = ctx;
+    const { db, restricted, RESTRICTED, readDiskConfig, writeDiskConfig, getAgentMcp, resetAgentMcp, dataDirOf, setAgentMcpEnv, getLogLevel, setLogLevel } = ctx;
     // 注：RESTRICTED 顶层常量是 8 个 reg 模块共享的单一判定入口（dashboard.js:46 模块加载时求值）。
     //   桌面 core-process 注入 MEMORY_RESTRICTED=0（默认非受限）；受限演示/冒烟经 env 切换（非 buildApp opts）。
     /* ── Agent 执行中心：per-run 内存模型（模块级单例，注册一次）────────
      * 纪律：呈现层只读/只推，不改 writeGate 行为；审批三键端点未启用一律 501 占位（B1）。
      * F15：SSE 预览 ≤300 字；工具结果全文走 exec artifact（data/artifacts/）按 range 拉取。 */
     const runs = createRunRegistry();
+    /* ★ 驾驶舱「并行数」排队：超并发上限的 run 以 queued 建入 runQueue，空位腾出（任一 run finish）
+     * 由 pumpQueue 依次 markRunning + startRun。mcp 每次 pump 现取（getAgentMcp 单例，exec-toggle 重启后拿到新句柄）。 */
+    const runQueue = [];
+    async function pumpQueue() {
+        const cap = agentTuning().maxConcurrent;
+        while (runQueue.length) {
+            if (runs.runningCount() >= cap) break;
+            const item = runQueue.shift();
+            // 该 run 在排队期间被 abort（状态已终态）→ 跳过不启动
+            if (!item.handle.markRunning()) continue;
+            try {
+                const mcp = await getAgentMcp();
+                startRun(item.handle, item.b, mcp).catch(() => { });   // 启动失败 startRun 内 catch → finish("failed") → 再 pump
+            }
+            catch (e) {
+                item.handle.finish("failed", { error: "排队启动失败：" + (e instanceof Error ? e.message : String(e)) });
+            }
+        }
+    }
     /** 工作区根（diff 快照的路径边界；与 server.js 执行面同口径） */
     const WORKSPACE_ROOT = path.resolve(process.env.MEMORYOS_WORKSPACE || path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", ".."));
     /** 解析 file_write 参数里的路径 → 工作区内真实路径（resolveInside 边界校验：越界/UNC 拒绝，防符号链接逃逸） */
@@ -31,6 +50,32 @@ export function registerKnowledge(app, ctx) {
         if (!absOrNull) return null;
         try { return fs.existsSync(absOrNull) ? fs.readFileSync(absOrNull, "utf8") : ""; }
         catch { return null; }
+    }
+    /* ── ★ 驾驶舱调优项（config.json 顶层键；各旋钮默认值保持既有行为不变）──
+     *  llmCache（bool，默认 false）     ⑦「缓存」：LLM 响应缓存开关
+     *  tokenBudget（number，默认 0=不设）⑦「预算上限」：单 run 累计 token 超即中止
+     *  maxConcurrent（number，默认 3）  ⑧「并行数」：同时 running 的 run 上限（超出排队）
+     *  logLevel（debug|info|warn|error）⑨「日志级别」：内核 5xx 诊断输出门控
+     *  execOn（bool，默认 null=继承 shell）④「执行工具开关」：MCP 子进程 MEMORYOS_EXEC_ON
+     *  读走 readDiskConfig（现读，即时生效）；写经 writeDiskConfig（整对象落盘）。 */
+    function agentTuning() {
+        const c = readDiskConfig();
+        const mc = Number(c.maxConcurrent);
+        const tb = Number(c.tokenBudget);
+        return {
+            llmCache: c.llmCache === true,
+            tokenBudget: Number.isFinite(tb) && tb > 0 ? Math.floor(tb) : 0,
+            maxConcurrent: Number.isFinite(mc) && mc >= 1 ? Math.min(8, Math.floor(mc)) : 3,
+            logLevel: ["debug", "info", "warn", "error"].includes(c.logLevel) ? c.logLevel : "info",
+            execOn: c.execOn === true ? true : c.execOn === false ? false : null,   // null=未显式设置（继承 shell）
+        };
+    }
+    /** 解析当前可用 LLM（与 startRun 同口径：env > config.json 的 llmKeyEnc 解密 > 默认 Ollama） */
+    async function resolveLlmCfg() {
+        const disk = readDiskConfig();
+        const key = process.env.LLM_API_KEY || process.env.INGEST_KEY || (disk.llmKeyEnc ? await unprotectSecret(disk.llmKeyEnc) : null);
+        const llm = resolveLlm({ baseUrl: disk.llmUrl || undefined, model: disk.llmModel || undefined, apiKey: key || undefined });
+        return { llm, key };
     }
     /** 跑一轮后台 agent run：共享 /chat 的 LLM 解析与 MCP 获取口径；onStep 喂 run 事件流。
      *  writeGate 规则与 /chat 完全一致：allowWrites=true 且非受限 才放行写。 */
@@ -49,24 +94,29 @@ export function registerKnowledge(app, ctx) {
         messages.push({ role: "user", content: message });
         const allowWrites = b.allowWrites === true && !RESTRICTED;
         const maxSteps = Math.min(Math.max(Number(b.maxSteps) || 8, 1), 16);
+        // ★ 驾驶舱调优项：LLM 缓存开关 + token 预算上限（现读 config.json，即时生效）
+        const tuning = agentTuning();
         // 任务联动：用户消息里的「任务 #N」→ run 的 taskHint（呈现层 join 用，不自动 claim，B1）
         const taskHint = b.taskHint != null ? Number(b.taskHint) : extractTaskHint(message);
         handle.run.taskHint = taskHint ?? null;
         // 写文件类步骤的前后快照（diff 数据源在路由层注入；路径经 resolveInside 边界校验，越界不快照）
-        let pendingBefore = null;
-        let pendingPath = null;
+        // ★ 并行池：一轮可能含多个 file_write（L1 独占串行跑，但 tool_call 事件在前置门禁里先批量发）——
+        //   快照按 FIFO 队列逐条配对（tool_result 按模型序到达，与创建序一致），单槽会被后一次覆盖而错配。
+        const snapshotQueue = [];
         const onStep = (s) => {
             if (s.type === "tool_call" && s.tool === "file_write") {
-                pendingPath = safeSnapshotPath(s.args?.path);
-                pendingBefore = readSnapshot(pendingPath);
+                const p = safeSnapshotPath(s.args?.path);
+                snapshotQueue.push({ path: p, before: readSnapshot(p) });
             }
             if (s.type === "tool_result" && s.tool === "file_write") {
+                const snap = snapshotQueue.shift();
                 const sid = handle.run.steps.find((x) => x.tool === "file_write" && x.state === "pending")?.stepId;
-                if (sid != null) {
-                    const after = readSnapshot(pendingPath);
-                    handle.setStepDiff(sid, simpleDiff(pendingBefore ?? "", after ?? "", String(s.args?.path ?? "")));
-                    pendingBefore = null;
-                    pendingPath = null;
+                if (sid != null && snap) {
+                    const after = readSnapshot(snap.path);
+                    const diff = simpleDiff(snap.before ?? "", after ?? "", String(snap.path ?? ""));
+                    diff.beforeText = snap.before != null && snap.before.length <= 50000 ? snap.before : null;
+                    diff.beforePath = snap.before != null && snap.before.length <= 50000 ? snap.path : null;
+                    handle.setStepDiff(sid, diff);
                 }
             }
             handle.onStep(s);
@@ -89,8 +139,10 @@ export function registerKnowledge(app, ctx) {
                 onStep,
                 writeGate: allowWrites ? null : () => false,
                 signal: handle.run.abortCtrl.signal,
+                cache: tuning.llmCache,                  // ★ 驾驶舱「缓存」：同历史轮次命中 LLM 响应缓存
+                budgetTokens: tuning.tokenBudget,        // ★ 驾驶舱「预算上限」：超预算即中止本 run
             });
-            handle.finish("done", { answer: r.answer, usage: r.usage, estimatedTokens: r.estimatedTokens });
+            handle.finish("done", { answer: r.answer, usage: r.usage, estimatedTokens: r.estimatedTokens, cache: r.cache || null });
             // 会话持久化：把本轮 user/assistant 追加进 agent_sessions（写入方截断纪律）
             if (b.sessionKey) {
                 try {
@@ -103,6 +155,8 @@ export function registerKnowledge(app, ctx) {
         catch (e) {
             handle.finish("failed", { error: e instanceof Error ? e.message : String(e) });
         }
+        // 本轮 run 终态 → 空出并发位，启动排队的下一个（★ 驾驶舱「并行数」）
+        await pumpQueue();
     }
     // —— Agent 画像（泳道 + 负载）——
     app.get("/api/agents", async () => {
@@ -370,6 +424,14 @@ export function registerKnowledge(app, ctx) {
                     ? "受限模式：由系统统一派发，agent 仅可读"
                     : "默认只读；勾选「允许写入记忆库」后本次对话内 agent 的写类工具才会执行",
             },
+            // ★ 驾驶舱调优项现值（前端各旋钮初始化用；running/queued 为内存实时值）
+            tuning: {
+                ...agentTuning(),
+                logLevelNow: getLogLevel(),
+                running: runs.runningCount(),
+                queued: runs.queuedCount(),
+                execTools: (tools ?? []).filter((n) => n === "file_read" || n === "file_write" || n === "exec_run").length,
+            },
         };
     });
     /** 跑一轮 agent：返回答案 + 工具调用轨迹（前端据此展示"它干了什么"） */
@@ -455,9 +517,17 @@ export function registerKnowledge(app, ctx) {
             ctx.resetAgentMcp();
             return reply.code(503).send({ ok: false, error: "MCP 工具面不可用：" + (e instanceof Error ? e.message : String(e)) });
         }
-        const handle = runs.createRun({ sessionId: b.sessionKey || undefined, title: b.title || message.slice(0, 60), taskHint: b.taskHint });
+        // ★ 驾驶舱「并行数」：超并发上限 → 以 queued 建入并排队（响应 202 + status="queued"，前端展示排队位）。
+        //   空位腾出（任一 run 终态 / abort）由 pumpQueue 依次 markRunning + 启动。
+        const cap = agentTuning().maxConcurrent;
+        const deferred = runs.runningCount() >= cap;
+        const handle = runs.createRun({ sessionId: b.sessionKey || undefined, title: b.title || message.slice(0, 60), taskHint: b.taskHint }, { deferred });
+        if (deferred) {
+            runQueue.push({ handle, b });
+            return reply.code(202).send({ ok: true, runId: handle.run.id, sessionKey: b.sessionKey || null, status: "queued", queueAhead: runQueue.length - 1, cap });
+        }
         startRun(handle, b, mcp); // 后台跑，不 await；错误在 startRun 内 catch → finish("failed")
-        return reply.code(202).send({ ok: true, runId: handle.run.id, sessionKey: b.sessionKey || null });
+        return reply.code(202).send({ ok: true, runId: handle.run.id, sessionKey: b.sessionKey || null, status: "running", cap });
     });
     /** run 列表（活动 + 终态，内存保留最近 50） */
     app.get("/api/agent/runs", async () => {
@@ -487,20 +557,30 @@ export function registerKnowledge(app, ctx) {
         const flush = (type, data, seq) => {
             reply.raw.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
         };
-        const out = [];
-        h.evSince(h.run, sent, out);
-        for (const e of out)
-            flush(e.event, e.data, e.seq);
-        const unsub = h.subscribe({
-            onEvent: (type, data, seq) => {
-                if (seq > sent) {
-                    sent = seq;
-                    flush(type, data, seq);
-                }
-            },
-        });
-        req.raw.on("close", () => unsub());
-        if (h.run.status !== "running")
+        try {
+            const out = [];
+            h.evSince(h.run, sent, out);
+            for (const e of out)
+                flush(e.event, e.data, e.seq);
+            const unsub = h.subscribe({
+                onEvent: (type, data, seq) => {
+                    if (seq > sent) {
+                        sent = seq;
+                        flush(type, data, seq);
+                    }
+                },
+            });
+            req.raw.on("close", () => unsub());
+        }
+        catch (e) {
+            // 呈现层护栏：headers 已发出后任何异常都不能回 500（会升级为 ERR_HTTP_HEADERS_SENT 拖崩服务面）。
+            // 只收掉这条客户端流；服务端 run 与事件流本体不受影响（订阅失败不阻塞其他订阅者）。
+            reply.log?.error?.(e instanceof Error ? e : new Error(String(e)));
+            try { reply.raw.end(); } catch { /* 连接可能已断 */ }
+            return;
+        }
+        // queued 也会后续发 started/step 事件 → 保持连接；只有真终态才收流
+        if (h.run.status !== "running" && h.run.status !== "queued")
             reply.raw.end();
     });
     /** 大输出按段拉取（exec artifact；range=a-b 0 基；无 artifact 步骤返回内联预览） */
@@ -579,14 +659,22 @@ export function registerKnowledge(app, ctx) {
         return reply.code(501).send({ ok: false, error: "审批功能未启用（需单独立项：writeGate 升级为 (tool,risk,decision) 判定）", approval: "pending" });
     });
     /* ── 驾驶舱 6 端点（A1/A2/A3/A4/A6；A5 token 用量已随 startRun 落地到 /runs/:id 的 usage/estimatedTokens） ── */
-    /** A1 中止运行：触发 AbortSignal（轮次间 + LLM fetch 可中断；进行中工具调用跑完） */
+    /** A1 中止运行：触发 AbortSignal（轮次间 + LLM fetch 可中断；进行中工具调用跑完）。
+     *  queued 状态亦可中止（取消排队）；中止后空出的并发位由 pumpQueue 启动排队下一个。 */
     app.post("/api/agent/runs/:id/abort", async (req, reply) => {
         const h = runs.getRun(req.params.id);
         if (!h)
             return reply.code(404).send({ ok: false, error: "run 不存在（内存保留最近 50 个）" });
-        if (h.run.status !== "running")
+        if (h.run.status !== "running" && h.run.status !== "queued")
             return reply.code(409).send({ ok: false, error: `run 已终态（${h.run.status}），无需中止` });
+        const wasQueued = h.run.status === "queued";
         h.abort(String((req.body ?? {}).reason || "用户手动中止"));
+        if (wasQueued) {
+            const qi = runQueue.findIndex((x) => x.handle.run.id === h.run.id);
+            if (qi !== -1)
+                runQueue.splice(qi, 1);
+        }
+        await pumpQueue();   // running 被中止 → 空出并发位
         return { ok: true, runId: h.run.id, status: "aborted" };
     });
     /** A2 会话压缩：保留最近 N 条消息（上下文管理；RESTRICTED 下 403） */
@@ -649,5 +737,239 @@ export function registerKnowledge(app, ctx) {
             ctx.resetAgentMcp();
             return reply.code(503).send({ ok: false, error: "MCP 重启失败：" + (e instanceof Error ? e.message : String(e)) });
         }
+    });
+    /* ── ★ 驾驶舱「灰显按钮变能用」：10 项真实后端能力（每个按钮命中真实端点，不造假成功）──
+     *  配置旋钮（缓存/预算/并行/日志级别）走 /api/agent/config；执行面开关走 /api/agent/exec-toggle
+     *  （须重 spawn MCP 才生效）；其余各为独立读/写端点。全部 SQL 参数绑定；写操作 RESTRICTED 下 403。 */
+
+    /** ⑦⑧⑨ 调优旋钮：缓存开关 / token 预算 / 并行数 / 日志级别（config.json 顶层键，即时生效；
+     *  logLevel 同时设内核内存级。RESTRICTED 下 403 —— 调优属运维写）。 */
+    app.post("/api/agent/config", async (req, reply) => {
+        if (RESTRICTED)
+            return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
+        const b = req.body ?? {};
+        const cfg = readDiskConfig();
+        const changed = [];
+        if (b.cache !== undefined) {
+            cfg.llmCache = b.cache === true;
+            changed.push("llmCache=" + cfg.llmCache);
+        }
+        if (b.budgetTokens !== undefined) {
+            const n = Math.floor(Number(b.budgetTokens));
+            if (!Number.isFinite(n) || n < 0 || n > 10_000_000)
+                return reply.code(400).send({ ok: false, error: "budgetTokens 须为 0..10000000 整数（0=不设上限）" });
+            cfg.tokenBudget = n;
+            changed.push("tokenBudget=" + n);
+        }
+        if (b.maxConcurrent !== undefined) {
+            const n = Math.floor(Number(b.maxConcurrent));
+            if (!Number.isFinite(n) || n < 1 || n > 8)
+                return reply.code(400).send({ ok: false, error: "maxConcurrent 须为 1..8 整数" });
+            cfg.maxConcurrent = n;
+            changed.push("maxConcurrent=" + n);
+        }
+        if (b.logLevel !== undefined) {
+            if (!["debug", "info", "warn", "error"].includes(b.logLevel))
+                return reply.code(400).send({ ok: false, error: "logLevel 须为 debug|info|warn|error" });
+            cfg.logLevel = b.logLevel;
+            setLogLevel(b.logLevel);   // 内核内存级即时生效（5xx 诊断门控）
+            changed.push("logLevel=" + b.logLevel);
+        }
+        if (!changed.length)
+            return reply.code(400).send({ ok: false, error: "无可更新字段（cache/budgetTokens/maxConcurrent/logLevel）" });
+        try {
+            writeDiskConfig(cfg);
+        }
+        catch (e) {
+            return reply.code(500).send({ ok: false, error: "写入 config.json 失败：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        return { ok: true, changed, tuning: agentTuning() };
+    });
+
+    /** ④ 执行工具开关：设 MEMORYOS_EXEC_ON + 持久化 execOn + 重 spawn MCP（返回新工具面计数） */
+    app.post("/api/agent/exec-toggle", async (req, reply) => {
+        if (RESTRICTED)
+            return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
+        const on = (req.body ?? {}).on;
+        if (typeof on !== "boolean")
+            return reply.code(400).send({ ok: false, error: "on 须为 boolean" });
+        const cfg = readDiskConfig();
+        cfg.execOn = on;
+        writeDiskConfig(cfg);
+        setAgentMcpEnv({ MEMORYOS_EXEC_ON: on ? "1" : "0" });
+        try {
+            const prev = await getAgentMcp().catch(() => null);
+            try { await prev?.close(); } catch { /* 已坏/未起 */ }
+            resetAgentMcp();
+            const fresh = await getAgentMcp();
+            const tools = await fresh.tools();
+            const execTools = tools.filter((t) => ["file_read", "file_write", "exec_run"].includes(t.name)).map((t) => t.name);
+            return { ok: true, execOn: on, toolCount: tools.length, execTools };
+        }
+        catch (e) {
+            resetAgentMcp();
+            return reply.code(503).send({ ok: false, error: "执行面重启失败：" + (e instanceof Error ? e.message : String(e)), execOn: on });
+        }
+    });
+
+    /** ② 自动拆解（LLM planner）：把目标拆成 3–7 条可派发子任务（纯 LLM 推理，不写库；
+     *  RESTRICTED 下亦允许——只读推理。前端「领任务做」的拆解预览）。 */
+    app.post("/api/agent/plan/decompose", async (req, reply) => {
+        const b = req.body ?? {};
+        const goal = String(b.goal ?? "").trim();
+        if (!goal)
+            return reply.code(400).send({ ok: false, error: "goal 不能为空" });
+        if (goal.length > 4000)
+            return reply.code(400).send({ ok: false, error: "goal 过长（上限 4000 字）" });
+        const maxSub = Math.min(Math.max(Number(b.maxSubtasks) || 5, 1), 10);
+        let llm;
+        try {
+            ({ llm } = await resolveLlmCfg());
+        }
+        catch (e) {
+            return reply.code(502).send({ ok: false, error: "LLM 配置不可用：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        const prompt = [
+            `把下面的目标拆解成 ${maxSub} 条以内、可独立派发给 agent 执行的子任务。`,
+            `要求：每条一行、以「- 」开头、动词开头、可验收（有明确产出物）；按依赖顺序排列；不重复、不空泛。`,
+            `只输出子任务列表，不要解释。`,
+            ``,
+            `目标：${goal}`,
+        ].join("\n");
+        try {
+            const { msg } = await callLlm(llm, [{ role: "user", content: prompt }], null, undefined, false);
+            const plan = String(msg?.content ?? "").trim();
+            if (!plan)
+                return reply.code(502).send({ ok: false, error: "LLM 未返回拆解结果" });
+            const subtasks = plan.split("\n").map((l) => l.replace(/^[-*\s]+/, "").trim()).filter(Boolean).slice(0, maxSub + 2);
+            return { ok: true, goal: goal.slice(0, 200), plan, subtasks, llm: { model: llm.model } };
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return reply.code(502).send({ ok: false, error: `LLM 拆解失败：${msg}` });
+        }
+    });
+
+    /** ⑥ 上下文摘要（LLM 有损压缩）：把会话较早消息摘要成一条，保留最近 keepRecent 条原文。
+     *  区别于 compact（纯截断无损）——摘要走 LLM 生成，RESTRICTED 下 403（写会话）。 */
+    app.post("/api/agent/sessions/:id/summarize", async (req, reply) => {
+        if (RESTRICTED)
+            return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
+        const keep = Math.min(Math.max(Number((req.body ?? {}).keepRecent ?? 6), 1), 50);
+        const cur = getAgentSession(db, req.params.id);
+        if (!cur)
+            return reply.code(404).send({ ok: false, error: "会话不存在" });
+        const msgs = cur.messages || [];
+        if (msgs.length <= keep)
+            return { ok: true, before: msgs.length, after: msgs.length, summaryLen: 0, note: "会话 ≤ keepRecent，无需摘要" };
+        const older = msgs.slice(0, msgs.length - keep);
+        const recent = msgs.slice(msgs.length - keep);
+        let llm;
+        try {
+            ({ llm } = await resolveLlmCfg());
+        }
+        catch (e) {
+            return reply.code(502).send({ ok: false, error: "LLM 配置不可用：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        const convo = older.map((m, i) => `${m.role === "user" ? "用户" : "助手"}: ${String(m.content ?? "").slice(0, 1500)}`).join("\n");
+        try {
+            const { msg } = await callLlm(llm, [
+                { role: "user", content: `把以下对话压缩成一段 ≤500 字的摘要，保留关键结论、决定、数字与待办，去掉寒暄与过程。只输出摘要正文。\n\n${convo}` },
+            ], null, undefined, false);
+            const summary = String(msg?.content ?? "").trim();
+            if (!summary)
+                return reply.code(502).send({ ok: false, error: "LLM 未返回摘要" });
+            const newMsgs = [{ role: "user", content: `【早期对话摘要】${summary}` }, ...recent];
+            saveAgentSession(db, { sessionKey: req.params.id, title: cur.title, messages: newMsgs });
+            return { ok: true, before: msgs.length, after: newMsgs.length, summaryLen: summary.length, kept: keep };
+        }
+        catch (e) {
+            const m2 = e instanceof Error ? e.message : String(e);
+            return reply.code(502).send({ ok: false, error: `摘要失败：${m2}` });
+        }
+    });
+
+    /** ② 文件写回滚（快照还原）：把某 file_write 步骤的写前快照写回原路径。
+     *  仅当该步骤带 beforeText/beforePath（写入时 ≤50KB 且在工作区内）才可回滚；RESTRICTED 下 403（写盘）。 */
+    app.post("/api/agent/runs/:id/steps/:sid/rollback", async (req, reply) => {
+        if (RESTRICTED)
+            return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
+        const h = runs.getRun(req.params.id);
+        if (!h)
+            return reply.code(404).send({ ok: false, error: "run 不存在（内存保留最近 50 个）" });
+        const step = h.run.steps.find((x) => x.stepId === Number(req.params.sid));
+        if (!step)
+            return reply.code(404).send({ ok: false, error: "步骤不存在" });
+        if (!step.hasDiff)
+            return reply.code(409).send({ ok: false, error: "该步骤不是可回滚的写文件步骤" });
+        const beforeText = step.diff?.beforeText;
+        const beforePath = step.diff?.beforePath;
+        if (beforeText == null || !beforePath)
+            return reply.code(409).send({ ok: false, error: "该步骤无写前快照（文件过大或越界，未快照），无法回滚" });
+        // 路径边界再校验（resolveInside），防 run 内存被污染后写任意路径
+        let target = null;
+        try { target = resolveInside(WORKSPACE_ROOT, beforePath); } catch { target = null; }
+        if (!target)
+            return reply.code(409).send({ ok: false, error: "快照路径越界，拒绝回滚" });
+        try {
+            fs.writeFileSync(target, beforeText, "utf8");
+        }
+        catch (e) {
+            return reply.code(500).send({ ok: false, error: "写回失败：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        logExecAudit(db, {
+            tool: "file_write", agent: "dashboard-rollback", risk: "L1", approval: "gate-allowed",
+            argsDigest: `rollback step#${step.stepId} → ${beforePath}`,
+            detail: `已还原写前快照（${Buffer.byteLength(beforeText, "utf8")} 字节）`, durationMs: 0,
+        });
+        // 重算该步 diff（现为「当前 vs 快照」，标记已回滚）
+        const now = readSnapshot(target);
+        step.diff = { ...step.diff, rolledBack: true, rolledBackAt: Date.now() };
+        h.ev("rollback", { stepId: step.stepId, file: beforePath, bytes: Buffer.byteLength(beforeText, "utf8") });
+        return { ok: true, runId: h.run.id, stepId: step.stepId, file: beforePath, restoredBytes: Buffer.byteLength(beforeText, "utf8"), nowMatchesSnapshot: now === beforeText };
+    });
+
+    /** ⑨ 调用链：把某 run 的工具调用串成机器可读 trace（顺序 + 每步耗时 + 产物 + 依赖），前端渲染调用链图 */
+    app.get("/api/agent/runs/:id/chain", async (req, reply) => {
+        const h = runs.getRun(req.params.id);
+        if (!h)
+            return reply.code(404).send({ ok: false, error: "run 不存在（内存保留最近 50 个）" });
+        const l = h.list();
+        const chain = (l.steps || []).map((s, i) => ({
+            n: i + 1,
+            tool: s.tool,
+            state: s.state,
+            ok: s.ok ?? null,
+            ms: s.elapsedMs ?? 0,
+            outChars: s.outChars ?? 0,
+            hasArtifact: !!s.artifactPath,
+            hasDiff: !!s.hasDiff,
+            taskDone: s.taskDone ?? null,
+            feedsNext: i < (l.steps.length - 1),   // 线性 agent 循环：每步结果喂下一轮 LLM
+        }));
+        return {
+            ok: true, runId: l.runId, status: l.status, title: l.title,
+            llmRounds: l.maxSteps, toolCalls: l.toolCalls,
+            usage: l.usage, estimatedTokens: l.estimatedTokens,
+            startMs: l.startedAt, endMs: l.finishedAt,
+            chain,
+        };
+    });
+
+    /** ⑩ 事件手册（治理合规）：返回结构化 runbook（处置步骤）+ 近期真实事件（daemon_log + exec_audit 失败/拒绝），只读 */
+    app.get("/api/runbook", async () => {
+        const daemon = db.prepare(`SELECT task, op, detail, operator, created_at FROM daemon_log ORDER BY id DESC LIMIT ?`).all(10);
+        const exec = db.prepare(`SELECT tool, agent, risk, approval, detail, created_at FROM exec_audit WHERE approval LIKE '%denied%' OR detail LIKE '%失败%' OR detail LIKE '%error%' ORDER BY id DESC LIMIT ?`).all(10);
+        return {
+            ok: true,
+            runbook: [
+                { title: "写被门禁拒绝（write_denied / gate-denied）", steps: ["确认操作人/agent 是否有写授权", "受限模式下由系统统一派发，勿手动放行", "查 exec_audit 的 approval 字段定位拦截点"] },
+                { title: "agent 执行失败 / LLM 不可达", steps: ["查 /api/agent/status 的 mcp.error 与 llm 端点", "本地 Ollama 需 ollama serve；或在设置页改 llmUrl/llmModel", "MCP 工具面异常点「重启 MCP」"] },
+                { title: "记忆治理告警（daemon）", steps: ["查 /api/daemon-health 最近运行时间", "低价值/僵尸记忆走归档（zombies 页）", "冲突记忆走仲裁队列（arbitrate 页）"] },
+                { title: "执行面副作用（file_write/exec_run）", steps: ["查 exec_audit 全量（导出审计）", "用「回滚」还原写前快照（≤50KB 工作区内步骤）", "高风险命令默认需人工确认，勿放开 L1 预授权"] },
+            ],
+            recentDaemon: daemon,
+            recentExec: exec,
+        };
     });
 }
