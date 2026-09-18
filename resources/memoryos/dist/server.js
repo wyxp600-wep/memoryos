@@ -1143,13 +1143,14 @@ server.addTool({
 });
 server.addTool({
     name: "task_claim",
-    description: "多 Agent 协同：领取『分配给我 / 未认领』的 pending 任务，把状态头 pending→in_progress。调用方通常=任务 assignee 或任意可接手 agent。返回当前可领的 pending 任务列表。",
+    description: "多 Agent 协同：领取『分配给我 / 未认领』的 pending 任务，把状态头 pending→in_progress。返回当前可领的 pending 任务列表。★ as 参数语义（2026-09-19 文档化，实操问题 #14）：缺省=以当前 agent 身份领取，只能领指派给自己（或 assignee=? 未指派）的任务；as=<他人名> 仅当任务恰指派给该名；as='any'=托管认领，跳过接收方校验、可领任何 pending（含指派他人的）——改写归属受 A1 凭据校验约束（#8）。租约默认 10 分钟（C-3），长任务可 lease_minutes 自声明延长。",
     parameters: z.object({
-        as: z.string().optional().describe("以谁的身份领取（缺省=当前 agent）；传 'any' 领取无人认领兜底"),
+        as: z.string().optional().describe("以谁的身份领取（缺省=当前 agent）；传 'any' 托管认领（跳过接收方校验）——语义见工具描述"),
         project: z.string().default("global").describe("任务 scope"),
         memory_id: z.number().int().optional().describe("指定领取某条任务 id；不填则列出当前可领的 pending 任务"),
         expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本（你上次读到的 version）；不一致 → 拒绝陈旧领取"),
         lease_token: z.string().optional().describe("P2-6 fencing：你持有的租约锁（若卡片已被他人接管 → 拒绝僵尸领取）"),
+        lease_minutes: z.number().int().min(10).max(120).optional().describe("租约分钟数（10..120，默认 10）；长任务自声明更长租约，超时由 dispatcher 回收"),
         credential: z.string().optional().describe("A1 凭据（scope>=write，须归属认领者）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
@@ -1192,7 +1193,7 @@ server.addTool({
             const lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
             appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
             syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
-            touchCardLease(row.id, lock); // ★ P2-6：卡片租约锁定（10min 窗口，C-3）
+            touchCardLease(row.id, lock, args.lease_minutes); // ★ P2-6：卡片租约锁定（默认 10min，#13 可分级 10..120）
             return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "task_claim", id: row.id, status: "in_progress", version: row.version + 1, assignee: who, lease_token: lock, cred_id: cred.credId, session_id: args.session_id ?? null });
         }
         // 列可领任务：type='task' 且状态头 pending（★ H4：secret 任务不进工具通道）
@@ -1260,14 +1261,17 @@ function cardOfTask(memoryId) {
         return null;
     }
 }
-/** P2-6（C-2）：卡片租约触达（认领时发 lease token；heartbeat 续窗）——租约统一 10 分钟（C-3/#4199）。 */
-function touchCardLease(memoryId, lock) {
+/** P2-6（C-2）：卡片租约触达（认领时发 lease token；heartbeat 续窗）——默认租约统一 10 分钟（C-3/#4199）。
+ *  ★ 2026-09-19（实操问题 #13）：支持 minutes 分级（10..120，task_claim/task_heartbeat 可选传参）——
+ *  长任务（构建/深度实现）自声明更长租约，避免 10 分钟必超时；默认不变，C-3 口径对存量零影响。 */
+function touchCardLease(memoryId, lock, minutes = 10) {
     try {
         const c = cardOfTask(memoryId);
         if (!c || c.status !== "running")
             return false;
-        db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=datetime('now','+10 minutes'), heartbeat_at=datetime('now'), version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, c.id);
-        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, "dispatcher", lock ? "lease_set" : "heartbeat", "running", "running", lock ? `MCP 租约锁定（lock=${String(lock).slice(0, 8)}…）` : "MCP 心跳续窗（10min）");
+        const min = Math.max(10, Math.min(120, Math.floor(Number(minutes) || 10)));
+        db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=datetime('now', ?), heartbeat_at=datetime('now'), version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, `+${min} minutes`, c.id);
+        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, "dispatcher", lock ? "lease_set" : "heartbeat", "running", "running", lock ? `MCP 租约锁定（${min}min，lock=${String(lock).slice(0, 8)}…）` : `MCP 心跳续窗（${min}min）`);
         return true;
     }
     catch {
@@ -1281,10 +1285,11 @@ function touchCardLease(memoryId, lock) {
  */
 server.addTool({
     name: "task_heartbeat",
-    description: "多 Agent 协同·租约（C-2）：对进行中任务的关联卡片刷新租约窗口（10 分钟，C-3），防止长跑任务被守护回收。调用方应为当前认领者（身份可传 as，仅限本人任务）。无关联卡片（纯任务）时仅记事件。",
+    description: "多 Agent 协同·租约（C-2）：对进行中任务的关联卡片刷新租约窗口（默认 10 分钟，C-3；lease_minutes 可分级 10..120），防止长跑任务被守护回收。调用方应为当前认领者（身份可传 as，仅限本人任务）。无关联卡片（纯任务）时仅记事件。",
     parameters: z.object({
         memory_id: z.number().int().min(1).describe("任务记忆 id"),
         as: z.string().optional().describe("以谁的身份续租（缺省=当前 agent）；须与任务认领者一致"),
+        lease_minutes: z.number().int().min(10).max(120).optional().describe("续租分钟数（10..120，默认 10）；与 task_claim 的租约分级同口径"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1307,7 +1312,7 @@ server.addTool({
             return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。`;
         }
         if (card.status === "running" && card.claim_lock) {
-            touchCardLease(row.id, null);
+            touchCardLease(row.id, null, args.lease_minutes); // ★ #13：分级续窗
             appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, card: card.id }), operator: `agent:${AGENT}` });
             return `任务 #${row.id} 续租成功（卡片 #${card.id} 租约窗口 → 10 分钟）。`;
         }
@@ -1656,6 +1661,26 @@ server.addTool({
             catch { return null; }
         };
         const mineOther = [];
+        // ★ 2026-09-19（实操问题 #12）：task_next 信息增强 —— mine 附租约剩余（julianday 差值，UTC 安全），
+        //   blocked 附最后活动时间（memory_events 最晚一条），减少「要另开接口/直读库才知道」的绕行。
+        const leaseTagOf = (mid) => {
+            try {
+                const r = db.prepare(`SELECT (julianday(lease_expires_at) - julianday('now')) * 1440 AS m FROM cards WHERE id=(SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch' LIMIT 1)`).get(mid);
+                if (!r || r.m == null)
+                    return " [无租约]";
+                return r.m <= 0 ? " [租约已过期，待回收]" : ` [租约剩 ${Math.round(r.m)}min]`;
+            }
+            catch { return ""; }
+        };
+        const lastEvtOf = (mid) => {
+            try {
+                const r = db.prepare(`SELECT julianday('now') - MAX(julianday(created_at)) AS d FROM memory_events WHERE memory_id=?`).get(mid);
+                if (!r || r.d == null)
+                    return "";
+                return r.d >= 1 ? ` · 最后活动 ${Math.floor(r.d)} 天前` : ` · 最后活动 ${Math.max(1, Math.round(r.d * 24))} 小时前`;
+            }
+            catch { return ""; }
+        };
         const avail = [];
         const blocked = [];
         const mine = [];
@@ -1693,14 +1718,15 @@ server.addTool({
                     if (depDone)
                         avail.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} → ${s.assignee}: ${taskBody(r.content).slice(0, 80)} ${isCardTask(r) ? "(卡)" : ""}` });
                     else
-                        blocked.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} 阻塞（等 #${blockedBy.join(",#")}）→ ${taskBody(r.content).slice(0, 60)}` });
+                        blocked.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} 阻塞（等 #${blockedBy.join(",#")}）→ ${taskBody(r.content).slice(0, 60)}${lastEvtOf(r.id)}` });
                 }
             }
             else if (s.status === "in_progress" && s.assignee === who) {
                 const label = `#${r.id} ${srcTag(r)} 进行中(已认领 by ${s.assignee}): ${taskBody(r.content).slice(0, 80)}`;
                 const sid = claimSessionOf(r.id);
                 const isThisSession = !args.session_id || !sid || sid === args.session_id;
-                (isThisSession ? mine : mineOther).push(isThisSession ? label : `${label}（会话 ${sid}）`);
+                const leaseTag = leaseTagOf(r.id); // ★ #12：租约剩余一目了然
+                (isThisSession ? mine : mineOther).push(isThisSession ? label + leaseTag : `${label}${leaseTag}（会话 ${sid}）`);
             }
         }
         // ★ B 排序：卡片 priority 高优先，同优先级按创建时间旧的在前
