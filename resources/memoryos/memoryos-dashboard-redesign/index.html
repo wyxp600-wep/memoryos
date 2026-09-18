@@ -2949,6 +2949,72 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .wh-btn { box-shadow: 0 2px 10px rgba(217,119,6,0.25); transition: all .22s var(--ease-out); }
   .wh-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(217,119,6,0.35); }
 
+  /* Agent 运行状态条 */
+  .agent-run-status {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-radius: 8px;
+    background: rgba(65,187,200,0.06); border: 1px solid rgba(65,187,200,0.2);
+    flex-shrink: 0;
+  }
+  .run-status-indicator { display: flex; align-items: center; gap: 8px; }
+  .run-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent-cyan);
+    animation: runPulse 1.5s ease-in-out infinite;
+  }
+  .run-dot.done { background: #22c55e; animation: none; }
+  .run-dot.error { background: #ef4444; animation: none; }
+  @keyframes runPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(65,187,200,0.4); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(65,187,200,0); }
+  }
+  .run-status-text { font-size: 12px; color: var(--text-primary); font-weight: 500; }
+  .run-status-actions { display: flex; gap: 6px; }
+
+  /* ===== 执行过程卡片式布局 ===== */
+  .run-cards { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+  .run-cards::-webkit-scrollbar { width: 5px; }
+  .run-cards::-webkit-scrollbar-track { background: transparent; }
+  .run-cards::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 3px; }
+  .run-card {
+    border: 1px solid var(--border-glass); border-radius: 10px;
+    padding: 10px 12px; background: var(--bg-card);
+    animation: cardSlideIn .25s ease-out;
+  }
+  @keyframes cardSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .run-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .run-card-type {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+  }
+  .run-card-type.thinking { background: rgba(139,92,246,0.12); color: #8b5cf6; }
+  .run-card-type.tool { background: rgba(59,130,246,0.12); color: #3b82f6; }
+  .run-card-type.code { background: rgba(16,185,129,0.12); color: #10b981; }
+  .run-card-type.context { background: rgba(245,158,11,0.12); color: #f59e0b; }
+  .run-card-type.system { background: rgba(239,68,68,0.12); color: #ef4444; }
+  .run-card-title { font-size: 12px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-card-state { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+  .run-card-state.ok { color: #22c55e; }
+  .run-card-state.error { color: #ef4444; }
+  .run-card-state.pending { color: #f59e0b; }
+  .run-card-body { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .run-card-body pre {
+    background: rgba(0,0,0,0.04); border-radius: 6px; padding: 8px 10px;
+    font-size: 11px; overflow-x: auto; margin: 6px 0; white-space: pre-wrap; word-break: break-all;
+  }
+  [data-theme="dark"] .run-card-body pre { background: rgba(255,255,255,0.05); }
+  .run-card-sub {
+    display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+    background: rgba(0,0,0,0.02); border-radius: 6px; margin-top: 4px; font-size: 11px;
+  }
+  [data-theme="dark"] .run-card-sub { background: rgba(255,255,255,0.03); }
+  .run-card-sub svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--text-muted); }
+  .run-card-sub .sub-label { color: var(--text-muted); flex-shrink: 0; }
+  .run-card-sub .sub-value { color: var(--text-primary); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-card-empty { text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
+  .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
+  .run-card-thinking::before { content: '💭 '; }
+
   /* ===== 命令面板 ===== */
   .command-palette-modal {
     background: var(--bg-elevated) !important;
@@ -3135,6 +3201,276 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .cockpit-stub { opacity: 0.42; cursor: not-allowed; background: transparent; }
   .cockpit-stub:hover { border-color: var(--border-glass); background: transparent; }
   .cockpit-domain-hint { font-size: 10.5px; color: var(--text-muted); margin-left: auto; }
+
+  /* ===== V1 重构：全局顶部导航 + 布局 ===== */
+  .app-layout { flex-direction: column; }
+  .global-nav {
+    display: flex; align-items: center; gap: 16px;
+    height: 52px; padding: 0 20px;
+    background: var(--bg-card); backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-glass);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .global-nav-left { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .global-nav-logo { display: flex; align-items: center; gap: 8px; }
+  .global-nav-logo .logo-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+  .global-nav-logo .logo-icon svg { width: 22px; height: 22px; }
+  .global-nav-logo .logo-title { font-size: 15px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); }
+  .global-nav-logo .logo-sub { font-size: 9px; color: var(--accent-cyan); border: 1px solid rgba(65,187,200,0.35); border-radius: 4px; padding: 1px 5px; font-family: var(--font-mono); }
+  .global-nav-scroll {
+    display: flex; align-items: center; gap: 2px;
+    flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: thin; scrollbar-color: var(--border-glass) transparent;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+  .global-nav-scroll::-webkit-scrollbar { height: 4px; }
+  .global-nav-scroll::-webkit-scrollbar-track { background: transparent; }
+  .global-nav-scroll::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 2px; }
+  .global-nav-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent-cyan); }
+  .global-nav-scroll::-webkit-scrollbar { height: 3px; }
+  .global-nav-scroll::-webkit-scrollbar-track { background: transparent; }
+  .global-nav-scroll::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 2px; }
+  .global-nav-scroll .nav-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 8px;
+    font-size: 12.5px; color: var(--text-secondary);
+    white-space: nowrap; flex-shrink: 0;
+    text-decoration: none; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .global-nav-scroll .nav-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .global-nav-scroll .nav-item:hover { background: rgba(65,187,200,0.08); color: var(--text-primary); }
+  .global-nav-scroll .nav-item.active { background: rgba(65,187,200,0.12); color: var(--accent-cyan); font-weight: 600; }
+  .global-nav-scroll .nav-badge { font-size: 10px; background: var(--accent-cyan); color: #fff; border-radius: 8px; padding: 1px 6px; font-weight: 600; }
+  .global-nav-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .global-nav-right .search-box { width: 180px; }
+  .nav-icon-btn { padding: 7px !important; min-width: auto !important; }
+  .nav-icon-btn svg { margin: 0 !important; }
+
+  /* 页面标题区 */
+  .page-header { padding: 16px 4px 12px; }
+  .page-header .topbar-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+  .page-header .topbar-title span { font-size: 12px; font-weight: 400; color: var(--text-muted); margin-left: 8px; }
+
+  /* 主内容区调整 */
+  .main-content { margin-left: 0 !important; padding: 0 24px 24px; }
+
+  /* ===== Agent 页面两栏布局 ===== */
+  .agent-layout { display: flex; gap: 16px; height: calc(100vh - 180px); min-height: 500px; }
+  .agent-sidebar {
+    width: 240px; flex-shrink: 0;
+    background: var(--bg-card); border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md); padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    overflow: hidden;
+  }
+  .agent-sidebar-search {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px;
+    background: rgba(65,187,200,0.06); border: 1px solid var(--border-glass);
+  }
+  .agent-sidebar-search svg { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
+  .agent-sidebar-search input {
+    flex: 1; border: none; background: transparent; outline: none;
+    font-size: 12px; color: var(--text-primary); font-family: inherit;
+  }
+  .agent-sidebar-search input::placeholder { color: var(--text-muted); }
+  .agent-sidebar-quick { display: flex; flex-direction: column; gap: 2px; }
+  .agent-sidebar-quick-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 7px;
+    font-size: 12.5px; color: var(--text-secondary);
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .agent-sidebar-quick-item:hover { background: rgba(65,187,200,0.08); color: var(--text-primary); }
+  .agent-sidebar-quick-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .agent-sidebar-divider { height: 1px; background: var(--border-glass); margin: 4px 0; }
+  .agent-sidebar-label { font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 0 4px; }
+  .agent-session-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .agent-session-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 7px;
+    font-size: 12.5px; color: var(--text-secondary);
+    cursor: pointer; transition: background .15s;
+    position: relative;
+  }
+  .agent-session-item:hover { background: rgba(65,187,200,0.06); }
+  .agent-session-item.active { background: rgba(65,187,200,0.12); color: var(--accent-cyan); font-weight: 500; }
+  .agent-session-item .session-icon { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.6; }
+  .agent-session-item .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-session-item .session-del {
+    opacity: 0; font-size: 14px; color: var(--text-muted);
+    padding: 2px 4px; border-radius: 4px; transition: opacity .15s;
+  }
+  .agent-session-item:hover .session-del { opacity: 1; }
+  .agent-session-item .session-del:hover { color: var(--danger); background: rgba(220,38,38,0.1); }
+  .agent-sidebar-footer { font-size: 10.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border-glass); }
+  .agent-sidebar-footer .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+  .agent-chat {
+    flex: 1; display: flex; flex-direction: column; gap: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md); padding: 18px;
+    overflow: hidden;
+  }
+  .agent-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; }
+  .agent-chat-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .agent-chat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .agent-chat-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .agent-chat-actions .btn-ghost, .agent-chat-actions .btn-primary { padding: 6px 12px; font-size: 12px; }
+  .agent-chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+  .agent-chat-input { flex-shrink: 0; display: flex; gap: 10px; align-items: flex-end; }
+  .agent-chat-input textarea {
+    flex: 1; resize: vertical; min-height: 44px; max-height: 120px;
+    padding: 10px 12px; border: 1px solid var(--border-glass);
+    border-radius: 10px; font-size: 13px; font-family: inherit; line-height: 1.6;
+    background: rgba(255,255,255,0.5); color: var(--text-primary); outline: none;
+  }
+  .agent-chat-input textarea:focus { border-color: var(--accent-cyan); }
+  .agent-chat-input .btn-primary { height: 42px; min-width: 80px; }
+
+  /* ===== 更多功能面板 ===== */
+  .more-panel {
+    display: none; position: fixed; z-index: 9999;
+    background: var(--bg-card); border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md); padding: 16px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+    min-width: 520px; max-width: 640px;
+    max-height: 70vh; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--border-glass) transparent;
+  }
+  .more-panel.open { display: block; }
+  .more-panel::-webkit-scrollbar { width: 6px; }
+  .more-panel::-webkit-scrollbar-track { background: transparent; }
+  .more-panel::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 3px; }
+  .more-panel-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border-glass); padding-bottom: 8px; cursor: move; user-select: none; position: relative; }
+  .more-panel-tabs::after { content: '⋮⋮'; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--text-muted); opacity: 0.5; pointer-events: none; letter-spacing: -2px; }
+  .more-panel-tab {
+    padding: 6px 12px; border-radius: 6px; font-size: 12px;
+    color: var(--text-secondary); cursor: pointer; transition: all .15s;
+  }
+  .more-panel-tab:hover { background: rgba(65,187,200,0.06); }
+  .more-panel-tab.active { background: rgba(65,187,200,0.12); color: var(--accent-cyan); font-weight: 600; }
+  .more-panel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .more-panel-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px; border-radius: 7px;
+    font-size: 12px; color: var(--text-secondary);
+    background: transparent; border: 1px solid transparent;
+    cursor: pointer; text-align: left; transition: all .15s;
+  }
+  .more-panel-btn:hover { background: rgba(65,187,200,0.06); border-color: var(--border-glass); color: var(--text-primary); }
+  .more-panel-btn.stub { opacity: 0.4; cursor: not-allowed; }
+  .more-panel-btn.stub:hover { background: transparent; border-color: transparent; }
+  .more-panel-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-glass); }
+  .more-panel-footer label { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  /* Agent 运行状态条 */
+  .agent-run-status {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-radius: 8px;
+    background: rgba(65,187,200,0.06); border: 1px solid rgba(65,187,200,0.2);
+    flex-shrink: 0;
+  }
+  .run-status-indicator { display: flex; align-items: center; gap: 8px; }
+  .run-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent-cyan);
+    animation: runPulse 1.5s ease-in-out infinite;
+  }
+  .run-dot.done { background: #22c55e; animation: none; }
+  .run-dot.error { background: #ef4444; animation: none; }
+  @keyframes runPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(65,187,200,0.4); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(65,187,200,0); }
+  }
+  .run-status-text { font-size: 12px; color: var(--text-primary); font-weight: 500; }
+  .run-status-actions { display: flex; gap: 6px; }
+
+  /* ===== 执行过程卡片式布局 ===== */
+  .run-cards { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+  .run-cards::-webkit-scrollbar { width: 5px; }
+  .run-cards::-webkit-scrollbar-track { background: transparent; }
+  .run-cards::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 3px; }
+  .run-card {
+    border: 1px solid var(--border-glass); border-radius: 10px;
+    padding: 10px 12px; background: var(--bg-card);
+    animation: cardSlideIn .25s ease-out;
+  }
+  @keyframes cardSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .run-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .run-card-type {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+  }
+  .run-card-type.thinking { background: rgba(139,92,246,0.12); color: #8b5cf6; }
+  .run-card-type.tool { background: rgba(59,130,246,0.12); color: #3b82f6; }
+  .run-card-type.code { background: rgba(16,185,129,0.12); color: #10b981; }
+  .run-card-type.context { background: rgba(245,158,11,0.12); color: #f59e0b; }
+  .run-card-type.system { background: rgba(239,68,68,0.12); color: #ef4444; }
+  .run-card-title { font-size: 12px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-card-state { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+  .run-card-state.ok { color: #22c55e; }
+  .run-card-state.error { color: #ef4444; }
+  .run-card-state.pending { color: #f59e0b; }
+  .run-card-body { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .run-card-body pre {
+    background: rgba(0,0,0,0.04); border-radius: 6px; padding: 8px 10px;
+    font-size: 11px; overflow-x: auto; margin: 6px 0; white-space: pre-wrap; word-break: break-all;
+  }
+  [data-theme="dark"] .run-card-body pre { background: rgba(255,255,255,0.05); }
+  .run-card-sub {
+    display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+    background: rgba(0,0,0,0.02); border-radius: 6px; margin-top: 4px; font-size: 11px;
+  }
+  [data-theme="dark"] .run-card-sub { background: rgba(255,255,255,0.03); }
+  .run-card-sub svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--text-muted); }
+  .run-card-sub .sub-label { color: var(--text-muted); flex-shrink: 0; }
+  .run-card-sub .sub-value { color: var(--text-primary); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-card-empty { text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
+  .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
+  .run-card-thinking::before { content: '💭 '; }
+
+  /* ===== 命令面板 ===== */
+  .cmd-palette-overlay {
+    display: none; position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,0.3); backdrop-filter: blur(4px);
+    align-items: flex-start; justify-content: center; padding-top: 15vh;
+  }
+  .cmd-palette-overlay.open { display: flex; }
+  .cmd-palette {
+    width: 560px; max-width: 90vw;
+    background: var(--bg-card); border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md); overflow: hidden;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+  }
+  .cmd-palette-input {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border-glass);
+  }
+  .cmd-palette-input svg { width: 18px; height: 18px; color: var(--text-muted); }
+  .cmd-palette-input input {
+    flex: 1; border: none; background: transparent; outline: none;
+    font-size: 14px; color: var(--text-primary); font-family: inherit;
+  }
+  .cmd-palette-list { max-height: 360px; overflow-y: auto; padding: 8px; }
+  .cmd-palette-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; color: var(--text-secondary); cursor: pointer;
+  }
+  .cmd-palette-item:hover, .cmd-palette-item.selected { background: rgba(65,187,200,0.1); color: var(--text-primary); }
+  .cmd-palette-item svg { width: 16px; height: 16px; }
+  .cmd-palette-item .cmd-group { font-size: 10px; color: var(--text-muted); margin-left: auto; }
+
+  /* 深色主题适配新组件 */
+  [data-theme="dark"] .agent-chat-input textarea { background: rgba(15,22,32,0.8); color: #e2e8f0; }
+  [data-theme="dark"] .global-nav { background: rgba(15,22,32,0.9); }
+  [data-theme="dark"] .agent-sidebar, [data-theme="dark"] .agent-chat { background: rgba(20,30,42,0.85); }
+  [data-theme="dark"] .more-panel { background: rgba(15,22,32,0.98); }
+  [data-theme="dark"] .cmd-palette { background: rgba(15,22,32,0.98); }
+
   /* UI 2.0 优化层·模块插入点 */
 </style>
 </head>
@@ -3145,147 +3481,55 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 <div class="stars" id="stars"></div>
 
 <div class="app-layout">
-  <!-- ===== Sidebar ===== -->
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <div class="logo-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#1c1610" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V12h-4V9.5C8.8 8.8 8 7.5 8 6a4 4 0 0 1 4-4z"/>
-          <path d="M5 12a7 7 0 0 0 14 0"/>
-          <circle cx="12" cy="17" r="2"/>
-        </svg>
-      </div>
-      <div class="logo-text">
+  <!-- ===== Global Top Nav ===== -->
+  <header class="global-nav">
+    <div class="global-nav-left">
+      <div class="global-nav-logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#1c1610" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V12h-4V9.5C8.8 8.8 8 7.5 8 6a4 4 0 0 1 4-4z"/>
+            <path d="M5 12a7 7 0 0 0 14 0"/>
+            <circle cx="12" cy="17" r="2"/>
+          </svg>
+        </div>
         <span class="logo-title">MemoryOS</span>
-        <span class="logo-sub">Shared Memory v0.3 · UI 09-11 23:36</span>
+        <span class="logo-sub" id="uiBuildNav">UI 09-11 23:36</span>
       </div>
     </div>
-
-    <nav class="sidebar-nav">
-      <div class="nav-section-label">总览</div>
-      <a class="nav-item active" data-route="summary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-        概览
-      </a>
-
-      <div class="nav-section-label">记忆库</div>
-      <a class="nav-item" data-route="all">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-        全部记忆
-        <span class="nav-badge">247</span>
-      </a>
-      <a class="nav-item" data-route="top">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        高价值 TOP
-      </a>
-      <a class="nav-item" data-route="zombies">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        待归档·僵尸
-        <span class="nav-badge">18</span>
-      </a>
-      <a class="nav-item" data-route="arbitrate">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-        仲裁队列
-        <span class="nav-badge" id="arbitrateBadge" style="display:none">0</span>
-      </a>
-
-      <div class="nav-section-label">分析</div>
-      <a class="nav-item" data-route="trend">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        趋势
-      </a>
-      <a class="nav-item" data-route="cross">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.5"/><path d="M8 2v20M16 2v20M2 8h20M2 16h20"/></svg>
-        跨工具
-      </a>
-      <a class="nav-item" data-route="audit">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        审计
-      </a>
-
-      <div class="nav-section-label">工作流</div>
-      <a class="nav-item" data-route="graph">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 9a5 5 0 0 0-5 5M12 15a5 5 0 0 1 5-5M9 12a3 3 0 0 0 3 3M15 12a3 3 0 0 1-3 3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.5 6.5l3 3M17.5 6.5l-3 3M6.5 17.5l3-3M17.5 17.5l-3-3"/></svg>
-        知识图谱
-      </a>
-      <a class="nav-item" data-route="tasks">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 8l-2 2 3 3 5-5 2 2"/><path d="M8 15h8"/></svg>
-        任务看板
-      </a>
-      <a class="nav-item" data-route="obsidian">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg>
-        笔记
-      </a>
-
-      <div class="nav-section-label">集成</div>
-      <a class="nav-item" data-route="agent">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9 19h6"/></svg>
-        Agent
-      </a>
-      <a class="nav-item" data-route="runs">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
-        执行中心
-        <span class="nav-badge" id="runsBadge" style="display:none">0</span>
-      </a>
-      <a class="nav-item" data-route="connect">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-        工具连接
-        <span class="nav-badge" id="connectedBadge">5</span>
-      </a>
-      <a class="nav-item" data-route="governance">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
-        治理中心
-      </a>
-      <a class="nav-item" data-route="ingest">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        采集消化
-      </a>
-      <a class="nav-item" data-route="rules">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        规则管理
-      </a>
-      <a class="nav-item" data-route="skills">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>
-        技能同步
-      </a>
+    <nav class="global-nav-scroll">
+      <a class="nav-item" data-route="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9 19h6"/></svg>Agent</a>
+      <a class="nav-item" data-route="all"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>全部记忆<span class="nav-badge">247</span></a>
+      <a class="nav-item" data-route="tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 8l-2 2 3 3 5-5 2 2"/><path d="M8 15h8"/></svg>任务看板</a>
+      <a class="nav-item" data-route="obsidian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg>笔记</a>
+      <a class="nav-item" data-route="graph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 9a5 5 0 0 0-5 5M12 15a5 5 0 0 1 5-5M9 12a3 3 0 0 0 3 3M15 12a3 3 0 0 1-3 3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.5 6.5l3 3M17.5 6.5l-3 3M6.5 17.5l3-3M17.5 17.5l-3-3"/></svg>知识图谱</a>
+      <a class="nav-item" data-route="runs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>执行中心<span class="nav-badge" id="runsBadge" style="display:none">0</span></a>
+      <a class="nav-item" data-route="connect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>工具连接<span class="nav-badge" id="connectedBadge">5</span></a>
+      <a class="nav-item" data-route="governance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>治理中心</a>
+      <a class="nav-item" data-route="trend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>趋势</a>
+      <a class="nav-item" data-route="cross"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.5"/><path d="M8 2v20M16 2v20M2 8h20M2 16h20"/></svg>跨工具</a>
+      <a class="nav-item" data-route="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>审计</a>
+      <a class="nav-item" data-route="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>高价值 TOP</a>
+      <a class="nav-item" data-route="zombies"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>待归档·僵尸<span class="nav-badge">18</span></a>
+      <a class="nav-item" data-route="arbitrate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>仲裁队列<span class="nav-badge" id="arbitrateBadge" style="display:none">0</span></a>
+      <a class="nav-item" data-route="ingest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>采集消化</a>
+      <a class="nav-item" data-route="rules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>规则管理</a>
+      <a class="nav-item" data-route="skills"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>技能同步</a>
+      <a class="nav-item" data-route="summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</a>
     </nav>
-
-    <div class="sidebar-footer">
-      <div class="daemon-status" id="daemonStatusBox" title="治理守护状态（点击刷新）">
-        <div class="status-dot" id="daemonStatusDot"></div>
-        <div class="daemon-text">治理守护 <strong id="daemonStatusText">检查中…</strong><br><span id="daemonStatusSub" style="font-size:10px;color:var(--text-muted)">衰减 · 归档 · 去重</span></div>
+    <div class="global-nav-right">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="语义检索记忆…" id="globalSearch">
       </div>
+      <button class="btn-ghost nav-icon-btn" title="导出"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+      <button class="btn-primary nav-icon-btn" id="createMemoryBtn" title="写入记忆"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
+      <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
     </div>
-  </aside>
+  </header>
 
   <!-- ===== Main ===== -->
   <main class="main-content">
-    <div class="topbar">
-      <div style="display:flex;align-items:center;gap:10px">
-        <button class="sidebar-toggle" id="sidebarToggle" title="菜单">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <div class="topbar-title" id="pageTitle">概览 <span>MemoryOS Dashboard</span></div>
-        <span id="uiBuild" style="font-size:10px;color:var(--accent-cyan);border:1px solid rgba(65,187,200,0.35);border-radius:4px;padding:1px 6px;white-space:nowrap;font-family:var(--font-mono)">UI 09-11 23:36</span>
-      </div>
-      <div class="topbar-actions">
-        <div class="search-box">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="语义检索记忆…" id="globalSearch">
-        </div>
-        <button class="btn-ghost">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          导出
-        </button>
-        <button class="btn-primary" id="createMemoryBtn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          写入记忆
-        </button>
-        <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
-        <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
-      </div>
-    </div>
-
     <!-- 加载失败：部分失败警示条（其余数据正常显示） -->
     <div id="loadErrorBar" style="display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.30);font-size:12px;color:var(--text-secondary);align-items:center;gap:10px">
       <span style="font-size:14px">⚠️</span>
@@ -4255,56 +4499,110 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
     </section>
 
-    <!-- ===== Page: Agent（C 路线：dashboard 内置智能体 · 复用 agent-core.js 与 MCP 18 工具）===== -->
+    <!-- ===== Page: Agent（V1重构：左侧会话边栏 + 右侧聊天区）===== -->
     <section class="page" id="page-agent">
-      <div class="glass-card mb-24">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>Agent — 内置智能体（MCP 18 工具 · 可插拔 LLM 端点）</div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <label class="text-muted" style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none" id="agentWriteWrap" title="默认只读：agent 的写类工具（记忆写入 / 任务流转 / 笔记写入）需先勾选同意">
-              <input type="checkbox" id="agentAllowWrites">
-              允许写入记忆库
-            </label>
-            <button class="btn-primary" id="agentClearBtn" style="background:rgba(65,187,200,0.12);color:var(--accent-cyan);border:1px solid rgba(65,187,200,0.25);box-shadow:none">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-              清空对话
-            </button>
+      <div class="agent-layout">
+        <!-- 左侧：会话边栏（豆包风格） -->
+        <aside class="agent-sidebar">
+          <div class="agent-sidebar-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="搜索会话…" id="agentSessionSearch">
+          </div>
+          <div class="agent-sidebar-quick">
+            <div class="agent-sidebar-quick-item" id="agentSideNew">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              新建会话
+            </div>
+            <div class="agent-sidebar-quick-item" id="agentSideTasks">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 8l-2 2 3 3 5-5 2 2"/><path d="M8 15h8"/></svg>
+              任务看板
+            </div>
+            <div class="agent-sidebar-quick-item" id="agentSideMem">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg>
+              沉淀记忆
+            </div>
+            <div class="agent-sidebar-quick-item" id="agentSideMore">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              更多功能
+            </div>
+          </div>
+          <div class="agent-sidebar-divider"></div>
+          <div class="agent-sidebar-label">会话</div>
+          <div class="agent-session-list" id="agentSessionList"></div>
+          <div class="agent-sidebar-footer">
+            <div class="status-dot" id="agentSidebarDot"></div>
+            <span id="agentSidebarStatus">治理守护 · 运行中</span>
+          </div>
+        </aside>
+
+        <!-- 右侧：聊天区 -->
+        <div class="agent-chat">
+          <div class="agent-chat-header">
+            <div>
+              <div class="agent-chat-title">Agent · 内置智能体</div>
+              <div class="agent-chat-sub" id="agentStatusLine">正在读取 agent 状态…</div>
+            </div>
+            <div class="agent-chat-actions">
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-muted);user-select:none" id="agentWriteWrap" title="默认只读：agent 的写类工具需先勾选同意">
+                <input type="checkbox" id="agentAllowWrites"> 允许写入
+              </label>
+              <button class="btn-ghost" id="agentClearBtn" style="padding:6px 10px;font-size:11px">清空</button>
+              <button class="btn-ghost" id="agentMoreBtn" style="padding:6px 10px;font-size:11px">⚙ 更多</button>
+            </div>
+          </div>
+          <!-- 运行状态条 -->
+          <div class="agent-run-status" id="agentRunStatus" style="display:none">
+            <div class="run-status-indicator">
+              <span class="run-dot"></span>
+              <span class="run-status-text" id="agentRunStatusText">准备中…</span>
+            </div>
+            <div class="run-status-actions">
+              <button class="btn-ghost run-stop-btn" id="agentRunStopBtn" style="padding:4px 10px;font-size:11px;color:#ef4444;border-color:rgba(239,68,68,0.3)">⏹ 停止生成</button>
+              <button class="btn-ghost" id="agentRunCopyBtn" style="padding:4px 10px;font-size:11px">📋 复制回复</button>
+              <button class="btn-ghost" id="agentRunExportBtn" style="padding:4px 10px;font-size:11px">⬇ 导出对话</button>
+            </div>
+          </div>
+          <div class="agent-chat-messages" id="agentChat">
+            <div class="text-muted" style="font-size:13px;padding:18px;text-align:center;line-height:2">
+              内置 agent 与 MCP 客户端（Codex / Claude / TRAE）共用同一套工具与记忆库。<br>
+              试着问：<span class="mono">当前项目最该先记住的一件事是什么？</span> · <span class="mono">有没有可做的任务？</span> · <span class="mono">备份策略是怎么定的？</span>
+              <br><span style="font-size:11px;opacity:.7">发送后执行过程（工具调用 / 产物 / diff）实时展开，点任意步骤可看详情。</span>
+            </div>
+          </div>
+          <!-- 执行过程实时时间线 -->
+          <div id="agentRunLive" style="display:none;border-top:1px dashed var(--border-glass);padding-top:10px">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+              <span class="text-muted" style="font-size:11px;font-weight:600">执行过程（实时）</span>
+              <span id="agentRunLiveMeta" class="text-muted mono" style="font-size:11px"></span>
+              <span id="agentRunLiveTimer" class="text-muted mono" style="font-size:11px">0s</span>
+              <button class="btn-ghost" id="agentRunLiveRefresh" style="padding:3px 9px;font-size:11px" title="手动刷新执行过程">↻ 刷新</button>
+              <button class="btn-ghost" id="agentRunLiveOpen" style="padding:3px 9px;font-size:11px">在「执行中心」查看 →</button>
+            </div>
+            <div id="agentRunLiveWarn" style="display:none;margin-bottom:8px;padding:6px 10px;border-radius:6px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);font-size:11px;color:#f59e0b">
+              ⏳ 执行时间较长，可能是模型响应慢或多轮工具调用。可点「刷新」手动拉取最新状态，或到「执行中心」查看详情。
+            </div>
+            <div id="agentRunLiveTimeline" class="run-cards" style="max-height:320px;overflow-y:auto"></div>
+          </div>
+          <div class="agent-chat-input">
+            <textarea id="agentInput" rows="2" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行）"></textarea>
+            <button class="btn-primary" id="agentSendBtn">发送</button>
           </div>
         </div>
-        <div class="text-muted" style="font-size:12px;line-height:1.8;margin-bottom:12px" id="agentStatusLine">正在读取 agent 状态…</div>
-        <!-- ★ 智能体驾驶舱：10 域控制按钮组（数据驱动，JS 渲染进 #agentCockpit；
-             ✓ 可点（接真实端点）/ ▫ 灰显「未启用」（缺口 tooltip 说明，不造假成功） -->
-        <details class="glass-card cockpit-panel" id="agentCockpit" open>
-          <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--text-muted);user-select:none;padding:6px 2px">
-            ⚙ 智能体驾驶舱（10 域控制） <span class="text-muted" style="font-weight:400">—— 灰显按钮为「未启用」，点击查看缺口</span>
-          </summary>
-          <div id="agentCockpitBody" style="padding-top:8px"></div>
-        </details>
-        <!-- 会话条：agent_sessions 持久化（切换/新建/删除；发消息自动追加） -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-          <span style="font-size:11px;color:var(--text-muted)">会话</span>
-          <div id="agentSessionBar" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
-          <button class="btn-ghost" id="agentSessionNewBtn" style="padding:4px 10px;font-size:11px">＋ 新建会话</button>
+      </div>
+
+      <!-- 更多功能弹出面板 -->
+      <div class="more-panel" id="agentMorePanel">
+        <div class="more-panel-tabs" id="agentMoreTabs">
+          <div class="more-panel-tab active" data-group="session">会话与任务</div>
+          <div class="more-panel-tab" data-group="permission">权限与安全</div>
+          <div class="more-panel-tab" data-group="memory">记忆与上下文</div>
+          <div class="more-panel-tab" data-group="model">模型与连接</div>
+          <div class="more-panel-tab" data-group="debug">调试与治理</div>
         </div>
-        <div id="agentChat" style="display:flex;flex-direction:column;gap:12px;max-height:46vh;overflow-y:auto;padding:4px 2px">
-          <div class="text-muted" style="font-size:13px;padding:18px;text-align:center;line-height:2">
-            内置 agent 与 MCP 客户端（Codex / Claude / TRAE）共用同一套工具与记忆库。<br>
-            试着问：<span class="mono">当前项目最该先记住的一件事是什么？</span> · <span class="mono">有没有可做的任务？</span> · <span class="mono">备份策略是怎么定的？</span>
-            <br><span style="font-size:11px;opacity:.7">发送后执行过程（工具调用 / 产物 / diff）实时展开在下方时间线，点任意步骤可看详情。</span>
-          </div>
-        </div>
-        <!-- ★ 执行过程实时时间线（agent 页内联）：SSE step/step_end 增量渲染，点步骤展开终端/diff/产物 -->
-        <div id="agentRunLive" style="display:none;margin-top:12px;border-top:1px dashed var(--border-glass);padding-top:10px">
-          <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
-            <span class="text-muted" style="font-size:11px;font-weight:600">执行过程（实时）</span>
-            <span id="agentRunLiveMeta" class="text-muted mono" style="font-size:11px"></span>
-            <button class="btn-ghost" id="agentRunLiveOpen" style="padding:3px 9px;font-size:11px;margin-left:auto">在「执行中心」查看 →</button>
-          </div>
-          <ol id="agentRunLiveTimeline" class="run-timeline" style="max-height:220px"></ol>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:14px;align-items:flex-end">
-          <textarea id="agentInput" rows="2" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行）" style="flex:1;resize:vertical;min-height:44px;padding:10px 12px;border:1px solid rgba(65,187,200,0.25);border-radius:10px;font-size:13px;font-family:inherit;line-height:1.6;background:rgba(255,255,255,0.7);color:var(--text-primary)"></textarea>
-          <button class="btn-primary" id="agentSendBtn" style="height:42px;min-width:88px">发送</button>
+        <div class="more-panel-grid" id="agentMoreGrid"></div>
+        <div class="more-panel-footer">
+          <label><input type="checkbox" id="agentShowStub"> 显示未启用功能</label>
+          <span style="font-size:10px;color:var(--text-muted)">共 47 项功能</span>
         </div>
       </div>
     </section>
@@ -4464,6 +4762,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="task-map-actions">
               <button class="btn-ghost" id="taskMapAutoBtn" title="自动连线并补充关联记忆子卡（语义相似；仅展示不落库）">自动关联</button>
               <button class="btn-ghost" id="taskMapLayoutBtn" title="重新计算节点位置">自动排布</button>
+              <button class="btn-ghost" id="taskMapArchiveViewBtn" title="归档任务默认隐藏；点击在地图中显示归档任务">📦 查看归档</button>
               <button class="btn-ghost" id="taskMapZoomOutBtn" aria-label="缩小" title="缩小">−</button>
               <button class="btn-ghost" id="taskMapZoomLabel" title="重置缩放">100%</button>
               <button class="btn-ghost" id="taskMapZoomInBtn" aria-label="放大" title="放大">＋</button>

@@ -33,6 +33,42 @@ export function registerCards(app, ctx) {
         artifact: "procedural",
         memory: "episodic",
     };
+    /* ★ 实时看板：卡片事件总线。所有变更都经过 writeCardEvent → 推给 /api/cards/stream 的 SSE 订阅者。
+     *  订阅者是 SSE 写函数，写失败（连接已断）即摘除。心跳防断连由 SSE 路由侧负责。 */
+    const cardSubs = new Set();
+    function pushCardEvt(evt) {
+        const payload = `event: card\ndata: ${JSON.stringify(evt)}\n\n`;
+        for (const sub of [...cardSubs]) {
+            try { sub(payload); } catch { cardSubs.delete(sub); }
+        }
+    }
+    /* ★ 跨进程事件补流（2026-09-18）：MCP server / daemon 等独立进程直写 card_events
+     *  （task_claim/task_done/task_release、apply-plan、mcp_reopen…），不经过本进程 pushCardEvt。
+     *  有订阅者时以 2s 轮询 card_events 增量补推（水位线 lastId）；与进程内即时推送重复无害
+     *  （前端 800ms 防抖合并）；无订阅者即停轮询。 */
+    let evtWatermark = 0, evtPoller = null;
+    function ensureEvtPoller() {
+        if (evtPoller)
+            return;
+        evtWatermark = Number(db.prepare(`SELECT COALESCE(MAX(id),0) m FROM card_events`).get()?.m ?? 0);
+        evtPoller = setInterval(() => {
+            try {
+                const rows = db.prepare(`SELECT id, card_id, actor, action, from_status, to_status FROM card_events WHERE id > ? ORDER BY id LIMIT 100`).all(evtWatermark);
+                for (const r of rows) {
+                    evtWatermark = Math.max(evtWatermark, Number(r.id));
+                    pushCardEvt({ type: r.action, cardId: Number(r.card_id), from: r.from_status ?? null, to: r.to_status ?? null, actor: r.actor, ts: Date.now() });
+                }
+            }
+            catch { /* 单轮失败下轮重试 */ }
+        }, 2000);
+        evtPoller.unref?.();
+    }
+    function stopEvtPoller() {
+        if (evtPoller) {
+            clearInterval(evtPoller);
+            evtPoller = null;
+        }
+    }
     function cardRowOf(r) {
         return {
             id: Number(r.id), board: r.board, kind: r.kind, title: r.title, body: r.body, status: r.status,
@@ -57,6 +93,7 @@ export function registerCards(app, ctx) {
     function writeCardEvent(cardId, actor, action, fromStatus, toStatus, detail) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail)
        VALUES (?,?,?,?,?,?)`).run(cardId, actor, action, fromStatus ?? null, toStatus ?? null, detail ?? null);
+        try { pushCardEvt({ type: action, cardId: Number(cardId), from: fromStatus ?? null, to: toStatus ?? null, actor, ts: Date.now() }); } catch { /* 推送失败不影响落库 */ }
     }
     /** ★ 2026-09-15：卡片状态 → 关联 task 记忆状态头回写（task_assign 建的卡 ref_kind='memory'，dispatch 关联）。
      *  卡片流转会同步 memories 里对应 type='task' 的内容头 [status:]，保持「地图卡 ↔ MCP 任务」双向一致。 */
@@ -374,6 +411,27 @@ export function registerCards(app, ctx) {
             if (buckets[c.status])
                 buckets[c.status].push(c);
         return { total: list.length, buckets, lanes: [...new Set(list.map((c) => c.lane).filter(Boolean))] };
+    });
+    /** ★ 实时看板 SSE：卡片任何变更（经 writeCardEvent 中心点）即时推给前端；25s 心跳防断连。
+     *  鉴权走全局 onRequest hook（同源 EventSource 自动带 memoryos_token cookie，与 /api/agent/runs/:id/stream 同体例）。
+     *  注：静态路径 /api/cards/stream 优先于 /api/cards/:id 参数匹配（find-my-way 静态优先，同 /api/cards/archive）。 */
+    app.get("/api/cards/stream", (req, reply) => {
+        reply.raw.writeHead(200, {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            "connection": "keep-alive",
+        });
+        const send = (s) => { try { reply.raw.write(s); } catch { /* 连接已断 */ } };
+        send(": cards stream\n\n");
+        const ping = setInterval(() => send(": ping\n\n"), 25000);
+        cardSubs.add(send);
+        ensureEvtPoller(); // 有订阅者才跑跨进程事件补流
+        req.raw.on("close", () => {
+            clearInterval(ping);
+            cardSubs.delete(send);
+            if (!cardSubs.size)
+                stopEvtPoller();
+        });
     });
     app.post("/api/cards", async (req, reply) => {
         if (RESTRICTED)

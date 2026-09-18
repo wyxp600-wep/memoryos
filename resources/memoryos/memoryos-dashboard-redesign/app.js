@@ -1,4 +1,4 @@
-// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）
+﻿// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）
 // 同源 fetch /api/*；后端无能力处降级展示。依赖全局 echarts。
 //
 // 【安全标注 · 供静态扫描】本文件是纯浏览器端脚本（index.html <script src="./app.js"> 加载）。
@@ -1092,7 +1092,7 @@
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
     $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + route));
     const [t, s] = PAGE_TITLES[route] || [route, ''];
-    $('#pageTitle').innerHTML = t + ' <span>' + s + '</span>';
+    // $('#pageTitle').innerHTML = t + ' <span>' + s + '</span>';
     document.title = t + ' - MemoryOS';
     location.hash = route;
     if (route === 'trend') window.EChartsLoaded.when(drawTrendCharts);
@@ -1108,12 +1108,24 @@
     if (route === 'skills' && initSkills) initSkills();
     if (route === 'graph' && initGraph) initGraph();
     if (route === 'tasks' && initTasks) initTasks();
+    /* ★ 实时看板：进任务看板开卡片 SSE（变更即重画当前视图），离开即关 */
+    if (route === 'tasks') _cardsStreamStart(); else _cardsStreamStop();
     // ★ UI2.0：入场动画结束后统一重算图表尺寸，修正 ECharts 在容器尺寸未稳定时初始化导致的挤压/只显首点
     setTimeout(() => { try { resizeAllCharts(); } catch { /* ignore */ } }, 340);
   }
   function bindNav() {
     $$('.nav-item').forEach(item => item.onclick = () => navigate(item.dataset.route));
-    window.addEventListener('hashchange', () => { const r = location.hash.slice(1) || 'summary'; if (PAGE_TITLES[r]) navigate(r); });
+    window.addEventListener('hashchange', () => { const r = location.hash.slice(1) || 'agent'; if (PAGE_TITLES[r]) navigate(r); });
+    // 顶部导航栏鼠标滚轮横向滚动
+    const navScroll = document.querySelector('.global-nav-scroll');
+    if (navScroll) {
+      navScroll.addEventListener('wheel', (e) => {
+        if (e.deltaY !== 0) {
+          e.preventDefault();
+          navScroll.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+    }
   }
 
   let trendDrawn = false, crossChartsDrawn = false;
@@ -2428,6 +2440,23 @@
     if (_taskViewMode === 'map') return renderTaskMap();
     if (_taskViewMode === 'legacy') return loadTasks();
     return renderCards();
+  }
+  /* ★ 实时看板 SSE：卡片任何变更（后端 /api/cards/stream，writeCardEvent 中心点推送）
+   * → 800ms 防抖 → 重画当前视图。鉴权走同源 cookie（EventSource 自动带 memoryos_token）。
+   * 进任务看板页时建、离开时关（navigate 统一调）。 */
+  let _cardsEs = null, _cardsRefreshTimer = null;
+  function _cardsStreamStart() {
+    if (typeof EventSource === 'undefined') return;
+    if (_cardsEs) return; // 已开（同页重复 navigate 不重连）
+    _cardsEs = new EventSource('/api/cards/stream');
+    _cardsEs.addEventListener('card', () => {
+      if (_cardsRefreshTimer) clearTimeout(_cardsRefreshTimer);
+      _cardsRefreshTimer = setTimeout(() => { _cardsRefreshTimer = null; refreshCurrentTaskView(); }, 800); // 批量合并，避免高频重画
+    });
+  }
+  function _cardsStreamStop() {
+    if (_cardsEs) { _cardsEs.close(); _cardsEs = null; }
+    if (_cardsRefreshTimer) { clearTimeout(_cardsRefreshTimer); _cardsRefreshTimer = null; }
   }
   async function loadTasks() {
     const board = $('#tasksBoard');
@@ -3826,6 +3855,7 @@
     data: { nodes: [], links: [] },
     positions: new Map(),
     auto: (() => { try { return (localStorage.getItem('memoryos-map-auto') ?? '1') !== '0'; } catch { return true; } })(), // ★ 2026-09-14 自动关联开关（?auto=0/1）
+    showArchived: (() => { try { return localStorage.getItem('memoryos-map-archived') === '1'; } catch { return false; } })(), // ★ 2026-09-18 归档任务默认隐藏（工具栏「查看归档」切换）
     scale: 1,
     x: 0,
     y: 0,
@@ -4067,7 +4097,8 @@
     renderTaskMapEdges(); // 边渲染抽离（拖动时增量复用）
 
     // ★ 2026-09-15：地图状态三态（未完成 / 已完成 / 已归档）；细粒度状态仍在卡片抽屉与右键菜单；终结态不再误标的「未完成」
-    const statusBucket = (s) => { const st = String(s); if (st === 'done') return { label: '已完成', color: '#10b981' }; if (st === 'archived' || st === 'cancelled' || st === 'failed') return { label: '已归档', color: '#64748b' }; return { label: '未完成', color: '#06b6d4' }; };
+    // ★ 2026-09-18：running 单列「已领取」（琥珀色）—— 认领者是谁一眼可见（配合 SSE 实时推送）
+    const statusBucket = (s) => { const st = String(s); if (st === 'done') return { label: '已完成', color: '#10b981' }; if (st === 'running') return { label: '已领取', color: '#f59e0b' }; if (st === 'archived' || st === 'cancelled' || st === 'failed') return { label: '已归档', color: '#64748b' }; return { label: '未完成', color: '#06b6d4' }; };
     const nodeById = new Map(nodes.map(x => [Number(x.id), x]));
     const auxKindOf = new Map();
     const hostOf = new Map(); // 辅助卡 → 宿主卡（辅助卡没有自身状态：标签/过滤/连线都跟随宿主）
@@ -4085,9 +4116,12 @@
       if (!position) return;
       const isAux = String(node.kind) === 'aux' || String(node.kind).startsWith('aux_');
       // 辅助卡：右上标签显示挂载类型（非 完成/未完成），边框色用类型色
+      // ★ 2026-09-18：running 且有认领者 → 标签直显「已领取·智能体名」（实时：SSE claim 事件 → 800ms 防抖重画）
       const status = isAux
         ? { label: AUX_LABELS_LOCAL[auxKindOf.get(node.id)] || '辅助卡', color: (TASK_MAP_LINK_STYLE[auxKindOf.get(node.id)] || { color: '#64748b' }).color }
-        : statusBucket(node.status);
+        : (String(node.status) === 'running' && node.assignee
+          ? { label: `已领取·${String(node.assignee).slice(0, 14)}`, color: '#f59e0b' }
+          : statusBucket(node.status));
       const progress = Number(node.meta && node.meta.progress && node.meta.progress.percent);
       const progressText = Number.isFinite(progress) ? `${Math.round(progress)}%` : '';
       const priorityText = Number(node.priority || 0) > 0 ? `P${Number(node.priority)}` : '';
@@ -4396,13 +4430,31 @@
       }
       return;
     }
-    _taskMapState.data = { nodes: data.nodes || [], links: data.links || [] };
+    // ★ 2026-09-18：归档任务默认隐藏 —— 隐藏时剔掉 status='archived' 主卡、挂到它们的连线、
+    //   以及失去宿主的 aux_ 动态子卡。chips 计数仍用全量（「已归档」chip 计数即隐藏提示，点击自动揭开）
+    const viewNodes = data.nodes || [], viewLinks = data.links || [];
+    let keptNodes = viewNodes, keptLinks = viewLinks;
+    if (!_taskMapState.showArchived) {
+      const gone = new Set();
+      viewNodes.forEach(n => {
+        const nk = String(n.kind);
+        if (nk === 'aux' || nk.startsWith('aux_')) return; // aux 子卡跟随宿主，单独处理
+        if (String(n.status) === 'archived') gone.add(String(n.id));
+      });
+      if (gone.size) {
+        keptLinks = viewLinks.filter(l => !gone.has(String(l.src_id)) && !gone.has(String(l.dst_id)));
+        const auxTouched = new Set();
+        keptLinks.forEach(l => { const lk = String(l.kind); if (lk.startsWith('aux_')) { auxTouched.add(String(l.src_id)); auxTouched.add(String(l.dst_id)); } });
+        keptNodes = viewNodes.filter(n => !gone.has(String(n.id)) && !(String(n.kind).startsWith('aux_') && !auxTouched.has(String(n.id))));
+      }
+    }
+    _taskMapState.data = { nodes: keptNodes, links: keptLinks };
     // ★ 2026-09-13：状态二态 chips（已完成 / 未完成；细粒度状态仍在卡片抽屉与右键菜单保留；点击过滤，再点/全部=清除）
     const chips = $('#taskMapChips');
-    if (chips && data.nodes) {
+    if (chips && viewNodes.length) {
       // ★ 2026-09-15：状态三态 chips（未完成 / 已完成 / 已归档）；终结态(archived/cancelled/failed)归「已归档」，不再混入「未完成」
       let open = 0, done = 0, terminal = 0;
-      data.nodes.forEach(n => {
+      viewNodes.forEach(n => {
         const nk = String(n.kind);
         if (nk === 'aux' || nk.startsWith('aux_')) return; // 辅助卡是挂载物，不计入任务统计
         const b = n.bucket != null ? n.bucket : (String(n.status) === 'done' ? 'done' : (['archived', 'cancelled', 'failed'].includes(String(n.status)) ? 'terminal' : 'open'));
@@ -4416,7 +4468,13 @@
       chips.innerHTML = chipDefs.map(([k, l, color, c]) =>
         c ? `<button class="task-map-chip" data-chip="${k}" style="${_taskMapFilter === k ? 'outline:2px solid ' + color + ';outline-offset:1px' : ''}"><i style="background:${color}"></i>${l} ${c}</button>` : ''
       ).join('') + '<button class="task-map-chip" data-chip="" title="清除过滤">全部</button>';
-      chips.querySelectorAll('[data-chip]').forEach(b => { b.onclick = () => { _taskMapFilter = b.dataset.chip || null; renderTaskMap(); }; });
+      chips.querySelectorAll('[data-chip]').forEach(b => b.onclick = () => {
+        const chip = b.dataset.chip || null;
+        _taskMapFilter = chip;
+        // 点「已归档」过滤需先让归档数据可见（默认隐藏时自动揭开，与工具栏按钮同步）
+        if (chip === 'terminal' && !_taskMapState.showArchived) _taskMapSetShowArchived(true);
+        renderTaskMap();
+      });
     }
     drawTaskMap();
     if (opts.fit || !_taskMapState.hasView) requestAnimationFrame(fitTaskMap);
@@ -4428,6 +4486,18 @@
     btn.className = _taskMapState.auto ? 'btn-primary' : 'btn-ghost';
     btn.textContent = _taskMapState.auto ? '自动关联 ✓' : '自动关联';
     btn.title = _taskMapState.auto ? '自动关联已开启：语义连线+关联记忆子卡；点击关闭' : '自动关联已关闭；点击开启语义连线+关联记忆子卡';
+  }
+  // ★ 2026-09-18：「查看归档」按钮态（默认隐藏归档=高亮提示可点开；显示归档=ghost）
+  function refreshArchiveViewBtn(btn) {
+    if (!btn) return;
+    btn.className = _taskMapState.showArchived ? 'btn-ghost' : 'btn-primary';
+    btn.textContent = _taskMapState.showArchived ? '隐藏归档' : '📦 查看归档';
+    btn.title = _taskMapState.showArchived ? '归档任务已显示在地图中；点击隐藏归档任务' : '归档任务默认隐藏；点击在地图中显示归档任务';
+  }
+  function _taskMapSetShowArchived(on) {
+    _taskMapState.showArchived = on;
+    try { localStorage.setItem('memoryos-map-archived', on ? '1' : '0'); } catch { /* ignore */ }
+    refreshArchiveViewBtn($('#taskMapArchiveViewBtn'));
   }
 
   function bindTaskMapControls() {
@@ -4483,6 +4553,14 @@
     };
     // 首次按持久化状态刷新按钮样式
     refreshAutoBtn(autoBtn);
+    // ★ 2026-09-18：「查看归档」切换 —— 归档任务默认隐藏，点击在地图中显示/隐藏（持久化 localStorage）
+    const archViewBtn = $('#taskMapArchiveViewBtn');
+    if (archViewBtn) archViewBtn.onclick = () => {
+      _taskMapSetShowArchived(!_taskMapState.showArchived);
+      toast(_taskMapState.showArchived ? '已显示归档任务' : '已隐藏归档任务（「已归档」chip 点击仍可临时查看）');
+      renderTaskMap({ fit: false });
+    };
+    refreshArchiveViewBtn(archViewBtn);
     const fitBtn = $('#taskMapFitBtn');
     if (fitBtn) fitBtn.onclick = fitTaskMap;
     const zoomOut = $('#taskMapZoomOutBtn');
@@ -4841,20 +4919,50 @@
 
   /* ★ 执行中心内联时间线（agent 页一体化）：发送即 SSE 实时渲染，点步骤展开终端/diff/产物。
      数据源：POST /api/agent/runs（立即回 runId）+ SSE /stream；步骤详情复用 /api/agent/runs/:id。 */
-  let _agentRunLiveEs = null, _agentRunLivePoll = null, _agentRunLiveId = null, _agentRunLiveSteps = [];
+  let _agentRunLiveEs = null, _agentRunLivePoll = null, _agentRunLiveId = null, _agentRunLiveSteps = [], _agentRunLiveTimer = null, _agentRunLiveSeconds = 0;
   function _agentRunLiveStart(runId) {
     _agentRunLiveId = runId;
     _agentRunLiveSteps = [];
     const wrap = $('#agentRunLive');
-    wrap.style.display = '';
+    if (wrap) wrap.style.display = 'block';
     const tl = $('#agentRunLiveTimeline');
-    tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">agent 运行中，工具调用实时追加…</li>';
-    $('#agentRunLiveMeta').textContent = '';
+    if (tl) tl.innerHTML = '<div class="run-card-empty">agent 运行中，执行过程将实时显示在这里…</div>';
+    const meta = $('#agentRunLiveMeta');
+    if (meta) meta.textContent = '';
     // 「在执行中心查看」跳转
     const openBtn = $('#agentRunLiveOpen');
-    openBtn.onclick = () => { location.hash = 'runs'; };
+    if (openBtn) openBtn.onclick = () => { location.hash = 'runs'; };
+    // 手动刷新按钮
+    const refreshBtn = $('#agentRunLiveRefresh');
+    if (refreshBtn) refreshBtn.onclick = () => {
+      fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).then(j => {
+        if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); }
+      }).catch(() => {});
+    };
+    // 启动计时器
+    _agentRunLiveSeconds = 0;
+    const timerEl = $('#agentRunLiveTimer');
+    const warnEl = $('#agentRunLiveWarn');
+    if (warnEl) warnEl.style.display = 'none';
+    if (_agentRunLiveTimer) clearInterval(_agentRunLiveTimer);
+    _agentRunLiveTimer = setInterval(() => {
+      _agentRunLiveSeconds++;
+      if (timerEl) timerEl.textContent = _agentRunLiveSeconds + 's';
+      // 30秒无步骤显示提示
+      if (_agentRunLiveSeconds >= 30 && !_agentRunLiveSteps.length && warnEl) {
+        warnEl.style.display = 'block';
+      }
+    }, 1000);
     const on = (type, d) => {
-      if (type === 'step') {
+      if (type === 'thinking' || type === 'reasoning') {
+        const card = { stepId: 'think-' + Date.now(), type: 'thinking', content: d.content || d.text || '', state: 'ok', tool: '思考' };
+        _agentRunLiveSteps.push(card);
+        _agentRunLiveRender();
+      } else if (type === 'context') {
+        const card = { stepId: 'ctx-' + Date.now(), type: 'context', content: d.content || d.systemPrompt || '', state: 'ok', tool: '上下文注入' };
+        _agentRunLiveSteps.push(card);
+        _agentRunLiveRender();
+      } else if (type === 'step') {
         const st = _agentRunLiveSteps.find(x => x.stepId === d.stepId) || { stepId: d.stepId, tool: d.tool, argsPreview: d.argsPreview, state: 'pending' };
         st.state = 'pending'; st.argsPreview = d.argsPreview || st.argsPreview; st.tool = d.tool;
         if (!_agentRunLiveSteps.includes(st)) _agentRunLiveSteps.push(st);
@@ -4876,7 +4984,7 @@
       }
     };
     _agentRunLiveEs = new EventSource('/api/agent/runs/' + encodeURIComponent(runId) + '/stream');
-    ['step', 'step_end', 'write_denied', 'answer', 'done'].forEach(ev => _agentRunLiveEs.addEventListener(ev, e => { try { on(ev, JSON.parse(e.data)); } catch {} }));
+    ['step', 'step_end', 'thinking', 'reasoning', 'context', 'write_denied', 'answer', 'done'].forEach(ev => _agentRunLiveEs.addEventListener(ev, e => { try { on(ev, JSON.parse(e.data)); } catch {} }));
     _agentRunLiveEs.onerror = () => {
       // 降级轮询（2s）
       if (_agentRunLivePoll) return;
@@ -4889,35 +4997,64 @@
   function _agentRunLiveStop() {
     if (_agentRunLiveEs) { _agentRunLiveEs.close(); _agentRunLiveEs = null; }
     if (_agentRunLivePoll) { clearInterval(_agentRunLivePoll); _agentRunLivePoll = null; }
+    if (_agentRunLiveTimer) { clearInterval(_agentRunLiveTimer); _agentRunLiveTimer = null; }
   }
   function _agentRunLiveRender() {
     const tl = $('#agentRunLiveTimeline');
+    if (!tl) return;
     tl.innerHTML = '';
-    if (!_agentRunLiveSteps.length) { tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">（尚无工具调用）</li>'; return; }
+    if (!_agentRunLiveSteps.length) { tl.innerHTML = '<div class="run-card-empty">agent 运行中，执行过程将实时显示在这里…</div>'; return; }
     for (const s of _agentRunLiveSteps) {
-      const li = document.createElement('li');
-      li.className = 'tl-step';
-      const cls = s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : s.state === 'pending' ? 'pending' : 'denied';
-      const ico = s.state === 'ok' ? '✓' : s.state === 'error' ? '✗' : s.state === 'pending' ? '◌' : '✋';
-      const ms = s.elapsedMs != null ? (s.elapsedMs / 1000).toFixed(1) + 's' : '';
-      li.innerHTML = `<span class="tl-node ${cls}">${ico}</span>
-        <div class="tl-body">
-          <div class="tl-line1"><span class="tl-tool">${esc(s.tool)}</span><span class="tl-args">${esc(s.argsPreview || '')}</span><span class="tl-state">${esc(s.state)}${ms ? ' · ' + ms : ''}</span></div>
-          ${s.preview ? `<div class="tl-preview">${esc(s.preview)}</div>` : ''}
-          ${s.hasDiff ? `<button class="tl-open-diff" data-a="diff">查看 diff</button>` : ''}
-          ${s.artifactPath ? `<button class="tl-open-diff" data-a="art">查看产物</button>` : ''}
-          ${s.argsPreview ? `<details class="tl-args-d"><summary>参数 JSON</summary><pre>${esc(s.argsPreview)}</pre></details>` : ''}
-          <div data-detail="${s.stepId}" style="display:none;margin-top:6px"></div>
-        </div>`;
-      // 点击行展开详情；diff/产物按钮各自由专用处理
-      li.querySelector('.tl-body').onclick = (e) => {
-        if (e.target.dataset.a === 'diff') { _agentRunLiveDetail(s.stepId, true); return; }
-        if (e.target.dataset.a === 'art') { _agentRunLiveDetail(s.stepId, false, true); return; }
-        if (e.target.closest('details')) return;
+      const card = document.createElement('div');
+      card.className = 'run-card';
+      // 判断类型
+      let cardType = 'tool';
+      if (s.type === 'thinking') cardType = 'thinking';
+      else if (s.type === 'context') cardType = 'context';
+      else if (s.tool && (s.tool.includes('write') || s.tool.includes('文件') || s.tool.includes('Bash') || s.tool.includes('shell'))) cardType = 'code';
+      const typeLabel = { thinking: '思考', tool: '工具', code: '代码', context: '上下文', system: '系统' }[cardType] || '工具';
+      const stateCls = s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : 'pending';
+      const stateText = s.state === 'ok' ? '完成' : s.state === 'error' ? '失败' : '进行中';
+      const ms = s.elapsedMs != null ? ' · ' + (s.elapsedMs / 1000).toFixed(1) + 's' : '';
+      // 构建内容
+      let bodyHtml = '';
+      if (s.type === 'thinking') {
+        bodyHtml = `<div class="run-card-thinking">${esc(s.content || s.preview || '思考中…')}</div>`;
+      } else if (s.type === 'context') {
+        bodyHtml = `<div class="run-card-body">注入系统提示词</div><pre>${esc(s.content || '')}</pre>`;
+      } else {
+        // 工具调用卡片
+        if (s.argsPreview) bodyHtml += `<div class="run-card-body">${esc(s.argsPreview)}</div>`;
+        if (s.preview) bodyHtml += `<pre>${esc(s.preview)}</pre>`;
+        // 子操作（写入文件、执行命令等）
+        if (s.subOps && s.subOps.length) {
+          for (const op of s.subOps) {
+            const opIcon = op.type === 'write' ? '📝' : op.type === 'bash' ? '⌨️' : '🔧';
+            bodyHtml += `<div class="run-card-sub"><span>${opIcon}</span><span class="sub-label">${esc(op.type === 'write' ? '写入' : op.type === 'bash' ? 'Bash' : op.type)}</span><span class="sub-value">${esc(op.value || '')}</span></div>`;
+          }
+        }
+        if (s.hasDiff) bodyHtml += `<button class="btn-ghost" style="padding:3px 8px;font-size:10px;margin-top:4px" data-a="diff">查看 diff</button>`;
+        if (s.artifactPath) bodyHtml += `<button class="btn-ghost" style="padding:3px 8px;font-size:10px;margin-top:4px;margin-left:4px" data-a="art">查看产物</button>`;
+      }
+      card.innerHTML = `
+        <div class="run-card-header">
+          <span class="run-card-type ${cardType}">${typeLabel}</span>
+          <span class="run-card-title">${esc(s.tool || s.stepId)}</span>
+          <span class="run-card-state ${stateCls}">${stateText}${ms}</span>
+        </div>
+        ${bodyHtml}
+        <div data-detail="${s.stepId}" style="display:none;margin-top:6px"></div>`;
+      // 点击展开详情
+      card.onclick = (e) => {
+        if (e.target.dataset.a === 'diff') { _agentRunLiveDetail(s.stepId, true); e.stopPropagation(); return; }
+        if (e.target.dataset.a === 'art') { _agentRunLiveDetail(s.stepId, false, true); e.stopPropagation(); return; }
+        if (e.target.tagName === 'BUTTON' || e.target.closest('details')) return;
         _agentRunLiveDetail(s.stepId);
       };
-      tl.appendChild(li);
+      tl.appendChild(card);
     }
+    // 自动滚动到底部
+    tl.scrollTop = tl.scrollHeight;
   }
   async function _agentRunLiveDetail(stepId, focusDiff, focusArtifact) {
     // 拉该 run 全量（含 diff 字段），定位该步骤渲染详情
@@ -4928,7 +5065,7 @@
     s._diff = s.diff || null;
     const box = document.querySelector(`#agentRunLiveTimeline [data-detail="${stepId}"]`);
     if (!box) return;
-    $$('#agentRunLiveTimeline .tl-step').forEach(x => x.classList.toggle('sel', Number(x.dataset.step) === stepId));
+    $$('#agentRunLiveTimeline .run-card').forEach(x => x.classList.toggle('sel', x.querySelector('[data-detail=""]') !== null));
     // 收起其他已展开详情
     $$('#agentRunLiveTimeline [data-detail]').forEach(b => { if (b !== box) b.style.display = 'none'; });
     let html = '';
@@ -4961,6 +5098,7 @@
     const text = (input && input.value || '').trim();
     if (!text || !chat) return;
     agentBusy = true;
+    showRunStatus('正在思考…');
     if (chat.dataset.empty === '1') { chat.innerHTML = ''; chat.dataset.empty = '0'; }
     if (input) input.value = '';
     chat.appendChild(agentBubble('user', esc(text)));
@@ -4983,9 +5121,16 @@
       if (!res.ok || !j.ok || !j.runId) {
         pending.remove();
         chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ ${esc(j.error || ('HTTP ' + res.status))}</span>`));
+        setRunStatus('请求失败', 'error');
+        agentBusy = false;
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
         return;
       }
       _agentRunLiveStart(j.runId);
+      // ★ 驾驶舱「并行数」排队：超出并发上限的 run 先排队，空位腾出后自动启动（SSE 已挂上，启动即出事件）
+      if (j.status === 'queued') {
+        pending.innerHTML = '<span class="text-muted">已加入执行队列（前面 ' + (j.queueAhead || 0) + ' 个，上限 ' + (j.cap || '?') + '）——空位腾出自动开跑，过程照常实时展开…</span>';
+      }
       // 等 SSE 终态（answer 事件触发 _agentRunLiveStop + 拉全量补结果）后再补聊天气泡
       await new Promise((resolve) => {
         const t0 = Date.now();
@@ -5003,6 +5148,7 @@
       const deniedNote = fin && fin.status === 'failed' ? `<div style="margin-top:6px;font-size:12px;color:var(--danger)">⚠ 运行失败：${esc(fin.error || '')}</div>` : '';
       chat.appendChild(agentBubble('assistant', esc(answer) + deniedNote));
       AGENT_HISTORY.push({ role: 'user', content: text }, { role: 'assistant', content: answer });
+      setRunStatus('已完成', 'done');
       if (AGENT_HISTORY.length > 16) AGENT_HISTORY.splice(0, AGENT_HISTORY.length - 16);
       // 会话条计数刷新（后端 startRun 已自动把本轮追加进 agent_sessions）
       if (_agentSessionKey) { _agentSessions.forEach(x => { if (x.session_key === _agentSessionKey) x.msg_count = (x.msg_count || 0) + 2; }); _agentSessionChips(); }
@@ -5010,6 +5156,7 @@
       pending.remove();
       chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ 请求失败：${esc(e.message)}</span>`));
       _agentRunLiveStop();
+      setRunStatus('运行失败', 'error');
     } finally {
       agentBusy = false;
       if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
@@ -5043,10 +5190,19 @@
     if (clear) clear.onclick = () => {
       AGENT_HISTORY.length = 0;
       if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
+      hideRunStatus();
     };
-    // ★ 智能体驾驶舱（10 域控制按钮组；替换旧 4 按钮常驻条）
-    initAgentCockpit();
-    initAgentSessionsBar();   // 会话条（agent_sessions 持久化）
+    // 运行状态条按钮
+    const runStop = $('#agentRunStopBtn');
+    if (runStop) runStop.onclick = () => _cockpitDispatch({ dataset: { act: '_agentCockpitAbort' } });
+    const runCopy = $('#agentRunCopyBtn');
+    if (runCopy) runCopy.onclick = () => _cockpitDispatch({ dataset: { act: '_agentCockpitCopy' } });
+    const runExport = $('#agentRunExportBtn');
+    if (runExport) runExport.onclick = () => _cockpitDispatch({ dataset: { act: '_agentCockpitExportChat' } });
+    // ★ V1重构：更多功能面板 + 会话列表边栏
+    initAgentMorePanel();
+    initAgentSessionList();   // 会话列表（左侧边栏）
+    initAgentSidebarButtons(); // 边栏快捷按钮绑定
   }
   /* ===== 智能体驾驶舱：10 域控制按钮组（数据驱动渲染）=====
      纪律：✓ 可点=接真实端点；▫ 灰显「未启用」=后端缺口，点击弹 tooltip 说明，绝不造假成功（B3 呈现层）。 */
@@ -5064,8 +5220,8 @@
       { label: '✅ 验收', kind: 'real', act: '_agentCockpitCard', arg: 'accept', hint: '需先在看板选中卡片' },
       { label: '↩ 打回', kind: 'real', act: '_agentCockpitCard', arg: 'refine', hint: '需先在看板选中卡片' },
       { label: '📦 归档', kind: 'real', act: '_agentCockpitCard', arg: 'archive', hint: '需先在看板选中卡片' },
-      { label: '自动拆解', kind: 'stub', why: '未启用：任务自动拆解需内核 planner（单独立项）' },
-      { label: '回滚', kind: 'stub', why: '未启用：步骤回滚需 checkpoint 机制（单独立项）' },
+      { label: '自动拆解', kind: 'real', act: '_agentCockpitDecompose', hint: 'LLM 把目标拆成可派发子任务' },
+      { label: '回滚', kind: 'real', act: '_agentCockpitRollback', hint: '还原某次文件写入的写前快照（≤50KB）' },
       { label: '分支探索', kind: 'stub', why: '未启用：分支/合并需多 agent 编排（单独立项）' },
     ]},
     { domain: '③ 自主权模式', open: true, btns: [
@@ -5079,7 +5235,7 @@
       { label: '工具面', kind: 'real', act: '_agentCockpitToolFace' },
       { label: '重启 MCP', kind: 'real', act: '_agentCockpitMcpRestart' },
       { label: '密钥管理', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
-      { label: '执行工具开关', kind: 'stub', why: '未启用：执行面默认关（MEMORYOS_EXEC_ON），需配置注入' },
+      { label: '执行工具开关', kind: 'real', act: '_agentCockpitExecToggle', hint: '开/关 file_read/file_write/exec_run（重 spawn MCP）' },
       { label: '浏览器控制', kind: 'stub', why: '未启用：browser_* 工具域（YAGNI 不做）' },
     ]},
     { domain: '⑤ 审批安全', btns: [
@@ -5096,21 +5252,21 @@
       { label: '压缩会话', kind: 'real', act: '_agentCockpitCompact' },
       { label: '导出记忆', kind: 'real', act: '_agentCockpitExportMem' },
       { label: '重建索引', kind: 'real', act: '_agentCockpitReindex' },
-      { label: '上下文摘要', kind: 'stub', why: '未启用：上下文压缩端点（单独立项）' },
+      { label: '上下文摘要', kind: 'real', act: '_agentCockpitSummarize', hint: 'LLM 有损压缩早期对话（保留最近 6 条原文）' },
     ]},
     { domain: '⑦ 模型成本', btns: [
       { label: '选模型', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
       { label: '测试连接', kind: 'real', act: '_agentCockpitTestLlm' },
       { label: 'Token 用量', kind: 'real', act: '_agentCockpitTokenUsage' },
-      { label: '预算上限', kind: 'stub', why: '未启用：token/cost 核算端点（单独立项）' },
-      { label: '缓存', kind: 'stub', why: '未启用：LLM 缓存开关' },
+      { label: '预算上限', kind: 'real', act: '_agentCockpitBudget', hint: '设单 run 累计 token 上限，超即中止' },
+      { label: '缓存', kind: 'real', act: '_agentCockpitCache', hint: 'LLM 响应缓存开关（同历史轮次省真实推理）' },
     ]},
     { domain: '⑧ 多智能体', btns: [
       { label: '扫描 agent', kind: 'real', act: '_agentCockpitNav', arg: 'connect' },
       { label: '接入向导', kind: 'real', act: '_agentCockpitConnectGuide' },
       { label: 'Agent 清单', kind: 'real', act: '_agentCockpitAgents' },
       { label: '子智能体', kind: 'stub', why: '架构不支持：单 agent 内核，无 spawn/并行控制' },
-      { label: '并行数', kind: 'stub', why: '架构不支持：单 agent 内核' },
+      { label: '并行数', kind: 'real', act: '_agentCockpitParallelism', hint: '同时运行的 run 上限（超出自动排队）' },
       { label: '终止子 agent', kind: 'stub', why: '架构不支持：单 agent 内核' },
     ]},
     { domain: '⑨ 可观测调试', btns: [
@@ -5118,8 +5274,8 @@
       { label: '回放任务', kind: 'real', act: '_agentFnHistory' },
       { label: '性能面板', kind: 'real', act: '_agentCockpitHealth' },
       { label: '自进化', kind: 'real', act: '_agentCockpitEvolution' },
-      { label: '调用链', kind: 'stub', why: '未启用：trace_id 反查端点（单独立项）' },
-      { label: '日志级别', kind: 'stub', why: '未启用：运行期日志级别切换' },
+      { label: '调用链', kind: 'real', act: '_agentCockpitCallChain', hint: '查看某 run 的工具调用链（顺序+耗时+产物）' },
+      { label: '日志级别', kind: 'real', act: '_agentCockpitLogLevel', hint: '运行期切换内核 5xx 诊断日志级别' },
     ]},
     { domain: '⑩ 治理合规', btns: [
       { label: '审计日志', kind: 'real', act: '_agentCockpitAudit' },
@@ -5127,13 +5283,15 @@
       { label: '问责链', kind: 'real', act: '_agentCockpitNav', arg: 'tasks' },
       { label: '审计导出', kind: 'real', act: '_agentCockpitExportAudit' },
       { label: '数据驻留', kind: 'stub', why: '未启用：数据驻留策略' },
-      { label: '事件手册', kind: 'stub', why: '未启用：事件响应运行手册' },
+      { label: '事件手册', kind: 'real', act: '_agentCockpitRunbook', hint: '查看事件处置 runbook + 近期真实事件' },
     ]},
   ];
   let _cockpitBound = false;
   function initAgentCockpit() {
     const body = $('#agentCockpitBody');
-    if (!body || _cockpitBound) { if (_cockpitBound) return; }
+    // ★ V1 重构后驾驶舱改由「更多功能面板」(renderMorePanel) 渲染，#agentCockpitBody 已不在 DOM。
+    //   保留本函数仅为兼容旧调用；容器缺失时直接返回，不再空转渲染（避免 null.innerHTML 崩）。
+    if (!body || _cockpitBound) return;
     _cockpitBound = true;
     body.innerHTML = '';
     for (const dom of COCKPIT) {
@@ -5265,6 +5423,131 @@
       toast('自进化门：' + (e.ok ? '已启用' : '状态读取失败') + '（evolution-gate）', 3600);
     },
     _agentCockpitExportAudit: () => { window.open('/api/export/audit?limit=5000', '_blank'); },
+    /* ── ★ 10 个原灰显按钮的真实后端 handler（每个命中真实端点；失败弹 toast 不造假成功） ── */
+    _agentCockpitDecompose: async () => {
+      const goal = prompt('要拆解的目标（LLM 会拆成 3–7 条可派发子任务）：');
+      if (!goal || !goal.trim()) return;
+      toast('正在拆解…', 1800);
+      const r = await fetch('/api/agent/plan/decompose', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ goal: goal.trim() }) }).then(x => x.json()).catch(() => ({}));
+      if (!r.ok) { toast('拆解失败：' + (r.error || 'LLM 端点不可达'), 4200); return; }
+      let body = '<div class="mono" style="font-size:12px;line-height:1.9;white-space:pre-wrap;color:var(--text-secondary)">' + esc(r.plan) + '</div>';
+      body += '<div style="margin-top:10px"><button class="btn-ghost" data-ckcopy style="padding:4px 12px;font-size:12px">📋 复制子任务清单</button></div>';
+      _cockpitModal('自动拆解 · ' + (r.llm && r.llm.model || ''), body, () => {
+        const btn = document.querySelector('[data-ckcopy]');
+        if (btn) btn.onclick = () => { navigator.clipboard.writeText(r.plan).then(() => toast('已复制', 1600)); };
+      });
+    },
+    _agentCockpitRollback: async () => {
+      const runs = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
+      let pickHtml = '<div style="font-size:12px;margin-bottom:8px">选一个含「写文件」步骤的 run（还原写前快照）</div><div style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto">';
+      const withWrites = [];
+      for (const r of (runs.runs || [])) {
+        const det = await fetch('/api/agent/runs/' + encodeURIComponent(r.runId)).then(x => x.json()).catch(() => null);
+        const writeSteps = ((det && det.steps) || []).filter(s => s.tool === 'file_write');
+        if (!writeSteps.length) continue;
+        withWrites.push({ run: r, det, writeSteps });
+      }
+      if (!withWrites.length) { _cockpitModal('回滚', '<div style="font-size:12px;color:var(--text-muted);line-height:1.8">没有可回滚的写文件步骤。<br>需先：① 开「执行工具开关」② 让 agent 真的写过文件（≤50KB、工作区内才有快照）。</div>'); return; }
+      for (const w of withWrites) for (const s of w.writeSteps) {
+        pickHtml += `<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--border-glass);border-radius:8px;font-size:12px">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.run.title || w.run.runId)} · step#${s.stepId} ${esc(s.tool)}</span>
+          <button class="btn-ghost" data-rb="${w.run.runId}|${s.stepId}" style="padding:2px 8px;font-size:11px">回滚</button></div>`;
+      }
+      pickHtml += '</div>';
+      _cockpitModal('文件写回滚', pickHtml, (el) => {
+        el.querySelectorAll('[data-rb]').forEach(btn => btn.onclick = async () => {
+          const [rid, sid] = btn.dataset.rb.split('|');
+          if (!confirm('确认还原 step#' + sid + ' 的写前快照？（当前文件内容将被覆盖）')) return;
+          const rr = await fetch(`/api/agent/runs/${encodeURIComponent(rid)}/steps/${sid}/rollback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(x => x.json()).catch(() => ({}));
+          if (rr.ok) { toast(`已回滚 ${rr.file}（还原 ${rr.restoredBytes} 字节）`, 4000); el.closest('.cockpit-modal')?.remove(); }
+          else toast('回滚失败：' + (rr.error || ''), 4200);
+        });
+      });
+    },
+    _agentCockpitExecToggle: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const t = st.tuning || {};
+      const cur = t.execOn === null ? true : t.execOn;   // null=未显式设置（继承 shell=开）
+      const on = !cur;
+      if (!confirm(`执行工具（file_read/file_write/exec_run）${cur ? '将关闭' : '将开启'}，需重启 MCP 工具面。继续？`)) return;
+      toast('正在重 spawn MCP…', 2200);
+      const r = await fetch('/api/agent/exec-toggle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on }) }).then(x => x.json()).catch(() => ({}));
+      if (r.ok) {
+        toast(`执行面已${on ? '开启' : '关闭'}（工具面 ${r.toolCount} 个，执行工具 ${(r.execTools || []).length} 个）`, 4600);
+      } else toast('切换失败：' + (r.error || ''), 4200);
+    },
+    _agentCockpitSummarize: async () => {
+      if (!_agentSessionKey) { toast('请先新建/选择会话再摘要', 2600); return; }
+      toast('正在 LLM 摘要早期对话…', 2200);
+      const r = await fetch(`/api/agent/sessions/${encodeURIComponent(_agentSessionKey)}/summarize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepRecent: 6 }) }).then(x => x.json()).catch(() => ({}));
+      if (r.ok) {
+        toast(r.note ? r.note : `已摘要（${r.before} → ${r.after} 条，摘要 ${r.summaryLen} 字，保留最近 6 条原文）`, 4600);
+        _agentSessionChips();
+      } else toast('摘要失败：' + (r.error || ''), 4200);
+    },
+    _agentCockpitBudget: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const cur = (st.tuning || {}).tokenBudget || 0;
+      const v = prompt(`单次 run 的累计 token 上限（0=不设限；当前 ${cur || '未设'}）：`, String(cur || ''));
+      if (v === null) return;
+      const n = Math.floor(Number(v));
+      if (!Number.isFinite(n) || n < 0) { toast('须为非负整数', 2600); return; }
+      const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ budgetTokens: n }) }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? (n ? `预算上限已设 ${n} token（超出即中止该 run）` : '预算上限已解除') : '设置失败：' + (r.error || ''), 4000);
+    },
+    _agentCockpitCache: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const cur = (st.tuning || {}).llmCache === true;
+      const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cache: !cur }) }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? (cur ? 'LLM 缓存已关' : 'LLM 缓存已开（同历史轮次直接命中，省真实推理）') : '切换失败：' + (r.error || ''), 3600);
+    },
+    _agentCockpitParallelism: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const t = st.tuning || {};
+      const v = prompt(`同时运行的 agent run 上限（1–8，超出自动排队；当前 ${t.maxConcurrent ?? 3}）：`, String(t.maxConcurrent ?? 3));
+      if (v === null) return;
+      const n = Math.floor(Number(v));
+      if (!(n >= 1 && n <= 8)) { toast('须为 1–8 的整数', 2600); return; }
+      const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ maxConcurrent: n }) }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? `并行数已设为 ${n}（当前 running ${t.running ?? 0} / queued ${t.queued ?? 0}）` : '设置失败：' + (r.error || ''), 4000);
+    },
+    _agentCockpitCallChain: async () => {
+      const runs = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
+      const withSteps = (runs.runs || []).filter(r => (r.stepIndex || 0) > 0);
+      if (!withSteps.length) { toast('暂无含工具调用的 run（先发一条指令）', 3000); return; }
+      const pick = withSteps[0];
+      const r = await fetch('/api/agent/runs/' + encodeURIComponent(pick.runId) + '/chain').then(x => x.json()).catch(() => ({}));
+      if (!r.ok) { toast('读取调用链失败：' + (r.error || ''), 3600); return; }
+      const rows = (r.chain || []).map(c =>
+        `<div style="display:flex;gap:10px;align-items:center;padding:4px 0;font-size:12px;border-bottom:1px dashed var(--border-glass)">
+          <span class="mono text-muted" style="min-width:26px">#${c.n}</span>
+          <span class="mono" style="color:var(--accent-cyan);min-width:110px">${esc(c.tool)}</span>
+          <span>${c.ok === true ? '✓' : c.ok === false ? '✗' : '◌'} ${(c.ms || 0) / 1000}s</span>
+          <span class="text-muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.hasArtifact ? '有产物 ' : ''}${c.hasDiff ? '有快照 ' : ''}${c.taskDone ? 'task_done#' + c.taskDone : ''}</span>
+          ${c.feedsNext ? '<span class="text-muted">↓</span>' : ''}</div>`).join('');
+      let head = `<div style="font-size:12px;margin-bottom:8px">run ${esc(pick.runId)} · ${esc(r.status)} · ${r.toolCalls} 次工具调用${r.usage ? ` · token ${r.usage.total}` : ''}</div>`;
+      _cockpitModal('调用链 · ' + (r.title || pick.runId), head + rows, null);
+    },
+    _agentCockpitLogLevel: async () => {
+      const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
+      const cur = (st.tuning && st.tuning.logLevelNow) || 'info';
+      const v = prompt(`内核 5xx 诊断日志级别（debug/info/warn/error；warn/error 静默诊断行；审计表不受影响。当前 ${cur}）：`, cur);
+      if (v === null) return;
+      const lv = String(v).trim().toLowerCase();
+      if (!['debug', 'info', 'warn', 'error'].includes(lv)) { toast('须为 debug/info/warn/error', 3000); return; }
+      const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ logLevel: lv }) }).then(x => x.json()).catch(() => ({}));
+      toast(r.ok ? `日志级别已切到 ${lv}（即时生效，审计留痕不降级）` : '切换失败：' + (r.error || ''), 4000);
+    },
+    _agentCockpitRunbook: async () => {
+      const r = await fetch('/api/runbook').then(x => x.json()).catch(() => ({}));
+      if (!r.ok) { toast('读取事件手册失败：' + (r.error || ''), 3600); return; }
+      let body = (r.runbook || []).map(s =>
+        `<div style="margin:8px 0"><div style="font-size:12.5px;font-weight:600;color:var(--text-primary)">${esc(s.title)}</div>
+        <ol style="margin:4px 0 0 18px;padding:0;font-size:12px;color:var(--text-secondary);line-height:1.7">${s.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>`).join('');
+      const inc = ((r.recentExec || []).length + (r.recentDaemon || []).length);
+      body += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted)">近期事件：exec_audit ${ (r.recentExec || []).length } 条 / daemon_log ${(r.recentDaemon || []).length } 条（共 ${inc}）——明细见「审计」页</div>`;
+      _cockpitModal('事件手册（runbook）', body, null);
+    },
     _agentSessionNew: () => _agentSessionNew(),
     _agentFnHistory: () => _agentFnHistory(),
     _agentFnQuick: (arg) => _agentFnQuick(arg),
@@ -5275,6 +5558,27 @@
     const a = document.createElement('a');
     a.href = url; a.download = filename; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  /** ★ 驾驶舱结果模态框（固定浮层，点遮罩/Esc 关闭；afterRender(el) 用于绑定内部按钮） */
+  function _cockpitModal(title, bodyHtml, afterRender) {
+    if ($('.cockpit-modal')) $('.cockpit-modal').remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'cockpit-modal';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
+    wrap.innerHTML = `<div style="max-width:560px;width:92%;max-height:76vh;overflow-y:auto;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,0.12));border-radius:14px;padding:18px 20px;box-shadow:0 18px 60px rgba(0,0,0,0.3)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${esc(title)}</span>
+        <button data-x style="margin-left:auto;background:none;border:none;font-size:16px;color:var(--text-muted);cursor:pointer">✕</button>
+      </div>
+      <div class="cockpit-modal-body" style="font-size:12px">${bodyHtml}</div>
+    </div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+    const x = wrap.querySelector('[data-x]'); if (x) x.onclick = close;
+    const onKey = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+    if (afterRender) afterRender(wrap.firstElementChild);
   }
   /* agent 页常驻功能按钮的 handler */
   async function _agentFnHistory() {
@@ -5323,21 +5627,19 @@
      纪律：呈现层增量 —— 既有 agentSend/agentBubble 不变，会话条只管历史载入与切换。 */
   let _agentSessionKey = null, _agentSessions = [], _agentSessionTimer = null;
   function _agentSessionChips() {
-    const bar = $('#agentSessionBar');
-    if (!bar) return;
-    bar.innerHTML = '';
+    const list = $('#agentSessionList');
+    if (!list) return;
+    list.innerHTML = '';
     for (const s of _agentSessions) {
-      const chip = document.createElement('span');
-      chip.className = 'session-chip' + (s.session_key === _agentSessionKey ? ' sel' : '');
-      chip.innerHTML = `<span title="${esc(s.session_key)}">${esc(s.title || s.session_key.slice(0, 8))} <span style="opacity:.6">· ${s.msg_count || 0}</span></span><span class="sc-del" title="删除会话">✕</span>`;
-      chip.onclick = (e) => {
-        if (e.target.classList.contains('sc-del')) { _agentSessionDelete(s.session_key); e.stopPropagation(); return; }
+      const item = document.createElement('div');
+      item.className = 'agent-session-item' + (s.session_key === _agentSessionKey ? ' active' : '');
+      item.innerHTML = `<svg class="session-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="session-name" title="${esc(s.session_key)}">${esc(s.title || s.session_key.slice(0, 12))}</span><span class="session-del" title="删除会话">✕</span>`;
+      item.onclick = (e) => {
+        if (e.target.classList.contains('session-del')) { _agentSessionDelete(s.session_key); e.stopPropagation(); return; }
         _agentSessionSelect(s.session_key);
       };
-      bar.appendChild(chip);
+      list.appendChild(item);
     }
-    const newBtn = $('#agentSessionNewBtn');
-    if (newBtn) newBtn.onclick = _agentSessionNew;
   }
   function _agentSessionSelect(key) {
     _agentSessionKey = key;
@@ -5380,14 +5682,151 @@
       _agentSessionChips();
     }).catch(() => {});
   }
-  function initAgentSessionsBar() {
-    if ($('#agentSessionBar').dataset.bound === '1') return;
-    $('#agentSessionBar').dataset.bound = '1';
+  function initAgentSessionList() {
+    if ($('#agentSessionList').dataset.bound === '1') return;
+    $('#agentSessionList').dataset.bound = '1';
     fetch('/api/agent/sessions').then(r => r.json()).then(s => {
       _agentSessions = (s.sessions || []).map(x => ({ session_key: x.session_key, title: x.title, msg_count: x.msg_count || 0 }));
       _agentSessionChips();
     }).catch(() => {});
   }
+  // ===== 运行状态条控制 =====
+  function showRunStatus(text) {
+    const bar = $('#agentRunStatus');
+    const dot = bar?.querySelector('.run-dot');
+    const txt = $('#agentRunStatusText');
+    if (bar) bar.style.display = 'flex';
+    if (dot) { dot.className = 'run-dot'; }
+    if (txt) txt.textContent = text || '运行中…';
+    // 自动展开执行过程
+    const live = $('#agentRunLive');
+    if (live) live.style.display = 'block';
+    const tl = $('#agentRunLiveTimeline');
+    if (tl && !tl.innerHTML.trim()) tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">agent 运行中，工具调用实时追加…</li>';
+  }
+  function hideRunStatus() {
+    const bar = $('#agentRunStatus');
+    if (bar) bar.style.display = 'none';
+  }
+  function setRunStatus(text, state) {
+    const dot = $('#agentRunStatus')?.querySelector('.run-dot');
+    const txt = $('#agentRunStatusText');
+    if (dot) dot.className = 'run-dot' + (state ? ' ' + state : '');
+    if (txt) txt.textContent = text || '';
+  }
+
+  // ===== V1重构：边栏快捷按钮绑定 =====
+  function initAgentSidebarButtons() {
+    const sideNew = $('#agentSideNew');
+    const sideTasks = $('#agentSideTasks');
+    const sideMem = $('#agentSideMem');
+    const sideMore = $('#agentSideMore');
+    const moreBtn = $('#agentMoreBtn');
+    const morePanel = $('#agentMorePanel');
+    if (sideNew) sideNew.onclick = () => _agentSessionNew();
+    if (sideTasks) sideTasks.onclick = () => { location.hash = 'tasks'; };
+    if (sideMem) sideMem.onclick = () => { if (typeof _agentFnQuick === 'function') _agentFnQuick('mem'); else toast('沉淀记忆功能加载中…'); };
+    if (sideMore) sideMore.onclick = () => toggleMorePanel();
+    if (moreBtn) moreBtn.onclick = () => toggleMorePanel();
+    // 点击外部关闭面板
+    document.addEventListener('click', (e) => {
+      const panel = $('#agentMorePanel');
+      if (!panel) return;
+      if (!panel.contains(e.target) && e.target.id !== 'agentMoreBtn' && !e.target.closest('#agentSideMore')) {
+        panel.classList.remove('open');
+      }
+    });
+  }
+  function toggleMorePanel() {
+    const panel = $('#agentMorePanel');
+    if (!panel) return;
+    const isOpen = panel.classList.contains('open');
+    panel.classList.toggle('open');
+    if (!isOpen) {
+      renderMorePanel('session');
+      // 动态计算面板位置：在更多按钮下方右对齐
+      const btn = $('#agentMoreBtn') || $('#agentSideMore');
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        const panelWidth = panel.offsetWidth || 560;
+        let left = rect.right - panelWidth;
+        let top = rect.bottom + 8;
+        // 防止超出视口
+        if (left < 12) left = 12;
+        if (left + panelWidth > window.innerWidth - 12) left = window.innerWidth - panelWidth - 12;
+        if (top + panel.offsetHeight > window.innerHeight - 12) top = rect.top - panel.offsetHeight - 8;
+        panel.style.left = left + 'px';
+        panel.style.top = top + 'px';
+      }
+    }
+  }
+
+  // ===== V1重构：更多功能面板（5组分类，复用COCKPIT数据） =====
+  const MORE_GROUPS = {
+    session: { label: '会话与任务', domains: ['① 会话输入', '② 任务目标'] },
+    permission: { label: '权限与安全', domains: ['③ 自主权模式', '④ 工具权限', '⑤ 审批安全'] },
+    memory: { label: '记忆与上下文', domains: ['⑥ 记忆上下文'] },
+    model: { label: '模型与连接', domains: ['⑦ 模型成本', '⑧ 多智能体'] },
+    debug: { label: '调试与治理', domains: ['⑨ 可观测调试', '⑩ 治理合规'] },
+  };
+  function renderMorePanel(groupKey) {
+    const grid = $('#agentMoreGrid');
+    const tabs = $$('#agentMoreTabs .more-panel-tab');
+    const showStub = $('#agentShowStub')?.checked || false;
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.group === groupKey));
+    if (!grid) return;
+    grid.innerHTML = '';
+    const group = MORE_GROUPS[groupKey];
+    if (!group) return;
+    for (const dom of COCKPIT) {
+      if (!group.domains.includes(dom.domain)) continue;
+      for (const b of dom.btns) {
+        if (b.kind === 'stub' && !showStub) continue;
+        const btn = document.createElement('button');
+        btn.className = 'more-panel-btn' + (b.kind === 'stub' ? ' stub' : '');
+        btn.innerHTML = `<span>${esc(b.label)}</span>`;
+        btn.title = b.kind === 'stub' ? '未启用：' + (b.why || '') : (b.hint || b.label);
+        if (b.kind === 'stub') {
+          btn.onclick = () => toast('未启用：' + (b.why || '需单独立项'), 4200);
+        } else {
+          btn.onclick = () => {
+            _cockpitDispatch({ dataset: { ck: 'real', act: b.act || '', arg: b.arg || '' } });
+            $('#agentMorePanel').classList.remove('open');
+          };
+        }
+        grid.appendChild(btn);
+      }
+    }
+  }
+  function initAgentMorePanel() {
+    const tabs = $$('#agentMoreTabs .more-panel-tab');
+    tabs.forEach(t => t.onclick = () => renderMorePanel(t.dataset.group));
+    const stubCheck = $('#agentShowStub');
+    if (stubCheck) stubCheck.onchange = () => {
+      const activeTab = $('#agentMoreTabs .more-panel-tab.active');
+      if (activeTab) renderMorePanel(activeTab.dataset.group);
+    };
+    // 面板拖拽
+    const panel = $('#agentMorePanel');
+    const handle = $('#agentMoreTabs');
+    if (panel && handle) {
+      let isDragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+      handle.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('more-panel-tab')) return;
+        isDragging = true;
+        startX = e.clientX; startY = e.clientY;
+        startLeft = panel.offsetLeft; startTop = panel.offsetTop;
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        panel.style.left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, startLeft + e.clientX - startX)) + 'px';
+        panel.style.top = Math.max(0, Math.min(window.innerHeight - 40, startTop + e.clientY - startY)) + 'px';
+      });
+      document.addEventListener('mouseup', () => { isDragging = false; });
+    }
+  }
+
   /* agentSend 发消息后刷新会话条计数（轻量：只在非空时更新） */
   const _origAgentSend = agentSend;
   agentSend = async function () {
@@ -5687,6 +6126,6 @@
   initDaemonHealth();
   load().then(() => {
     // 工具连接页列数修正
-    const t = PAGE_TITLES[location.hash.slice(1) || 'summary']; if (t) navigate(location.hash.slice(1) || 'summary');
+    const t = PAGE_TITLES[location.hash.slice(1) || 'agent']; if (t) navigate(location.hash.slice(1) || 'agent');
   }).catch(e => console.error('load failed', e));
 })();

@@ -133,7 +133,10 @@ function parseRouteTree(tree) {
 const tree = app.printRoutes({ commonPrefix: false });
 const routeTable = parseRouteTree(tree);                 // 全部 method+path（结构契约）
 const routes = routeTable;
-const gettable = routes.filter((r) => r.method === "GET" && !r.path.includes(":"));
+/* ★ SSE 流式路由（2026-09-18 补）：无限连接 + 增量推送，inject 会永久挂起、响应体无法逐字节快照。
+ *   从「无参 GET 快照」中剔除（结构契约仍覆盖其注册——漏注册/改名可被 routeTable 捕获）。 */
+const STREAM_ROUTES = new Set(["/api/cards/stream"]);
+const gettable = routes.filter((r) => r.method === "GET" && !r.path.includes(":") && !STREAM_ROUTES.has(r.path));
 const dynamic = routes.filter((r) => r.method === "GET" && r.path.includes(":"));
 const nonGet = routes.filter((r) => r.method !== "GET");
 /* ★ 覆盖口径（独立复核后补强）：
@@ -166,7 +169,7 @@ const snapshot = {
     routeTable: routes.map((r) => `${r.method} ${r.path}`).sort(),
     routes: [],
     probes: [],
-    skipped: { nonGetPaths: nonGet.map((r) => `${r.method} ${r.path}`) },
+    skipped: { nonGetPaths: nonGet.map((r) => `${r.method} ${r.path}`), streamRoutes: [...STREAM_ROUTES] },
 };
 for (const r of gettable) {
     const res = await app.inject({ method: "GET", url: r.path, headers: { "x-memory-token": TOKEN } });
