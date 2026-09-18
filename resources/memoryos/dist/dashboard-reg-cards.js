@@ -481,6 +481,23 @@ export function registerCards(app, ctx) {
         const c = readCard(Number(req.params.id));
         if (!c)
             return reply.code(404).send({ ok: false, error: "卡片不存在" });
+        // ★ 2026-09-19（实操复盘查漏）：删卡先查绑定任务 —— ref_kind/dispatch 关联的任务记忆若仍在
+        //   开放态（pending/in_progress/blocked），删卡会留「孤儿任务」继续出现在 task_next 可做集。
+        //   非开放态（done/cancelled/merged/archived）或纯笔记/辅助卡不受影响。
+        const boundIds = new Set();
+        if (c.ref_kind === "memory" && c.ref_id)
+            boundIds.add(Number(c.ref_id));
+        for (const cm of db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch'`).all(c.id))
+            boundIds.add(Number(cm.memory_id));
+        for (const mid of boundIds) {
+            // 判定以 [task] 头文本为准（type 字段可能被 dashboard 写入路径静默降级，头才是事实源）
+            const m = db.prepare(`SELECT id, content FROM memories WHERE id=? AND status IN ('active','trial')`).get(mid);
+            if (!m)
+                continue;
+            const st = String(m.content ?? "").match(/^\[task\]\[assignee:[^\]]*\]\[status:([a-z_]+)\]/)?.[1] ?? "";
+            if (["pending", "in_progress", "blocked"].includes(st))
+                return reply.code(409).send({ ok: false, error: `卡片 #${c.id} 绑定着未闭环任务 #${mid}（status=${st}）：请先 task_release / task_verify / task_supersede 或在记忆侧归档该任务，再删卡；直接删除会产生孤儿任务。` });
+        }
         db.prepare(`DELETE FROM card_memory WHERE card_id=?`).run(c.id);
         db.prepare(`DELETE FROM links WHERE (src_kind='card' AND src_id=?) OR (dst_kind='card' AND dst_id=?)`).run(c.id, c.id);
         db.prepare(`DELETE FROM card_events WHERE card_id=?`).run(c.id);

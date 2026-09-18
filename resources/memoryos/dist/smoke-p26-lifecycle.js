@@ -179,6 +179,28 @@ try {
     const inOther = otherSec.includes(`#${fId} `);
     check("H6.★task_next 会话隔离（他会话任务单列「勿动」，#7）", !inMine && inOther, `本会话=${inMine} 他会话=${inOther}`);
 
+    /* ── I. 结构性档回归（2026-09-19）：⟨state⟩ 结构化回执（#10）/ CAS 并发守卫 ── */
+    const iA = tidOf(await call("task_assign", { content: "回执探针任务 A（claim 后查验 ⟨state⟩）", assignee: "p26-life", project: "global" }));
+    const iClaim = await call("task_claim", { memory_id: iA });
+    const iState = (iClaim.split("⟨state⟩ ")[1] ?? "").split("\n")[0];
+    let iParsed = null;
+    try { iParsed = JSON.parse(iState); } catch { /* 解析失败置 null */ }
+    check("I1.★task_claim 回执含 ⟨state⟩ 终态行（#10）", iParsed?.op === "task_claim" && iParsed?.id === iA && iParsed?.status === "in_progress" && Number.isInteger(iParsed?.version), iState.slice(0, 120));
+    const iV = tidOf(await call("task_assign", { content: "回执探针任务 B（verify 后查验 ⟨state⟩）", assignee: "p26-life", project: "global" }));
+    const iVer = await call("task_verify", { memory_id: iV, reason: "回执断言" });
+    const vParsed = (() => { try { return JSON.parse((iVer.split("⟨state⟩ ")[1] ?? "").split("\n")[0]); } catch { return null; } })();
+    check("I2.★task_verify 回执含 verified_by 终态行", vParsed?.op === "task_verify" && vParsed?.verified_by === "p26-life" && vParsed?.status === "done", (vParsed ? JSON.stringify(vParsed) : "").slice(0, 120));
+    const iW = await call("memory_write", { content: "回执探针：普通写入路径的结构化终态行（唯一性后缀 KZ7Q）", type: "experience", project: "global" });
+    const wParsed = (() => { try { return JSON.parse((iW.split("⟨state⟩ ")[1] ?? "").split("\n")[0]); } catch { return null; } })();
+    check("I3.★memory_write 回执含 ⟨state⟩（id/type/version）", (wParsed?.op === "memory_write" || wParsed?.op === "memory_write_merged") && wParsed?.id > 0, (wParsed ? JSON.stringify(wParsed) : "").slice(0, 120));
+    // CAS 并发守卫（黑盒模拟）：H5 已认领的 fId 版本被 dbFix 外部推进后，同版本 CAS 写必被拒
+    const iC = tidOf(await call("task_assign", { content: "CAS 探针任务（过期 expected_version 认领应拒）", assignee: "p26-life", project: "global" }));
+    // 注：黑盒冒烟插不进「server 读版本后、写前」的竞态窗口（CAS 在服务端单语句内原子完成）；
+    // 此处回归其调用方契约形态：过期 expected_version 的认领必须被拒且零副作用。服务端 CAS 见 db.js updateMemory。
+    const curV = db.prepare(`SELECT version FROM memories WHERE id=?`).get(iC)?.version ?? 0;
+    const staleClaim = await call("task_claim", { memory_id: iC, expected_version: curV - 1 });
+    check("I4.★过期 expected_version 认领被拒（fencing 契约，M5）", /版本漂移/.test(staleClaim) && headStatus(iC) === "pending", staleClaim.replace(/\s+/g, " ").slice(0, 90));
+
     db.close();
 } catch (e) {
     fail++;

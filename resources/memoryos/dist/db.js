@@ -1032,6 +1032,22 @@ export function updateMemory(db, id, args) {
     const content = args.content != null ? normalizeContent(args.content).trim() : null;
     if (content !== null && !content)
         throw new Error("content 不能为空");
+    // ★ 2026-09-19（实操复盘并发竞态）：乐观锁 CAS —— expectedVersion 给出时，content 写与 version 递增
+    //   原子化（WHERE version=?）。两会话同时认领同一任务只有一个命中，另一个拿 null 由调用方拒绝。
+    //   FTS/2-gram 同步与向量失效仅在校验通过后执行（漂移写不产生任何副作用）。
+    if (args.expectedVersion != null) {
+        if (content === null)
+            throw new Error("expectedVersion 仅支持 content 写入");
+        const cas = db
+            .prepare(`UPDATE memories SET content=?, embedding_stale=1, version=version+1 WHERE id=? AND version=?`)
+            .run(content, id, args.expectedVersion);
+        if (Number(cas.changes) === 0)
+            return null; // 版本漂移：未写入任何内容
+        db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(content, id);
+        syncGrams(db, id, content);
+        invalidateVectorCache(db);
+        return readMemory(db, id);
+    }
     if (content !== null) {
         // ★ P1-2.4：正文变更 → 向量失效。置 embedding_stale=1，由 daemon 异步重算
         //   （此处不重算：updateMemory 是同步 API，而嵌入计算是异步且耗时的）。
