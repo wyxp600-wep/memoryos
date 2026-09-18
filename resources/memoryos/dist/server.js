@@ -112,6 +112,15 @@ server.addTool({
             .prepare(`SELECT COUNT(*) c FROM memory_usage WHERE event IN ('search','returned') AND reader_agent=? AND created_at>=datetime('now','-24 hours')`)
             .get(AGENT)?.c ?? 0;
         const _gate = _searched > 0 ? "" : "\n⚠ 本会话近 24h 未调用 memory_search：写前先检索，避免重复沉淀（rule #671 硬门禁）";
+        // ★ 2026-09-19（实操问题 #9）：[task] 状态头 → 强制 type='task'。原实现按入参落成 convention——
+        //   不进任务池（task_next 只取 type=task）、不建卡、task_supersede 以「非任务」拒绝，且返回「已写入」静默。
+        //   修正：强制 type=task 并在回执中明示；地图卡仍须走 task_assign（本工具不建卡）。
+        let memType = args.type;
+        let _taskNote = "";
+        if (memType !== "task" && /^\[task\]\[assignee:[^\]]*\]\[status:/.test(args.content)) {
+            memType = "task";
+            _taskNote = `\n⚠ 检测到 [task] 状态头：type 已强制 task（原 ${args.type}）。本通道不建地图卡——正式派活请用 task_assign。`;
+        }
         const embedder = await getEmbedder();
         const [emb] = await embedder.embedTexts([args.content]);
         // ★ P2-6（C-4 / #4200）修订写前置：乐观版本校验 + 归档副作用。
@@ -148,13 +157,13 @@ server.addTool({
                 bumpConfidence(db, d.targetId, 0.1);
                 const t = readMemory(db, d.targetId);
                 applyRevision(d.targetId); // 合并即由既有条目承接内容 → 修订指向它（勿静默丢弃 supersedes）
-                return `已与 #${t.id} 重复，已合并（confidence+0.1）[${t.type}|${t.agent}|${t.created_at.slice(0, 10)}] ${t.content.replace(/\s+/g, " ").slice(0, 120)}` + _gate;
+                return `已与 #${t.id} 重复，已合并（confidence+0.1）[${t.type}|${t.agent}|${t.created_at.slice(0, 10)}] ${t.content.replace(/\s+/g, " ").slice(0, 120)}` + _taskNote + _gate;
             }
             if (d.action === "conflict") {
                 const conf = args.confidence ?? 0.5; // 缺省 0.5：疑似冲突低置信入库，供 v0.3 仲裁；显式传入则尊重调用方
                 const row = writeMemory(db, {
                     content: args.content,
-                    type: args.type,
+                    type: memType,
                     agent: AGENT,
                     agent_fpath: AGENT_FPATH,
                     project: args.project,
@@ -181,12 +190,12 @@ server.addTool({
                     task_hint: args.task_hint,
                 });
                 const _sup = causalParent != null ? `（已替代并归档 #${causalParent}）` : "";
-                return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 ${conf}，待 v0.3 仲裁）${_sup}[${row.type}|${row.agent}]` + _gate;
+                return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 ${conf}，待 v0.3 仲裁）${_sup}[${row.type}|${row.agent}]` + _taskNote + _gate;
             }
         }
         const row = writeMemory(db, {
             content: args.content,
-            type: args.type,
+            type: memType,
             agent: AGENT,
             agent_fpath: AGENT_FPATH,
             project: args.project,
@@ -207,7 +216,7 @@ server.addTool({
         });
         const oneLine = row.content.replace(/\s+/g, " ").slice(0, 300);
         const supNote = causalParent != null ? `（已替代并归档 #${causalParent}，因果链 → v${row.version}）` : "";
-        return `已写入记忆 #${row.id}[${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${supNote}${oneLine}` + _gate;
+        return `已写入记忆 #${row.id}[${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${supNote}${oneLine}` + _taskNote + _gate;
     },
 });
 server.addTool({
@@ -854,6 +863,35 @@ function assertTransition(from, to) {
     }
     return null;
 }
+/** ★ 2026-09-19（实操问题 #6）：assignee 白名单 —— 小写 kebab（[a-z][a-z0-9_-]{0,31}）；"?" 为未指派哨兵放行。
+ *  实测脏值 54%（"/" 占位、"前端开发者" 人类角色名、测试残留）污染 task_next 的身份聚合与「我在做」判定。 */
+const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+function assertAssignee(name) {
+    if (name === undefined || name === null || name === "" || name === "?")
+        return null;
+    if (typeof name !== "string" || !AGENT_NAME_RE.test(name))
+        return `assignee「${name}」不合规：须为小写字母开头的 kebab 标识（[a-z][a-z0-9_-]{0,31}，如 codex/trae/zcode/workbuddy）；"?" 表示未指派。`;
+    return null;
+}
+/** ★ 2026-09-19（实操问题 #8）：A1 凭据校验 —— 全部会改任务头/卡片归属的写工具统一入口。
+ *  带凭据 → 严格校验（凭据归属 who + 未撤销未过期 + scope>=write，杜绝拿他人凭据改写归属）；
+ *  不带凭据 → 软模式放行（事件留痕 cred_id=null），MEMORYOS_A1_ENFORCE=1 时硬拒绝（fail-closed）。 */
+function checkWriteCredential(who, credential) {
+    const HARD = process.env.MEMORYOS_A1_ENFORCE === "1";
+    if (!credential) {
+        if (HARD)
+            return { ok: false, credId: null, msg: `A1 硬模式（MEMORYOS_A1_ENFORCE=1）：${who} 必须携带 scope>=write 的凭据——先 memory_credential(action=issue, scope=write) 签发，再随 credential 入参携带。` };
+        return { ok: true, credId: null, msg: "" };
+    }
+    const row = db.prepare(`SELECT id, agent, scope, expires_at, revoked_at FROM agent_credentials WHERE credential=?`).get(String(credential));
+    if (!row || row.agent !== who)
+        return { ok: false, credId: null, msg: `A1 拒绝：凭据不属于 ${who} 或不存在（不接受他人凭据改写任务归属）。` };
+    if (!isCredentialValid(row))
+        return { ok: false, credId: row.id, msg: `A1 拒绝：凭据已${row.revoked_at ? "撤销" : "过期"}（id=${row.id}）；请 memory_credential(action=issue) 重新签发。` };
+    if (row.scope === "read")
+        return { ok: false, credId: row.id, msg: `A1 拒绝：凭据 scope=read 不足，改写任务需 scope>=write（id=${row.id}）。` };
+    return { ok: true, credId: row.id, msg: "" };
+}
 /** ★ 2026-09-18（实操问题 #1，P0）：按 id 分支的列守卫。readMemory 是裸 `WHERE id=?`（无 status 过滤），
  *  实测 29 条任务「头 pending 但列已 archived/merged」——列表分支有列过滤挡住，按 id 分支只看头文本会放行。
  *  返回错误文案（不可操作）或 null（放行）。 */
@@ -976,6 +1014,9 @@ server.addTool({
         task_hint: z.string().optional(),
     }),
     async execute(args) {
+        const asgErr = assertAssignee(args.assignee); // ★ #6：assignee 白名单（小写 kebab；"?"=未指派）
+        if (asgErr)
+            return asgErr;
         const body = args.content.trim();
         const deps = (args.depends_on ?? "")
             .split(",")
@@ -1099,6 +1140,7 @@ server.addTool({
         memory_id: z.number().int().optional().describe("指定领取某条任务 id；不填则列出当前可领的 pending 任务"),
         expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本（你上次读到的 version）；不一致 → 拒绝陈旧领取"),
         lease_token: z.string().optional().describe("P2-6 fencing：你持有的租约锁（若卡片已被他人接管 → 拒绝僵尸领取）"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属认领者）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1122,6 +1164,12 @@ server.addTool({
             if (args.expected_version != null && args.expected_version !== row.version)
                 return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：任务已被其他操作改写，本次领取拒绝；请刷新后再领。`;
             const who = args.as && args.as !== "any" && args.as !== AGENT ? args.as : AGENT;
+            const asgErr = assertAssignee(who); // ★ #6：认领者身份入头前过白名单
+            if (asgErr)
+                return asgErr;
+            const cred = checkWriteCredential(who, args.credential); // ★ A1/#8：归属校验 + scope>=write
+            if (!cred.ok)
+                return cred.msg;
             if (args.as !== "any" && st.assignee !== "?" && st.assignee !== who) {
                 return `#${args.memory_id} 指派给 ${st.assignee}，你不是接收方（可传 as=any 强制托管认领）。`;
             }
@@ -1129,7 +1177,7 @@ server.addTool({
             updateMemory(db, row.id, { content: newContent }); // 同步 FTS
             db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：领取推进版本（fencing 基线）
             const lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
-            appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1 }), operator: `agent:${AGENT}` });
+            appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
             syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
             touchCardLease(row.id, lock); // ★ P2-6：卡片租约锁定（10min 窗口，C-3）
             return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}`;
@@ -1256,6 +1304,7 @@ server.addTool({
     parameters: z.object({
         memory_id: z.number().int().min(1).describe("任务记忆 id"),
         reason: z.string().optional().describe("释放原因（留痕 card_events/事件流）"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1266,13 +1315,16 @@ server.addTool({
         const aliveErr = assertTaskAlive(row); // ★ 列守卫（2026-09-19：按 id 分支统一 fail-closed）
         if (aliveErr)
             return aliveErr;
+        const cred = checkWriteCredential(AGENT, args.credential); // ★ A1/#8
+        if (!cred.ok)
+            return cred.msg;
         const st = readTaskState(row.content);
         if (!st || st.status !== "in_progress")
             return `#${args.memory_id} 当前 status=${st?.status}，仅进行中任务可释放。`;
         const newContent = taskBodyWithDep("pending", st.assignee, st.deps, taskBody(row.content));
         updateMemory(db, row.id, { content: newContent });
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
-        appendEvent(db, { memory_id: row.id, op: "task_release", payload: JSON.stringify({ by: AGENT, reason: (args.reason ?? "").trim() || null }), operator: `agent:${AGENT}` });
+        appendEvent(db, { memory_id: row.id, op: "task_release", payload: JSON.stringify({ by: AGENT, reason: (args.reason ?? "").trim() || null, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
         try {
             const c2 = cardOfTask(row.id);
             if (c2 && c2.status === "running") {
@@ -1295,6 +1347,7 @@ server.addTool({
     parameters: z.object({
         memory_id: z.number().int().min(1).describe("任务记忆 id"),
         reason: z.string().describe("受阻原因（必填，留痕）"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1305,6 +1358,9 @@ server.addTool({
         const aliveErr = assertTaskAlive(row); // ★ 列守卫（2026-09-19：按 id 分支统一 fail-closed）
         if (aliveErr)
             return aliveErr;
+        const cred = checkWriteCredential(AGENT, args.credential); // ★ A1/#8
+        if (!cred.ok)
+            return cred.msg;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法标记受阻。`;
@@ -1314,7 +1370,7 @@ server.addTool({
         const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${args.reason.trim()}`;
         updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body) });
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
-        appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
         syncTaskToCard(row.id, "blocked", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 标记受阻` });
         return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}`;
     },
@@ -1325,6 +1381,7 @@ server.addTool({
         memory_id: z.number().int().min(1).describe("任务记忆 id"),
         assignee: z.string().optional().describe("重开后指派给谁（缺省=原认领者）"),
         reason: z.string().describe("重开原因（必填，留痕）"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1334,6 +1391,9 @@ server.addTool({
             return `#${args.memory_id} 不存在或非任务。`;
         if (row.status === "merged")
             return `#${args.memory_id} 已被 #${row.superseded_by ?? "?"} 取代（merged），不可重开；如需该工作请操作取代它的主任务。`;
+        const cred = checkWriteCredential(AGENT, args.credential); // ★ A1/#8
+        if (!cred.ok)
+            return cred.msg;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法重开。`;
@@ -1342,10 +1402,13 @@ server.addTool({
         if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
             db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
         const who = args.assignee || st.assignee || "?";
+        const whoErr = assertAssignee(who); // ★ #6：重开指派身份过白名单
+        if (whoErr)
+            return whoErr;
         const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
         updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body) });
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
-        appendEvent(db, { memory_id: row.id, op: "task_reopen", payload: JSON.stringify({ by: AGENT, from: st.status, to: who, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        appendEvent(db, { memory_id: row.id, op: "task_reopen", payload: JSON.stringify({ by: AGENT, from: st.status, to: who, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
         try {
             const c2 = cardOfTask(row.id);
             if (c2 && ["done", "archived", "cancelled"].includes(c2.status)) {
@@ -1369,6 +1432,7 @@ server.addTool({
         //   2026-09-16 修正：在此声明一次，使拒绝逻辑真正生效。**勿再重复插入（曾出现同字段重复声明）。**
         lease_token: z.string().optional().describe("P2-6 fencing：task_claim 返回的租约锁；与卡片当前锁不符 → 拒绝过期完成写"),
         expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本；不一致 → 拒绝陈旧完成写"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1379,6 +1443,9 @@ server.addTool({
         const aliveErr = assertTaskAlive(row); // ★ 列守卫：archived/merged 不可完成（2026-09-18 P0 修复）
         if (aliveErr)
             return aliveErr;
+        const cred = checkWriteCredential(AGENT, args.credential); // ★ A1/#8：归属校验 + scope>=write
+        if (!cred.ok)
+            return cred.msg;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法完成。`;
@@ -1416,7 +1483,7 @@ server.addTool({
         updateMemory(db, row.id, { content: newContent });
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id); // ★ P2-6：完成推进版本
         bumpConfidence(db, row.id, 0.05); // 完成任务强化
-        appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT }), operator: `agent:${AGENT}` });
+        appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
         syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
         if (cardNowDone) // ★ P2-6：完成即释放租约锁
             db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
@@ -1431,6 +1498,7 @@ server.addTool({
         reason: z.string().describe("验收依据（必填，留痕）：对应提交/冒烟结果/证据位置"),
         as: z.string().optional().describe("验收方身份（缺省=当前 agent）"),
         expected_version: z.number().int().optional().describe("P2-6 fencing：乐观版本；不一致 → 拒绝陈旧验收写"),
+        credential: z.string().optional().describe("A1 凭据（scope>=write，须归属验收方）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
         session_id: z.string().optional(),
         task_hint: z.string().optional(),
     }),
@@ -1441,6 +1509,10 @@ server.addTool({
         const aliveErr = assertTaskAlive(row); // ★ 列守卫：archived/merged 不可验收（2026-09-19）
         if (aliveErr)
             return aliveErr;
+        const verifier = args.as && args.as !== "any" ? args.as : AGENT;
+        const cred = checkWriteCredential(verifier, args.credential); // ★ A1/#8：归属校验 + scope>=write
+        if (!cred.ok)
+            return cred.msg;
         const st = readTaskState(row.content);
         if (!st)
             return `#${args.memory_id} 任务头格式异常，无法验收。`;
@@ -1450,12 +1522,11 @@ server.addTool({
             return `#${args.memory_id} 当前 status=${st.status}，仅 pending/in_progress 可验收关闭（review 走 task_done，终态走 task_reopen）。`;
         if (args.expected_version != null && args.expected_version !== row.version)
             return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：验收写拒绝；请刷新后重试。`;
-        const verifier = args.as && args.as !== "any" ? args.as : AGENT;
         // 不改 assignee（归属保留原文）、不发租约、不动 claim_lock 语义 —— 只闭环状态头 + 留痕
         const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, taskBody(row.content))}\n→ 验收(${verifier})：${args.reason.trim()}`;
         updateMemory(db, row.id, { content: newContent }); // 同步 FTS
         db.prepare(`UPDATE memories SET version=version+1 WHERE id=?`).run(row.id);
-        appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim() }), operator: `agent:${AGENT}` });
+        appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
         syncTaskToCard(row.id, "done", { actor: `agent:${verifier}`, action: "verify", detail: `任务 #${row.id} 第三方验收关闭（${verifier}）` });
         const card = cardOfTask(row.id);
         if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致
@@ -1548,6 +1619,16 @@ server.addTool({
         }
         const depDoneOf = (deps) => deps.every((d) => doneIds.has(resolveTaskId(d)));
         const who = !args.as || args.as === "any" ? AGENT : args.as;
+        // ★ 2026-09-19（实操问题 #7）：同 agent 多会话隔离 —— 取最近 task_claim 事件的 session_id，
+        //   与调用方 session_id 比对：非本会话 → 单列「同名其他会话」，消除「我在做」串台。
+        const claimSessionOf = (mid) => {
+            try {
+                const ev = db.prepare(`SELECT payload FROM memory_events WHERE memory_id=? AND op='task_claim' ORDER BY id DESC LIMIT 1`).get(mid);
+                return ev ? (JSON.parse(ev.payload).session_id ?? null) : null;
+            }
+            catch { return null; }
+        };
+        const mineOther = [];
         const avail = [];
         const blocked = [];
         const mine = [];
@@ -1589,7 +1670,10 @@ server.addTool({
                 }
             }
             else if (s.status === "in_progress" && s.assignee === who) {
-                mine.push(`#${r.id} ${srcTag(r)} 进行中(已认领 by ${s.assignee}): ${taskBody(r.content).slice(0, 80)}`);
+                const label = `#${r.id} ${srcTag(r)} 进行中(已认领 by ${s.assignee}): ${taskBody(r.content).slice(0, 80)}`;
+                const sid = claimSessionOf(r.id);
+                const isThisSession = !args.session_id || !sid || sid === args.session_id;
+                (isThisSession ? mine : mineOther).push(isThisSession ? label : `${label}（会话 ${sid}）`);
             }
         }
         // ★ B 排序：卡片 priority 高优先，同优先级按创建时间旧的在前
@@ -1600,6 +1684,8 @@ server.addTool({
         out += `可做（pending 且依赖done，按优先级）:\n${avail.length ? avail.map((x) => x.label).join("\n") : "（暂无，检查阻塞项）"}\n\n`;
         out += `阻塞（依赖未完成）:\n${blocked.length ? blocked.map((x) => x.label).join("\n") : "（无）"}\n\n`;
         out += `我在做:\n${mine.length ? mine.join("\n") : "（无进行中任务）"}`;
+        if (mineOther.length)
+            out += `\n\n同名其他会话进行中（非本会话，勿动）:\n${mineOther.join("\n")}`;
         // ★ 2026-09-15：跨 project 回退提示 —— 指定 project 无开放任务且确实存在其他 project 的任务时，
         // 明确提示而非静默空结果（避免『任务存在但领不到』）。
         if (avail.length === 0 && args.project !== "global") {

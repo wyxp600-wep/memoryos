@@ -154,6 +154,31 @@ try {
     const hBlocked = new RegExp(`阻塞（[\\s\\S]*?#${hG}\\b`).test(nextAfterFix);
     check("G10.★依赖「头done列归档」不再永久阻塞（done 集按头判定）", hAvail && !hBlocked, `H 可做=${hAvail} 误阻塞=${hBlocked}`);
 
+    /* ── H. 实操复盘「本周」档回归（2026-09-19）：assignee 白名单 / A1 凭据 / 会话隔离 / [task] 头强制 ── */
+    const tidOf = (msg) => parseInt(String(msg).split("#")[1] ?? "0", 10) || 0;
+    const badAsg = await call("task_assign", { content: "白名单探针任务（脏 assignee 应被拒）", assignee: "前端开发者", project: "global" });
+    check("H1.assignee 脏值被拒（小写 kebab 白名单，#6）", !/已分派/.test(badAsg), badAsg.replace(/\s+/g, " ").slice(0, 80));
+    const wMsg = await call("memory_write", { content: "[task][assignee:?][status:pending] 强制通道探针：以 memory_write 建任务", type: "convention", project: "global" });
+    const wId = tidOf(wMsg);
+    const wType = db.prepare(`SELECT type FROM memories WHERE id=?`).get(wId)?.type;
+    check("H2.★[task] 头强制 type=task（修静默降级，#9）", wType === "task" && /已强制 task/.test(wMsg), `type=${wType}`);
+    const fId = tidOf(await call("task_assign", { content: "凭据探针任务（A1）", assignee: "p26-life", project: "global" }));
+    const forged = await call("task_claim", { memory_id: fId, credential: "deadbeefdeadbeefdeadbeefdeadbeef" });
+    check("H3.A1 伪造凭据被拒（不属于该 agent，#8）", /A1 拒绝/.test(forged) && headStatus(fId) === "pending", forged.replace(/\s+/g, " ").slice(0, 80));
+    const readCred = String(await call("memory_credential", { action: "issue", agent: "p26-life", scope: "read", ttl_hours: 1 })).split("：").pop().trim();
+    const readTry = await call("task_claim", { memory_id: fId, credential: readCred });
+    check("H4.A1 read-scope 凭据被拒（改写需 write）", /scope=read 不足/.test(readTry) && headStatus(fId) === "pending", readTry.replace(/\s+/g, " ").slice(0, 80));
+    const writeCred = String(await call("memory_credential", { action: "issue", agent: "p26-life", scope: "write", ttl_hours: 1 })).split("：").pop().trim();
+    const okClaim = await call("task_claim", { memory_id: fId, credential: writeCred, session_id: "sess-H5" });
+    const claimEvt = JSON.parse(db.prepare(`SELECT payload FROM memory_events WHERE memory_id=? AND op='task_claim' ORDER BY id DESC LIMIT 1`).get(fId)?.payload ?? "{}");
+    check("H5.★A1 write 凭据认领成功（cred_id/session 落事件）", /已认领/.test(okClaim) && Number.isInteger(claimEvt.cred_id) && claimEvt.session_id === "sess-H5", `cred_id=${claimEvt.cred_id} session=${claimEvt.session_id}`);
+    const nxt = await call("task_next", { project: "global", as: "p26-life", session_id: "sess-diff" });
+    const mineSec = (nxt.split("我在做:")[1] ?? "").split("同名其他会话")[0];
+    const otherSec = nxt.split("同名其他会话进行中")[1] ?? "";
+    const inMine = mineSec.includes(`#${fId} `);
+    const inOther = otherSec.includes(`#${fId} `);
+    check("H6.★task_next 会话隔离（他会话任务单列「勿动」，#7）", !inMine && inOther, `本会话=${inMine} 他会话=${inOther}`);
+
     db.close();
 } catch (e) {
     fail++;
