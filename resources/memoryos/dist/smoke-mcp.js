@@ -99,6 +99,26 @@ try {
     }));
     const wtext = w.result?.content?.[0]?.text ?? "";
     check("tools/call memory_write 返回", wtext.includes("已写入记忆 #1"), JSON.stringify(wtext.slice(0, 60)));
+    // ★ 一致性④（2026-09-19）：memory_write 幂等键 —— 同键同文不重写 / 同键异文拒绝（端到端走 MCP 协议）
+    const idem1 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "一致性④ 幂等键样本：网关重试不重复落账", type: "experience", project: "ecommerce", idempotency_key: "smoke-idem-1" },
+    }));
+    const idem1t = idem1.result?.content?.[0]?.text ?? "";
+    const idem1id = (idem1t.match(/#(\d+)/) || [])[1];
+    check("一致性④a.幂等键首写正常入库", idem1t.includes("已写入记忆") && !!idem1id, JSON.stringify(idem1t.slice(0, 60)));
+    const idem2 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "一致性④ 幂等键样本：网关重试不重复落账", type: "experience", project: "ecommerce", idempotency_key: "smoke-idem-1" },
+    }));
+    const idem2t = idem2.result?.content?.[0]?.text ?? "";
+    check("一致性④b.同键同文命中幂等（不产生新记忆）", idem2t.includes("幂等键命中") && idem2t.includes(`#${idem1id}`), JSON.stringify(idem2t.slice(0, 70)));
+    const idem3 = (await send("tools/call", {
+        name: "memory_write",
+        arguments: { content: "一致性④ 幂等键样本：内容被换成另一个结论", type: "experience", project: "ecommerce", idempotency_key: "smoke-idem-1" },
+    }));
+    const idem3t = idem3.result?.content?.[0]?.text ?? "";
+    check("一致性④c.同键异文拒绝写入", idem3t.includes("写入拒绝"), JSON.stringify(idem3t.slice(0, 70)));
     const s = (await send("tools/call", {
         name: "memory_search",
         arguments: { query: "时间戳", project: "ecommerce" },

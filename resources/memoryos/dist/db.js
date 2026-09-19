@@ -1000,30 +1000,29 @@ export function writeMemory(db, args) {
     // ★ v0.4：sector 缺省时由 type 推导；λ 缺省取类默认（daemon 按此衰减）
     const sector = normalizeSector(args.sector, args.type);
     const lambda = args.decay_lambda ?? sectorLambda(sector);
-    // ★ P1-2.2：向量不再写 memories 表，改由 upsertVector 写入独立的 memory_vectors。
-    const info = db
-        .prepare(`INSERT INTO memories(
+    // ★ 一致性⑤（2026-09-19）：INSERT + 向量 + grams + 缓存失效包成真事务 —— 原 catch DELETE 伪回滚
+    //  在「INSERT 成功 → 进程崩溃」窗口会留下无向量孤儿记忆（FTS 可见、语义检索不可见、永不自愈）。
+    //  现在要么全写、要么全不算；嵌入计算由调用方在锁外完成、经 args.embedding 传入（慢活不进事务）；
+    //  withTx 可重入：被 task_assign/task_delegate/memory_write 外层事务包裹时并入外层，原子性由最外层保证。
+    let newId = 0;
+    withTx(db, () => {
+        const info = db
+            .prepare(`INSERT INTO memories(
          content,type,agent,agent_fpath,project,confidence,status,
          sector,form,salience,decay_lambda,valid_from,valid_until,
          trigger_cond,trigger_kind,trigger_action,valence,arousal,source_ref,sensitivity,pinned,
          epoch,idempotency_key,causal_parent
        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(args.content, args.type, args.agent, args.agent_fpath, args.project, args.confidence ?? 0.8, status, sector, String(args.form ?? "textual"), args.salience ?? 1.0, lambda, args.valid_from ?? null, args.valid_until ?? null, args.trigger_cond ?? null, String(args.trigger_kind ?? "pattern"), args.trigger_action ?? null, args.valence ?? null, args.arousal ?? null, args.source_ref ?? null, String(args.sensitivity ?? "normal"), args.pinned ?? 0,
+            .run(args.content, args.type, args.agent, args.agent_fpath, args.project, args.confidence ?? 0.8, status, sector, String(args.form ?? "textual"), args.salience ?? 1.0, lambda, args.valid_from ?? null, args.valid_until ?? null, args.trigger_cond ?? null, String(args.trigger_kind ?? "pattern"), args.trigger_action ?? null, args.valence ?? null, args.arousal ?? null, args.source_ref ?? null, String(args.sensitivity ?? "normal"), args.pinned ?? 0,
             // ★ P2-5（E-1）：MACP 可写字段。version/fencing_token 走 DDL 默认值（1/0），只在接管/修订时由工具递增，
             //   故此处不接受外部传值，避免调用方伪造版本号破坏单调性。
             args.epoch ?? null, args.idempotency_key ?? null, args.causal_parent ?? null);
-    const newId = Number(info.lastInsertRowid);
-    try {
+        newId = Number(info.lastInsertRowid);
         if (args.embedding)
             upsertVector(db, newId, args.embedding); // P1-2.2：向量入独立表
         syncGrams(db, newId, args.content); // P0-3.4：维护 CJK 2-gram 索引
         invalidateVectorCache(db); // P0-4.1：新记忆进入候选池
-    }
-    catch (e) {
-        // 回滚：删除刚写的记忆，保持原子性
-        db.prepare(`DELETE FROM memories WHERE id = ?`).run(newId);
-        throw e;
-    }
+    });
     return readMemory(db, newId);
 }
 export function updateMemory(db, id, args) {
@@ -1074,12 +1073,22 @@ export function bumpConfidence(db, id, delta = 0.1) {
  * 超时后仍会抛 `database is locked`——这里在锁竞争下自动重试并重开事务，避免写入方直接崩。
  * 用法：withTx(db, () => { 写操作 })；fn 抛非锁错误则吞掉后回滚并抛给上层。
  */
+/** ★ 一致性⑤（2026-09-19）：事务重入深度 —— writeMemory 内部也开事务（INSERT+向量+grams 一笔成），
+ *  而 writeMemory 又被 task_assign/task_delegate/memory_write 的外层事务包裹调用；node:sqlite 不支持
+ *  嵌套 BEGIN，深度 > 0 时直接在当前事务内执行（外层回滚会一并回滚，原子性由最外层保证）。
+ *  本项目单进程单 db 句柄，进程级计数即可（同步执行无并发重排）。 */
+let __txDepth = 0;
 export function withTx(db, fn, retries = 3) {
+    if (__txDepth > 0) {
+        fn(); // 已在事务内：并入当前事务，不重复 BEGIN
+        return;
+    }
     for (let attempt = 0;; attempt++) {
         try {
             // BEGIN IMMEDIATE：立即获取写锁，锁竞争在此即抛，便于在 BEGIN 层就能重试
             // （普通 BEGIN 是 deferred，写发生在 COMMIT 时，锁错误延后到 COMMIT 才抛——不利于 retry 对齐）
             db.exec("BEGIN IMMEDIATE");
+            __txDepth = 1;
             try {
                 fn();
                 db.exec("COMMIT");
@@ -1099,6 +1108,9 @@ export function withTx(db, fn, retries = 3) {
                 continue;
             }
             throw e;
+        }
+        finally {
+            __txDepth = 0;
         }
     }
 }

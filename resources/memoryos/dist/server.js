@@ -5,7 +5,7 @@
  */
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, logExecAudit, withTx } from "./db.js";
+import { openDb, writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, logExecAudit, withTx } from "./db.js";
 import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import { createExecTools, riskPrefix } from "./exec-tools.js";
 import { hybridSearch } from "./search.js";
@@ -106,6 +106,7 @@ server.addTool({
         source_task_id: z.number().int().min(1).optional().describe("P2-6：来源任务记忆 id（追溯用，记事件流）"),
         session_id: z.string().optional().describe("当前会话/任务标识（价值度量的 inferred-cited 判定基础）"),
         task_hint: z.string().optional().describe("任务提示词/上下文标签（埋点用）"),
+        idempotency_key: z.string().max(128).optional().describe("★ 一致性④ 幂等键（可选）：同键重复写入不产生新记忆——键命中且内容一致 → 返回既有记忆 id；内容不同 → 拒绝写入。防调用方重试/多会话并发造成重复沉淀"),
     }),
     async execute(args) {
         // P0② 硬门禁（R1 闭环）：写前提示先检索——软规则（conf 0.9 #671）失效后的代码层兜底
@@ -149,20 +150,48 @@ server.addTool({
             if (args.source_task_id != null)
                 appendEvent(db, { memory_id: newId, op: "source_task", payload: JSON.stringify({ task: args.source_task_id, by: AGENT }), operator: `agent:${AGENT}` });
         };
-        // M-1.3 去重/冲突预检（★ P0-2.1 快速路径：先用 gram 粗筛候选，再 cosine 精排）
-        const existing = getVectorsOnProject(db, args.project);
-        if (existing.length) {
-            // 快速预检：先用 gram 粗筛 top 100 候选，节省全量 cosine 计算
-            const d = dedupeDecisionFast(db, args.project, emb, args.content);
-            if (d.action === "merge" && d.targetId) {
-                bumpConfidence(db, d.targetId, 0.1);
-                const t = readMemory(db, d.targetId);
-                applyRevision(d.targetId); // 合并即由既有条目承接内容 → 修订指向它（勿静默丢弃 supersedes）
-                return `已与 #${t.id} 重复，已合并（confidence+0.1）[${t.type}|${t.agent}|${t.created_at.slice(0, 10)}] ${t.content.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "memory_write_merged", id: t.id, type: t.type, status: t.status, merged_into: d.targetId, causal_parent: causalParent }) + _taskNote + _gate;
+        // ★ 一致性④（2026-09-19）：去重/冲突判定整体移入落笔事务 —— 原实现预检兜底读 60s 进程向量缓存
+        //  （其他 MCP 进程的写入不可见 = 跨进程盲区）且「预检 → INSERT」之间是裸竞态窗口：两 agent 并发
+        //  沉淀同一结论必产生重复条目。现在三道闸全在落笔事务内：① 幂等键 ② 精确同文（毫秒级）
+        //  ③ 新鲜全量向量比对（getVectorsOnProject 不走缓存，跨进程写入可见），命中即合并、不再重复插入。
+        //  规模注：全量比对 ≈ 4KB/条，万条级约 40ms/写（个人库千条级毫秒级）；≥2 万条需改分桶/增量水位。
+        const normContent = args.content.replace(/\r\n?/g, "\n"); // 与 db.normalizeContent 同口径（精确同文比对用）
+        let plan = null; // {kind:'idem'|'idem_conflict'|'merge'|'conflict'|'insert', ...}
+        let row = null;
+        let t = null;
+        const wAbort = runTaskTx(db, () => {
+            // (1) 幂等键：命中即不重写（防调用方重试造成重复；idx_memories_idem 部分唯一索引兜底并发撞键）
+            if (args.idempotency_key) {
+                const dup = db.prepare(`SELECT id, content FROM memories WHERE idempotency_key=?`).get(args.idempotency_key);
+                if (dup) {
+                    plan = String(dup.content ?? "") === normContent
+                        ? { kind: "idem", id: dup.id }
+                        : { kind: "idem_conflict", id: dup.id };
+                    return;
+                }
             }
-            if (d.action === "conflict") {
+            // (2) 精确同文：归一化后逐字相同（跨进程竞态/伪向量场景的兜底闸，毫秒级；原实现靠 cosine 命中，孤儿向量漏网）
+            const exact = db.prepare(`SELECT id FROM memories WHERE content=? AND status IN ('active','trial') AND project IN (?, 'global') LIMIT 1`).get(normContent, args.project);
+            if (exact) {
+                plan = { kind: "merge", targetId: exact.id, sim: 1 };
+                bumpConfidence(db, exact.id, 0.1);
+                t = readMemory(db, exact.id);
+                applyRevision(exact.id);
+                return;
+            }
+            // (3) 事务内新鲜全量比对 —— 原 dedupeDecisionFast 兜底走进程缓存（跨进程盲区），此处绕开
+            const d2 = dedupeDecision(getVectorsOnProject(db, args.project), emb, -1);
+            if (d2.action === "merge" && d2.targetId) {
+                plan = { kind: "merge", targetId: d2.targetId, sim: d2.sim };
+                bumpConfidence(db, d2.targetId, 0.1);
+                t = readMemory(db, d2.targetId);
+                applyRevision(d2.targetId); // 合并即由既有条目承接内容 → 修订指向它（勿静默丢弃 supersedes）
+                return;
+            }
+            if (d2.action === "conflict" && d2.targetId) {
+                plan = { kind: "conflict", targetId: d2.targetId, sim: d2.sim };
                 const conf = args.confidence ?? 0.5; // 缺省 0.5：疑似冲突低置信入库，供 v0.3 仲裁；显式传入则尊重调用方
-                const row = writeMemory(db, {
+                row = writeMemory(db, {
                     content: args.content,
                     type: memType,
                     agent: AGENT,
@@ -172,13 +201,15 @@ server.addTool({
                     confidence: conf,
                     valid_until: args.expires_at ?? null, // P2-6（C-4）：早退路径同样透传，勿丢
                     causal_parent: causalParent,          // P2-6（C-4）：早退路径同样挂因果链
+                    idempotency_key: args.idempotency_key ?? null,
                 });
+                plan.conf = conf;
                 // v0.3 M-2.4：落 conflict_with 指向旧记忆，仲裁队列才有来源
-                db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(d.targetId, row.id);
+                db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(d2.targetId, row.id);
                 appendEvent(db, {
                     memory_id: row.id,
                     op: "possible-conflict",
-                    payload: JSON.stringify({ conflict_with: d.targetId, sim: Number(d.sim.toFixed(3)) }),
+                    payload: JSON.stringify({ conflict_with: d2.targetId, sim: Number(d2.sim.toFixed(3)) }),
                 });
                 applyRevision(row.id); // 修订副作用必须与主路径一致
                 logUsage(db, {
@@ -190,31 +221,44 @@ server.addTool({
                     session_id: args.session_id,
                     task_hint: args.task_hint,
                 });
-                const _sup = causalParent != null ? `（已替代并归档 #${causalParent}）` : "";
-                return `已写入记忆 #${row.id}（⚠ 疑似与 #${d.targetId} 冲突，置信 ${conf}，待 v0.3 仲裁）${_sup}[${row.type}|${row.agent}]` + stateReceipt({ op: "memory_write", id: row.id, type: row.type, status: row.status, version: row.version, conflict_with: d.targetId, causal_parent: causalParent }) + _taskNote + _gate;
+                return;
             }
+            plan = { kind: "insert" };
+            row = writeMemory(db, {
+                content: args.content,
+                type: memType,
+                agent: AGENT,
+                agent_fpath: AGENT_FPATH,
+                project: args.project,
+                embedding: emb,
+                confidence: args.confidence,      // P2-6（C-4）：缺省 0.8 保持原行为
+                valid_until: args.expires_at ?? null, // P2-6（C-4）：expires_at → valid_until
+                causal_parent: causalParent,        // P2-6：修订因果链
+                idempotency_key: args.idempotency_key ?? null, // ★ 一致性④：幂等键落列（唯一索引兜底并发撞键）
+            });
+            applyRevision(row.id); // 修订归档 + source_task 追溯事件（三条路径统一出口）
+            logUsage(db, {
+                memory_id: row.id,
+                event: "write",
+                reader_agent: AGENT,
+                writer_agent: AGENT,
+                project: row.project,
+                session_id: args.session_id,
+                task_hint: args.task_hint,
+            });
+        });
+        if (wAbort)
+            return wAbort;
+        if (plan.kind === "idem")
+            return `幂等键命中：#${plan.id} 已存在且内容一致，本次未重复写入。` + stateReceipt({ op: "memory_write_idempotent", id: plan.id }) + _taskNote + _gate;
+        if (plan.kind === "idem_conflict")
+            return `幂等键已被 #${plan.id} 占用且内容不同：写入拒绝（防重试错写）。请更换 idempotency_key，或先 memory_read 核对。` + stateReceipt({ op: "memory_write_idem_rejected", id: plan.id }) + _taskNote + _gate;
+        if (plan.kind === "merge")
+            return `已与 #${t.id} 重复，已合并（confidence+0.1）[${t.type}|${t.agent}|${t.created_at.slice(0, 10)}] ${t.content.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "memory_write_merged", id: t.id, type: t.type, status: t.status, merged_into: plan.targetId, causal_parent: causalParent }) + _taskNote + _gate;
+        if (plan.kind === "conflict") {
+            const _sup = causalParent != null ? `（已替代并归档 #${causalParent}）` : "";
+            return `已写入记忆 #${row.id}（⚠ 疑似与 #${plan.targetId} 冲突，置信 ${plan.conf}，待 v0.3 仲裁）${_sup}[${row.type}|${row.agent}]` + stateReceipt({ op: "memory_write", id: row.id, type: row.type, status: row.status, version: row.version, conflict_with: plan.targetId, causal_parent: causalParent }) + _taskNote + _gate;
         }
-        const row = writeMemory(db, {
-            content: args.content,
-            type: memType,
-            agent: AGENT,
-            agent_fpath: AGENT_FPATH,
-            project: args.project,
-            embedding: emb,
-            confidence: args.confidence,      // P2-6（C-4）：缺省 0.8 保持原行为
-            valid_until: args.expires_at ?? null, // P2-6（C-4）：expires_at → valid_until
-            causal_parent: causalParent,        // P2-6：修订因果链
-        });
-        applyRevision(row.id); // 修订归档 + source_task 追溯事件（三条路径统一出口）
-        logUsage(db, {
-            memory_id: row.id,
-            event: "write",
-            reader_agent: AGENT,
-            writer_agent: AGENT,
-            project: row.project,
-            session_id: args.session_id,
-            task_hint: args.task_hint,
-        });
         const oneLine = row.content.replace(/\s+/g, " ").slice(0, 300);
         const supNote = causalParent != null ? `（已替代并归档 #${causalParent}，因果链 → v${row.version}）` : "";
         return `已写入记忆 #${row.id}[${row.type}|${row.agent}|${row.created_at.slice(0, 10)}] ${supNote}${oneLine}` + stateReceipt({ op: "memory_write", id: row.id, type: row.type, status: row.status, version: row.version, causal_parent: causalParent }) + _taskNote + _gate;
