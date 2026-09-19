@@ -21,6 +21,7 @@ import { spawnSync } from "node:child_process";
 const DB_PATH = process.env.MEMORY_DB ?? fileURLToPath(new URL("../data/memory.db", import.meta.url)); // fileURLToPath 正确 decode 中文路径
 const AGENT = process.env.MEMORY_AGENT ?? "unknown";
 const AGENT_FPATH = process.env.MEMORY_AGENT_FPATH ?? null;
+const ENV_CRED = process.env.MEMORYOS_A1_CREDENTIAL ?? null; // ★ 一致性⑧：MCP 配置注入的本 agent 凭据（调用方省略 credential 入参时回退；归属仍按 who 严格校验，拿他人凭据照样拒绝）
 function auditAgentIdentity() {
     if (!AGENT_FPATH) {
         console.error(`[warn] MEMORY_AGENT_FPATH 未设置，身份无法佐证（agent=${AGENT}）`);
@@ -921,12 +922,13 @@ function assertAssignee(name) {
  *  不带凭据 → 软模式放行（事件留痕 cred_id=null），MEMORYOS_A1_ENFORCE=1 时硬拒绝（fail-closed）。 */
 function checkWriteCredential(who, credential) {
     const HARD = process.env.MEMORYOS_A1_ENFORCE === "1";
-    if (!credential) {
+    const cred = credential || ENV_CRED; // ★ 一致性⑧：入参缺失时回退 env 注入凭据
+    if (!cred) {
         if (HARD)
-            return { ok: false, credId: null, msg: `A1 硬模式（MEMORYOS_A1_ENFORCE=1）：${who} 必须携带 scope>=write 的凭据——先 memory_credential(action=issue, scope=write) 签发，再随 credential 入参携带。` };
+            return { ok: false, credId: null, msg: `A1 硬模式（MEMORYOS_A1_ENFORCE=1）：${who} 必须携带 scope>=write 的凭据——先 memory_credential(action=issue, scope=write) 签发后随 credential 入参携带，或在 MCP 配置注入 MEMORYOS_A1_CREDENTIAL 环境变量（node dist/a1-bootstrap.js 一键签发）。` };
         return { ok: true, credId: null, msg: "" };
     }
-    const row = db.prepare(`SELECT id, agent, scope, expires_at, revoked_at FROM agent_credentials WHERE credential=?`).get(String(credential));
+    const row = db.prepare(`SELECT id, agent, scope, expires_at, revoked_at FROM agent_credentials WHERE credential=?`).get(String(cred));
     if (!row || row.agent !== who)
         return { ok: false, credId: null, msg: `A1 拒绝：凭据不属于 ${who} 或不存在（不接受他人凭据改写任务归属）。` };
     if (!isCredentialValid(row))
@@ -1273,7 +1275,7 @@ server.addTool({
                 if (!claimed)
                     throw new TxAbort(`#${row.id} 并发认领冲突（版本已漂移 v${row.version}）：任务刚被其他会话领取或改写；请 task_next 刷新后重试。`);
                 lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
-                appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
+                appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, as_any: args.as === "any" || undefined, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计；★ ⑧：as=any 托管认领强制留痕（改写归属的可审计性）
                 syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
                 touchCardLease(row.id, lock, args.lease_minutes); // ★ P2-6：卡片租约锁定（默认 10min，#13 可分级 10..120）
             });
@@ -1355,7 +1357,7 @@ function touchCardLease(memoryId, lock, minutes = 10) {
         if (!c || c.status !== "running")
             return false;
         const min = Math.max(10, Math.min(120, Math.floor(Number(minutes) || 10)));
-        db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=datetime('now', ?), heartbeat_at=datetime('now'), version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, `+${min} minutes`, c.id);
+        db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now', ?), heartbeat_at=datetime('now'), lease_notice_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, `+${min} minutes`, c.id); // ★ ⑦：续期即撕贴条；lease 改 T 格式（原 datetime 空格格式与 JS ISO 裸比较「同日恒真」）
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, "dispatcher", lock ? "lease_set" : "heartbeat", "running", "running", lock ? `MCP 租约锁定（${min}min，lock=${String(lock).slice(0, 8)}…）` : `MCP 心跳续窗（${min}min）`);
         return true;
     }
@@ -1447,7 +1449,7 @@ server.addTool({
                     //   `catch {}` **静默吞掉** ⇒ 本条 UPDATE 与紧随其后的 card_events INSERT **都没执行**——
                     //   现象＝"记忆头已释放，但卡片仍 running + 持锁、且无任何事件留痕"，只能等 C-5 对账兜底。
                     //   教训：① SQL 占位符数与 .run 实参数必须逐一核对；② 静默 catch 会把这类错误藏起来（改为仅记日志）。
-                    const rel = db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
+                    const rel = db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
                     if (Number(rel.changes) === 0) console.error(`[task_release] ⚠ 卡片 #${c2.id} 未更新（changes=0），三方可能不一致`);
                     db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
                 }
@@ -1540,7 +1542,7 @@ server.addTool({
             try {
                 const c2 = cardOfTask(row.id);
                 if (c2 && ["done", "archived", "cancelled"].includes(c2.status)) {
-                    db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, assignee=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(who === "?" ? null : who, c2.id);
+                    db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL, assignee=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(who === "?" ? null : who, c2.id);
                     db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_reopen", c2.status, "ready", `任务 #${row.id} 重开（${args.reason.trim().slice(0, 80)}）`);
                 }
             }
@@ -1615,7 +1617,7 @@ server.addTool({
                 syncTaskToCard(row.id, "ready", { actor: `agent:${AGENT}`, action: "gate_fallback", detail: `任务 #${row.id} 门控未通过回退 pending` });
                 const gCard = cardNowDone ?? cardOfTask(row.id);
                 if (gCard)
-                    db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(gCard.id);
+                    db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(gCard.id);
             });
             if (gAbort)
                 return gAbort;
@@ -1632,8 +1634,8 @@ server.addTool({
             bumpConfidence(db, row.id, 0.05); // 完成任务强化
             appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
             syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
-            if (cardNowDone) // ★ P2-6：完成即释放租约锁
-                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
+            if (cardNowDone) // ★ P2-6：完成即释放租约锁；★ ⑦：顺带撕贴条
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(cardNowDone.id);
         });
         if (doneAbort)
             return doneAbort;
@@ -1682,8 +1684,8 @@ server.addTool({
             appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
             syncTaskToCard(row.id, "done", { actor: `agent:${verifier}`, action: "verify", detail: `任务 #${row.id} 第三方验收关闭（${verifier}）` });
             const card = cardOfTask(row.id);
-            if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致
-                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(card.id);
+            if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致；★ ⑦：顺带撕贴条
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(card.id);
         });
         if (vfAbort)
             return vfAbort;

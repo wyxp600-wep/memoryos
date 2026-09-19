@@ -73,7 +73,7 @@ export function registerCards(app, ctx) {
         return {
             id: Number(r.id), board: r.board, kind: r.kind, title: r.title, body: r.body, status: r.status,
             assignee: r.assignee, lane: r.lane, priority: Number(r.priority ?? 0), failure_count: Number(r.failure_count ?? 0),
-            claim_lock: r.claim_lock, lease_expires_at: r.lease_expires_at, heartbeat_at: r.heartbeat_at,
+            claim_lock: r.claim_lock, lease_expires_at: r.lease_expires_at, heartbeat_at: r.heartbeat_at, lease_notice_at: r.lease_notice_at ?? null,
             workspace: r.workspace, workspace_kind: r.workspace_kind, ref_kind: r.ref_kind, ref_id: r.ref_id,
             meta: r.meta, created_at: r.created_at, updated_at: r.updated_at,
         };
@@ -1096,13 +1096,17 @@ export function registerCards(app, ctx) {
         const now = new Date().toISOString();
         db.exec("BEGIN IMMEDIATE");
         try {
-            // ① 租约回收（H3）：过期 running → ready，清 assignee/claim_lock，事件 lease_expired
+            // ① 租约贴条（⑦/H3 演进）：过期不再自动抢回 —— 打 lease_notice_at 标记、卡保持 running（与任务头一致零震荡）；
+            //    认领者 heartbeat 续期/收口即撕条；超期放回由 reapExpiredLeases 阶段二统一处理（头 CAS 回 pending）。
+            //    replace(' ','T')：lease_expires_at 存量含 SQLite 空格格式，与 JS ISO 裸比较「同日恒真」，先归一再比。
             const expired = db
-                .prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at < ?`)
+                .prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND replace(lease_expires_at,' ','T') < ? AND lease_notice_at IS NULL`)
                 .all(now);
             for (const e of expired) {
-                db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, updated_at=? WHERE id=?`).run(now, e.id);
-                writeCardEvent(e.id, "dispatcher", "lease_expired", "running", "ready", `租约过期（原 ${e.assignee ?? "?"}），产物请从评论交接`);
+                const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, e.id);
+                if (Number(upd.changes) === 0)
+                    continue;
+                writeCardEvent(e.id, "dispatcher", "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理自动放回（⑦）`);
                 out.leased_back++;
             }
             // ② triage 超时（M1）：>24h 未动 → todo

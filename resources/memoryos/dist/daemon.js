@@ -299,7 +299,7 @@ export async function reembedStale(db, limit = 20) {
 }
 /**
  * 长期治理一轮（每小时）：
- *  ① 租约回收（H3）：过期 running → ready + 清 assignee/claim_lock + lease_expired 事件
+ *  ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at（不抢回）；放回由 reapExpiredLeases 阶段二统一处理
  *  ② triage 超时（M1）：>24h → todo + auto_refine
  *  ③ 熔断：failed≥2 → blocked + circuit_break
  *  ④ 依赖提升（M3）：todo 且 depends 全 done → ready + auto_ready
@@ -410,11 +410,15 @@ export function housekeepBoard(db, opts = {}) {
     const ev = (cardId, action, from, to, detail) => db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cardId, "dispatcher", action, from, to, detail);
     db.exec("BEGIN IMMEDIATE");
     try {
-        // ① 租约回收
-        const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at < ?`).all(now);
+        // ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at 标记，**不抢回**（卡保持 running 与任务头
+        //    一致，防震荡防误杀）；放回由 reapExpiredLeases 阶段二统一处理（头 CAS 回 pending）。
+        //    replace(' ','T')：lease_expires_at 存量为 SQLite 空格格式，与 JS ISO 裸比较「同日恒真」，先归一再比。
+        const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND replace(lease_expires_at,' ','T') < ? AND lease_notice_at IS NULL`).all(now);
         for (const e of expired) {
-            db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, updated_at=? WHERE id=? AND status='running'`).run(now, e.id);
-            ev(e.id, "lease_expired", "running", "ready", `租约过期（原 ${e.assignee ?? "?"}），产物请从评论交接`);
+            const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, e.id);
+            if (Number(upd.changes) === 0)
+                continue;
+            ev(e.id, "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理自动放回（⑦）`);
             out.leased_back++;
         }
         // ② triage 超时
@@ -602,24 +606,81 @@ export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}
 }
 // —— CLI ——
 /**
- * ★ P2-6（C-3 / #4199）：租约超时回收守护 —— 过期 running 卡 → ready（清 assignee/claim_lock，留 lease_expired 事件）。
- *  与 /api/dispatch 内联回收同 SQL 口径；由 30s 任务桥高频调用，无需等到人工/自动派发。
- *  纯 SQL、幂等（已 ready 的卡不会再命中），失败不阻断守护主流程。
+ * ★ P2-6（C-3 / #4199）→ ★ 一致性⑦（2026-09-19）：租约到期「贴条」守护 —— 到期**不再自动抢回**。
+ *  原语义（过期 running → ready 清锁）两大害：① 卡被回 ready 但记忆头仍 in_progress，5min 对账又把卡
+ *  对齐回 running、卡再被回收 → ready↔running 无限震荡、任务头永久卡死；② 心跳缺失 ≠ 工作已死，
+ *  直接抢回会把「任务卡死」换成「两人重复执行」。新语义两阶段：
+ *    阶段一（贴条）：过期 running 卡打 lease_notice_at + lease_expired 事件，卡保持 running、锁保留
+ *      —— 与任务头一致零震荡；认领者 task_heartbeat 续期 / task_done 收口即自动撕条。
+ *    阶段二（放回）：贴条超 graceHours（默认 24h，MEMORYOS_LEASE_GRACE_HOURS 可覆盖）无人理 →
+ *      一笔事务内：任务头 CAS 回 pending（有 dispatch 关联且头确为 in_progress 时）+ 卡 ready 清锁撕条。
+ *      头 CAS 失败（MCP 侧正在改写）→ 整卡回滚跳过、下轮再试；头已 done/pending/blocked → 仅撕条留痕。
+ *  幂等、失败不阻断守护主流程。housekeepBoard ① 与 /api/dispatch ① 同贴条口径（三处互不抢回）。
+ *  ⚠ 顺手修格式错位：lease_expires_at 存量含 SQLite 空格格式（datetime('now')），与 JS ISO 的 T/Z
+ *  做裸字符串比较时「同日恒小于」→ 同日租约被即刻判过期；统一 replace(' ','T') 后再比，
+ *  且 touchCardLease 新写入改用 strftime T 格式（双保险，老数据兼容）。
  */
-export function reapExpiredLeases(db) {
-  const out = { reaped: 0 };
+export function reapExpiredLeases(db, opts = {}) {
+  const out = { noticed: 0, reclaimed: 0 };
+  const graceH = Math.max(0, Number(process.env.MEMORYOS_LEASE_GRACE_HOURS ?? opts.graceHours ?? 24));
   try {
     const now = new Date().toISOString();
-    const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?`).all(now);
+    // —— 阶段一：贴条（卡保持 running，锁保留）——
+    const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND replace(lease_expires_at,' ','T') < ? AND lease_notice_at IS NULL`).all(now);
     for (const c of expired) {
-      db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, updated_at=? WHERE id=?`).run(now, c.id);
-      db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_expired', 'running', 'ready', `租约过期（原 ${c.assignee ?? String.fromCharCode(63)}），守护自动回收（C-3）`);
-      out.reaped++;
+      const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, c.id);
+      if (Number(upd.changes) === 0)
+        continue;
+      db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_expired', 'running', 'running', `租约过期（原 ${c.assignee ?? String.fromCharCode(63)}）——贴条待确认：task_heartbeat 续期或 task_done 收口；超 ${graceH}h 无人理自动放回池子（⑦）`);
+      out.noticed++;
+    }
+    // —— 阶段二：贴条超期无人理 → 放回池子（头 CAS + 卡放回一笔事务；格式统一用 JS ISO 比较）——
+    const cutoff = new Date(Date.now() - graceH * 3600000).toISOString();
+    const abandoned = db.prepare(`SELECT id, assignee, lease_notice_at FROM cards WHERE status='running' AND lease_notice_at IS NOT NULL AND lease_notice_at < ?`).all(cutoff);
+    for (const c of abandoned) {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const rel = db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(c.id);
+          const m = rel ? db.prepare(`SELECT id, content, version, status FROM memories WHERE id=?`).get(rel.memory_id) : null;
+          const st = m ? (m.content.match(/\[status:([a-z_]+)\]/) || [])[1] : null;
+          if (m && ["active", "trial"].includes(String(m.status)) && st === "in_progress") {
+            // 任务头回 pending：CAS（MCP 侧正在改写 → 版本漂移 → 整体回滚，下轮再试）
+            const cas = db.prepare(`UPDATE memories SET content=?, version=version+1 WHERE id=? AND version=?`)
+                .run(m.content.replace(`[status:${st}]`, "[status:pending]"), m.id, m.version);
+            if (Number(cas.changes) !== 1) {
+              db.exec("ROLLBACK");
+              continue;
+            }
+            db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(m.id, "task_lease_reclaim", JSON.stringify({ card: c.id, by: "reaper", notice_at: c.lease_notice_at, assignee: c.assignee ?? null }), "daemon:reaper");
+          }
+          else if (m && ["active", "trial"].includes(String(m.status))) {
+            // 头已非进行中（done/pending/blocked…）→ 无需抢回，仅撕条留痕，卡交由既有同步/对账收敛
+            db.prepare(`UPDATE cards SET lease_notice_at=NULL, updated_at=? WHERE id=? AND status='running'`).run(now, c.id);
+            db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_notice_cleared', 'running', 'running', `贴条超期但任务头=${st ?? String.fromCharCode(63)}，无需放回（⑦）`);
+            db.exec("COMMIT");
+            continue;
+          }
+          // 卡放回池子（含无关联任务记忆的孤儿卡）
+          db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL, version=version+1, updated_at=? WHERE id=? AND status='running'`).run(now, c.id);
+          db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_reclaimed', 'running', 'ready', `贴条超 ${graceH}h 无人理（原 ${c.assignee ?? String.fromCharCode(63)}），放回池子${m && st === "in_progress" ? "；任务头已回 pending" : ""}（⑦）`);
+          db.exec("COMMIT");
+          out.reclaimed++;
+        }
+        catch (e) {
+          try { db.exec("ROLLBACK"); } catch (rbErr) { console.error(`[reaper] 回滚失败: ${rbErr instanceof Error ? rbErr.message : String(rbErr)}`); }
+          throw e;
+        }
+      }
+      catch (e) {
+        console.error(`[reaper] 卡 #${c.id} 放回失败（下轮重试）: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }
   catch (e) {
     console.error(`[reaper] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
   }
+  out.reaped = out.reclaimed; // 旧调用方/日志兼容别名
   return out;
 }
 
@@ -656,7 +717,7 @@ if (mainFile === "daemon.js") {
             try {
                 const tb = syncTaskBridge(db);
                 const rp = reapExpiredLeases(db);
-                if (rp.reaped) console.log(`[reaper-fast] 回收过期租约 ${rp.reaped} 张`);
+                if (rp.noticed || rp.reclaimed) console.log(`[reaper] 租约贴条 ${rp.noticed} 张 / 超期放回 ${rp.reclaimed} 张`);
                 if (tb.dispatched || tb.syncedDone || tb.syncedRunning) {
                     console.log(`[taskbridge] 派发卡片→任务 ${tb.dispatched} / 任务完成→卡片 ${tb.syncedDone} / 任务进行中→卡片 ${tb.syncedRunning}`);
                 }

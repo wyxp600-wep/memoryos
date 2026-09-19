@@ -300,6 +300,11 @@ export function registerIngest(app, ctx) {
                 sizeMb: Number(((pageCount * 4096) / 1048576).toFixed(1)),
                 autoVacuum: Number(pragma("auto_vacuum")),
             },
+            a1: { // ★ 一致性⑧（2026-09-19）：凭据门禁水位（只报状态与计数，绝不含凭据本体）
+                enforce: process.env.MEMORYOS_A1_ENFORCE === "1",
+                envCredential: Boolean(process.env.MEMORYOS_A1_CREDENTIAL),
+                activeCredentials: db.prepare(`SELECT COUNT(*) c FROM agent_credentials WHERE revoked_at IS NULL AND expires_at > ?`).get(new Date().toISOString())?.c ?? 0,
+            },
             analyze: {
                 ts: analyzeTs,
                 stat1Exists: hasStat1,

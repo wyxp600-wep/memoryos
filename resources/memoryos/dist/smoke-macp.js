@@ -99,12 +99,19 @@ try {
     db3.prepare(`INSERT INTO cards(board,kind,title,body,status,assignee,claim_lock,lease_expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run("default", "task", "租约回收样本", "smoke", "running", "agentA", "lock-expired-1", "2000-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z");
     const expiredCardId = Number(db3.prepare(`SELECT id FROM cards WHERE claim_lock=?`).get("lock-expired-1").id);
+    // ★ 一致性⑦（2026-09-19）：租约到期改「贴条」两阶段 —— 到期不抢回（防误杀在岗认领者 + 防对账震荡），超期才放回
     const rp1 = reapExpiredLeases(db3);
-    const afterReap = db3.prepare(`SELECT status, assignee, claim_lock FROM cards WHERE id=?`).get(expiredCardId);
-    check("G1a.过期租约被守护回收（running → ready 且清锁）", rp1.reaped >= 1 && afterReap.status === "ready" && afterReap.assignee === null && afterReap.claim_lock === null, `reaped=${rp1.reaped} status=${afterReap.status}`);
-    check("G1b.回收留 card_events 事件（可审计）", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_expired").c >= 1);
+    const afterNotice = db3.prepare(`SELECT status, assignee, claim_lock, lease_notice_at FROM cards WHERE id=?`).get(expiredCardId);
+    check("G1a.过期租约贴条不抢回（running 保持 + 锁保留 + notice 标记）", rp1.noticed >= 1 && afterNotice.status === "running" && afterNotice.claim_lock === "lock-expired-1" && !!afterNotice.lease_notice_at, `noticed=${rp1.noticed} status=${afterNotice.status} notice=${!!afterNotice.lease_notice_at}`);
+    check("G1b.贴条留 card_events 事件（可审计）", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_expired").c >= 1);
     const rp2 = reapExpiredLeases(db3);
-    check("G1c.回收幂等（再跑无新增）", rp2.reaped === 0, `reaped=${rp2.reaped}`);
+    check("G1c.贴条幂等（再跑无新增）", rp2.noticed === 0, `noticed=${rp2.noticed}`);
+    // G1d 贴条超期（notice 时间回拨 + grace=0）→ 放回池子（该样本卡无关联任务记忆，走孤儿卡直放回路径）
+    db3.prepare(`UPDATE cards SET lease_notice_at=? WHERE id=?`).run("2000-01-01T00:00:00.000Z", expiredCardId);
+    const rp3 = reapExpiredLeases(db3, { graceHours: 0 });
+    const afterReclaim = db3.prepare(`SELECT status, assignee, claim_lock, lease_notice_at FROM cards WHERE id=?`).get(expiredCardId);
+    check("G1d.贴条超期放回（ready + 清锁 + 撕条）", rp3.reclaimed >= 1 && afterReclaim.status === "ready" && afterReclaim.assignee === null && afterReclaim.claim_lock === null && afterReclaim.lease_notice_at === null, `reclaimed=${rp3.reclaimed} status=${afterReclaim.status}`);
+    check("G1e.放回留 lease_reclaimed 事件", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_reclaimed").c >= 1);
     // G2 投影重建（C-5）：任务记忆无卡 → 补建
     const taskRow = writeMemory(db3, { content: "[task][assignee:?][status:pending] 对账样本：无卡任务", type: "task", agent: "macp-smoke", agent_fpath: null, project: "global", embedding: null });
     const rc1 = reconcileTasksAndCards(db3);

@@ -588,6 +588,9 @@ export function openDb(dbPath) {
         ["epoch", "TEXT"],
         ["idempotency_key", "TEXT"],
         ["causal_parent", "INTEGER"],
+        // ★ 一致性⑦（2026-09-19）：租约到期「贴条」标记 —— 到期不自动抢回（防误杀在岗认领者 + 防与任务头
+        //   对账震荡），贴条超 24h 无人理（无 heartbeat/收口）才放回池子。NULL=未贴条。
+        ["lease_notice_at", "TEXT"],
     ];
     if (cardCols.length) {
         for (const [name, def] of addCards) {
