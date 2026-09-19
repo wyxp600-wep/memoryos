@@ -1010,6 +1010,27 @@ server.addTool({
         return `#${args.memory_id} 验收门 = [gate:${gate}]（预设：${Object.keys(GATE_PRESETS).join(" / ")}）\n当前状态=${st.status}${lastRes ? `\n最近验收：${lastRes.ok ? "PASS" : "FAIL"}（${String(lastRes.detail ?? "").slice(0, 120)}）` : "\n尚无验收记录（task_done 时自动执行）。"}`;
     },
 });
+/** ★ 一致性①（2026-09-19）「记账一笔成」：任务链路的多步写（CAS 状态头 + 事件 + 卡片投影 + 租约）此前为
+ *  逐条自动提交 —— 中途崩溃/锁失败即头-卡-事件三方分裂，只能等 5min 对账；且「稍后重试」会因 version 已 +1
+ *  被 CAS 拒绝（重试进不去）。现统一用 withTx（BEGIN IMMEDIATE）包整段：要么全成、要么全不算；
+ *  锁竞争由 withTx 整段重试（fn 只做 DB 写，重跑安全）。事务纪律：
+ *  - 事务内业务中止（并发冲突需把人话文案返回给 agent 而非抛 MCP 错误）→ 抛 TxAbort，runTaskTx 捕获转文案；
+ *  - 慢活绝不进事务：runTaskGate 子进程验收保持在锁外（先跑门控、后开事务写结果）；
+ *  - 卡片投影保持 best-effort catch（投影失败留日志，源头以任务头为准，对账兜底）——不因投影失败回滚事实。 */
+class TxAbort extends Error {
+    constructor(msg) { super(msg); this.name = "TxAbort"; }
+}
+function runTaskTx(db, fn) {
+    try {
+        withTx(db, fn);
+        return null;
+    }
+    catch (e) {
+        if (e instanceof TxAbort)
+            return e.message; // 业务中止：整体已回滚，把冲突文案交还调用方
+        throw e; // 非业务错误：向上抛（MCP 层兜底）
+    }
+}
 server.addTool({
     name: "task_assign",
     description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。可声明 depends_on 依赖其他任务（多个用 , 分隔），被依赖任务全部 done 后本任务才可做。另一 Agent 用 task_claim 领取、task_done 完成、task_next 查询可做集。默认同步在任务地图建一张 can 领取的卡片（create_card=true），卡片认领/流转会回写 memories 状态头。",
@@ -1035,42 +1056,49 @@ server.addTool({
         const full = deps
             ? `${taskHead("pending", args.assignee)} [depends:${deps}] ${body}`
             : `${taskHead("pending", args.assignee)} ${body}`;
-        const row = writeMemory(db, {
-            content: full,
-            type: "task",
-            agent: AGENT,
-            agent_fpath: AGENT_FPATH,
-            project: args.project,
-        });
-        appendEvent(db, {
-            memory_id: row.id,
-            op: "task_assign",
-            payload: JSON.stringify({ from: AGENT, to: args.assignee, project: args.project, depends: deps || null }),
-            operator: `agent:${AGENT}`,
-        });
-        // ★ 2026-09-15：task_assign 同步建卡（默认 open=create_card），避免任务地图无卡可领。
-        // 复用 from-memory 的 ref 关联：ref_kind='memory', ref_id=task 记忆 id → 卡片状态流转可经此回写 memories。
+        // ★ 一致性①（2026-09-19）：记忆 + 事件 + 建卡 + 用量记账包成一笔事务 —— 中途失败整体回滚，
+        //   不再出现「任务记忆已写入、事件/卡片缺失」的半笔账（建卡仍 best-effort：失败留文案，对账补卡兜底）。
+        let row = null;
         let cardInfo = "";
-        if (args.create_card !== false) {
-            try {
-                const dup = db.prepare(`SELECT id FROM cards WHERE ref_kind='memory' AND ref_id=?`).get(row.id);
-                const title = body.split("\n")[0].replace(/\[[^\]]*\]/g, "").trim().slice(0, 120) || `任务 #${row.id}`;
-                const cardId = dup
-                    ? dup.id
-                    : Number(db
-                        .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES ('default','task',?,?,'ready','memory',?,?,?)`)
-                        .run(title, body.slice(0, 2000), row.id, 3, args.assignee).lastInsertRowid);
-                db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(cardId, row.id);
-                cardInfo = ` + 地图卡 #${cardId}`;
+        const asgAbort = runTaskTx(db, () => {
+            row = writeMemory(db, {
+                content: full,
+                type: "task",
+                agent: AGENT,
+                agent_fpath: AGENT_FPATH,
+                project: args.project,
+            });
+            appendEvent(db, {
+                memory_id: row.id,
+                op: "task_assign",
+                payload: JSON.stringify({ from: AGENT, to: args.assignee, project: args.project, depends: deps || null }),
+                operator: `agent:${AGENT}`,
+            });
+            // ★ 2026-09-15：task_assign 同步建卡（默认 open=create_card），避免任务地图无卡可领。
+            // 复用 from-memory 的 ref 关联：ref_kind='memory', ref_id=task 记忆 id → 卡片状态流转可经此回写 memories。
+            if (args.create_card !== false) {
+                try {
+                    const dup = db.prepare(`SELECT id FROM cards WHERE ref_kind='memory' AND ref_id=?`).get(row.id);
+                    const title = body.split("\n")[0].replace(/\[[^\]]*\]/g, "").trim().slice(0, 120) || `任务 #${row.id}`;
+                    const cardId = dup
+                        ? dup.id
+                        : Number(db
+                            .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES ('default','task',?,?,'ready','memory',?,?,?)`)
+                            .run(title, body.slice(0, 2000), row.id, 3, args.assignee).lastInsertRowid);
+                    db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(cardId, row.id);
+                    cardInfo = ` + 地图卡 #${cardId}`;
+                }
+                catch (e) {
+                    cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
+                }
             }
-            catch (e) {
-                cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
-            }
-        }
-        logUsage(db, {
-            memory_id: row.id, event: "write", reader_agent: AGENT, writer_agent: AGENT,
-            project: row.project, session_id: args.session_id, task_hint: args.task_hint,
+            logUsage(db, {
+                memory_id: row.id, event: "write", reader_agent: AGENT, writer_agent: AGENT,
+                project: row.project, session_id: args.session_id, task_hint: args.task_hint,
+            });
         });
+        if (asgAbort)
+            return asgAbort;
         return `已分派任务 #${row.id} → ${args.assignee}（status=pending）${cardInfo}[${row.type}|${row.agent}] ${row.content.replace(/\s+/g, " ").slice(0, 120)}`;
     },
 });
@@ -1105,38 +1133,44 @@ server.addTool({
         const body = `[a2a:${caller}→${args.to}]${gate ? ` [gate:${gate}]` : ""} ${args.content.trim()}`;
         // 复用 task_assign 的任务头/建卡/审计（直接写记忆 + 事件 + 卡片）
         const full = `${taskHead("pending", args.to)} ${body}`;
-        const row = writeMemory(db, {
-            content: full,
-            type: "task",
-            agent: caller,
-            agent_fpath: AGENT_FPATH,
-            project: args.project,
-        });
-        appendEvent(db, {
-            memory_id: row.id,
-            op: "task_delegate",
-            payload: JSON.stringify({ from: caller, to: args.to, gate, protocol: "a2a", project: args.project }),
-            operator: `agent:${caller}`,
-        });
+        // ★ 一致性①（2026-09-19）：与 task_assign 同口径 —— 记忆 + 事件 + 建卡一笔事务
+        let row = null;
         let cardInfo = "";
-        try {
-            const dup = db.prepare(`SELECT id FROM cards WHERE ref_kind='memory' AND ref_id=?`).get(row.id);
-            const title = `A2A ${caller}→${args.to}: ${args.content.split("\n")[0].replace(/\[[^\]]*\]/g, "").trim().slice(0, 90)}`;
-            const cardId = dup
-                ? dup.id
-                : Number(db
-                    .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES ('default','task',?,'A2A 委派','ready','memory',?,?,?)`)
-                    .run(title, row.id, 3, args.to).lastInsertRowid);
-            db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(cardId, row.id);
-            cardInfo = ` + 地图卡 #${cardId}`;
-        }
-        catch (e) {
-            cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
-        }
-        logUsage(db, {
-            memory_id: row.id, event: "write", reader_agent: caller, writer_agent: caller,
-            project: args.project, session_id: args.session_id, task_hint: args.task_hint,
+        const dlgAbort = runTaskTx(db, () => {
+            row = writeMemory(db, {
+                content: full,
+                type: "task",
+                agent: caller,
+                agent_fpath: AGENT_FPATH,
+                project: args.project,
+            });
+            appendEvent(db, {
+                memory_id: row.id,
+                op: "task_delegate",
+                payload: JSON.stringify({ from: caller, to: args.to, gate, protocol: "a2a", project: args.project }),
+                operator: `agent:${caller}`,
+            });
+            try {
+                const dup = db.prepare(`SELECT id FROM cards WHERE ref_kind='memory' AND ref_id=?`).get(row.id);
+                const title = `A2A ${caller}→${args.to}: ${args.content.split("\n")[0].replace(/\[[^\]]*\]/g, "").trim().slice(0, 90)}`;
+                const cardId = dup
+                    ? dup.id
+                    : Number(db
+                        .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES ('default','task',?,'A2A 委派','ready','memory',?,?,?)`)
+                        .run(title, row.id, 3, args.to).lastInsertRowid);
+                db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(cardId, row.id);
+                cardInfo = ` + 地图卡 #${cardId}`;
+            }
+            catch (e) {
+                cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
+            }
+            logUsage(db, {
+                memory_id: row.id, event: "write", reader_agent: caller, writer_agent: caller,
+                project: args.project, session_id: args.session_id, task_hint: args.task_hint,
+            });
         });
+        if (dlgAbort)
+            return dlgAbort;
         return `A2A 已委派任务 #${row.id}：${caller} → ${args.to}${gate ? `（验收门 [gate:${gate}]，task_done 时确定性验收）` : ""}（status=pending）${cardInfo}`;
     },
 });
@@ -1186,13 +1220,21 @@ server.addTool({
             const newContent = taskBodyWithDep("in_progress", who, st.deps, taskBody(row.content));
             // ★ 2026-09-19（实操复盘并发竞态）：CAS 认领 —— content 写 + version 递增原子化（WHERE version=?），
             //   两会话并发认领同一任务必有一个拿 null 拒绝，不再后写覆盖前写的 assignee/租约。
-            const claimed = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version });
-            if (!claimed)
-                return `#${row.id} 并发认领冲突（版本已漂移 v${row.version}）：任务刚被其他会话领取或改写；请 task_next 刷新后重试。`;
-            const lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
-            appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
-            syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
-            touchCardLease(row.id, lock, args.lease_minutes); // ★ P2-6：卡片租约锁定（默认 10min，#13 可分级 10..120）
+            // ★ 一致性①（2026-09-19）：CAS + 事件 + 卡投影 + 租约四笔写入包成一笔事务 —— 中途失败整体回滚，
+            //   不再出现「头已 in_progress、卡还 ready、事件缺失」的三方分裂；锁竞争由 withTx 整段重试，
+            //   事务回滚后 version 未变，「请刷新后重试」提示从此真实有效。
+            let lock = null;
+            const claimAbort = runTaskTx(db, () => {
+                const claimed = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version });
+                if (!claimed)
+                    throw new TxAbort(`#${row.id} 并发认领冲突（版本已漂移 v${row.version}）：任务刚被其他会话领取或改写；请 task_next 刷新后重试。`);
+                lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
+                appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
+                syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
+                touchCardLease(row.id, lock, args.lease_minutes); // ★ P2-6：卡片租约锁定（默认 10min，#13 可分级 10..120）
+            });
+            if (claimAbort)
+                return claimAbort;
             return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "task_claim", id: row.id, status: "in_progress", version: row.version + 1, assignee: who, lease_token: lock, cred_id: cred.credId, session_id: args.session_id ?? null });
         }
         // 列可领任务：type='task' 且状态头 pending（★ H4：secret 任务不进工具通道）
@@ -1311,8 +1353,11 @@ server.addTool({
             return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。`;
         }
         if (card.status === "running" && card.claim_lock) {
-            touchCardLease(row.id, null, args.lease_minutes); // ★ #13：分级续窗
-            appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, card: card.id }), operator: `agent:${AGENT}` });
+            // ★ 一致性①：续租 + 事件一笔事务（两步写不再可能半途分裂）
+            runTaskTx(db, () => {
+                touchCardLease(row.id, null, args.lease_minutes); // ★ #13：分级续窗
+                appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, card: card.id }), operator: `agent:${AGENT}` });
+            });
             return `任务 #${row.id} 续租成功（卡片 #${card.id} 租约窗口 → 10 分钟）。`;
         }
         return `任务 #${row.id} 续租未生效：卡片 #${card.id} 当前 status=${card.status}${card.claim_lock ? "（他方持有租约）" : ""}。`;
@@ -1340,25 +1385,33 @@ server.addTool({
         const st = readTaskState(row.content);
         if (!st || st.status !== "in_progress")
             return `#${args.memory_id} 当前 status=${st?.status}，仅进行中任务可释放。`;
-        const newContent = taskBodyWithDep("pending", st.assignee, st.deps, taskBody(row.content));
-        const released = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS
-        if (!released)
-            return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`;
-        appendEvent(db, { memory_id: row.id, op: "task_release", payload: JSON.stringify({ by: AGENT, reason: (args.reason ?? "").trim() || null, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
-        try {
-            const c2 = cardOfTask(row.id);
-            if (c2 && c2.status === "running") {
-                // ★ 2026-09-16 修正：此处原为 `.run(st.assignee, c2.id)` 而 SQL 只有 1 个占位符（WHERE id=?）。
-                //   实测 node:sqlite 在「实参多于占位符」时抛 `column index out of range`；该异常被下方
-                //   `catch {}` **静默吞掉** ⇒ 本条 UPDATE 与紧随其后的 card_events INSERT **都没执行**——
-                //   现象＝"记忆头已释放，但卡片仍 running + 持锁、且无任何事件留痕"，只能等 C-5 对账兜底。
-                //   教训：① SQL 占位符数与 .run 实参数必须逐一核对；② 静默 catch 会把这类错误藏起来（改为仅记日志）。
-                const rel = db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
-                if (Number(rel.changes) === 0) console.error(`[task_release] ⚠ 卡片 #${c2.id} 未更新（changes=0），三方可能不一致`);
-                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
+        // ★ 一致性①（2026-09-19）：头 CAS + 事件 + 卡释放包成一笔事务 —— 此前卡侧失败会出现
+        // 「记忆头已释放、卡仍 running 持锁」的半笔账（1349-1356 注释实录的占位符事故即此类）；
+        //  现卡侧仍 best-effort catch，但崩溃/锁失败窗口整体回滚，头与卡不再各走各的。
+        let newContent = null;
+        const relAbort = runTaskTx(db, () => {
+            newContent = taskBodyWithDep("pending", st.assignee, st.deps, taskBody(row.content));
+            const released = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS
+            if (!released)
+                throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
+            appendEvent(db, { memory_id: row.id, op: "task_release", payload: JSON.stringify({ by: AGENT, reason: (args.reason ?? "").trim() || null, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
+            try {
+                const c2 = cardOfTask(row.id);
+                if (c2 && c2.status === "running") {
+                    // ★ 2026-09-16 修正：此处原为 `.run(st.assignee, c2.id)` 而 SQL 只有 1 个占位符（WHERE id=?）。
+                    //   实测 node:sqlite 在「实参多于占位符」时抛 `column index out of range`；该异常被下方
+                    //   `catch {}` **静默吞掉** ⇒ 本条 UPDATE 与紧随其后的 card_events INSERT **都没执行**——
+                    //   现象＝"记忆头已释放，但卡片仍 running + 持锁、且无任何事件留痕"，只能等 C-5 对账兜底。
+                    //   教训：① SQL 占位符数与 .run 实参数必须逐一核对；② 静默 catch 会把这类错误藏起来（改为仅记日志）。
+                    const rel = db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(c2.id);
+                    if (Number(rel.changes) === 0) console.error(`[task_release] ⚠ 卡片 #${c2.id} 未更新（changes=0），三方可能不一致`);
+                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_release", "running", "ready", `任务 #${row.id} 释放（${(args.reason ?? "").trim() || "未注明"}）`);
+                }
             }
-        }
-        catch (e) { console.error(`[task_release] 卡片侧更新失败（记忆侧已释放）：${e.message}`); }
+            catch (e) { console.error(`[task_release] 卡片侧更新失败（记忆侧已释放）：${e.message}`); }
+        });
+        if (relAbort)
+            return relAbort;
         return `任务 #${row.id} 已释放（status=pending，重新可领）：${newContent.replace(/\s+/g, " ").slice(0, 100)}` + stateReceipt({ op: "task_release", id: row.id, status: "pending", version: row.version + 1, cred_id: cred.credId });
     },
 });server.addTool({
@@ -1387,12 +1440,17 @@ server.addTool({
         const tErr = assertTransition(st.status, "blocked");
         if (tErr)
             return `#${args.memory_id} ${tErr}`;
-        const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${args.reason.trim()}`;
-        const blocked = updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body), expectedVersion: row.version }); // ★ CAS
-        if (!blocked)
-            return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`;
-        appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
-        syncTaskToCard(row.id, "blocked", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 标记受阻` });
+        // ★ 一致性①（2026-09-19）：头 CAS + 事件 + 卡投影一笔事务
+        const blkAbort = runTaskTx(db, () => {
+            const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${args.reason.trim()}`;
+            const blocked = updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body), expectedVersion: row.version }); // ★ CAS
+            if (!blocked)
+                throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
+            appendEvent(db, { memory_id: row.id, op: "task_block", payload: JSON.stringify({ by: AGENT, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
+            syncTaskToCard(row.id, "blocked", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 标记受阻` });
+        });
+        if (blkAbort)
+            return blkAbort;
         return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_block", id: row.id, status: "blocked", version: row.version + 1, cred_id: cred.credId });
     },
 });server.addTool({
@@ -1420,25 +1478,32 @@ server.addTool({
             return `#${args.memory_id} 任务头格式异常，无法重开。`;
         if (!["done", "cancelled"].includes(st.status)) // E-0：failed 已取消（存量归一 in_progress），merged 已在上方单独拒绝
             return `#${args.memory_id} 当前 status=${st.status}，仅终态（done/cancelled）可重开。`;
-        if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
-            db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
+        // ★ 一致性①（2026-09-19）：列复活 + 头 CAS + 事件 + 卡重开一笔事务 —— 附带修复一个潜伏缺陷：
+        //   原先「列 archived→active」写在 CAS 之前，CAS 冲突时会留下「列已复活、头没重开」的错位；
+        //   现列复活与头写入同事务，CAS 中止即整体回滚，不再错位。
         const who = args.assignee || st.assignee || "?";
         const whoErr = assertAssignee(who); // ★ #6：重开指派身份过白名单
         if (whoErr)
             return whoErr;
-        const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
-        const reopened = updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body), expectedVersion: row.version }); // ★ CAS
-        if (!reopened)
-            return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`;
-        appendEvent(db, { memory_id: row.id, op: "task_reopen", payload: JSON.stringify({ by: AGENT, from: st.status, to: who, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
-        try {
-            const c2 = cardOfTask(row.id);
-            if (c2 && ["done", "archived", "cancelled"].includes(c2.status)) {
-                db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, assignee=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(who === "?" ? null : who, c2.id);
-                db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_reopen", c2.status, "ready", `任务 #${row.id} 重开（${args.reason.trim().slice(0, 80)}）`);
+        const ropenAbort = runTaskTx(db, () => {
+            if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
+                db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
+            const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
+            const reopened = updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body), expectedVersion: row.version }); // ★ CAS
+            if (!reopened)
+                throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
+            appendEvent(db, { memory_id: row.id, op: "task_reopen", payload: JSON.stringify({ by: AGENT, from: st.status, to: who, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8
+            try {
+                const c2 = cardOfTask(row.id);
+                if (c2 && ["done", "archived", "cancelled"].includes(c2.status)) {
+                    db.prepare(`UPDATE cards SET status='ready', claim_lock=NULL, lease_expires_at=NULL, assignee=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(who === "?" ? null : who, c2.id);
+                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c2.id, `agent:${AGENT}`, "mcp_reopen", c2.status, "ready", `任务 #${row.id} 重开（${args.reason.trim().slice(0, 80)}）`);
+                }
             }
-        }
-        catch (e) { console.error(`[task_reopen] 卡片侧更新失败（记忆侧已重开）：${e.message}`); }
+            catch (e) { console.error(`[task_reopen] 卡片侧更新失败（记忆侧已重开）：${e.message}`); }
+        });
+        if (ropenAbort)
+            return ropenAbort;
         return `任务 #${row.id} 已重开（${st.status} → in_progress，指派 ${who}）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_reopen", id: row.id, status: "in_progress", version: row.version + 1, assignee: who });
     },
 });
@@ -1497,26 +1562,37 @@ server.addTool({
             // fail-closed：验收未通过 → 不标 done，回退 pending 留痕。
             // ★ 2026-09-19（实操复盘查漏）：卡侧同步 ready + 清租约（assignee 保留=修复者）——
             //   原实现卡片停在 running 持锁，与记忆头 pending 打架，5 分钟后还会被 reconcile 强行对齐。
-            const pendingContent = `${taskBodyWithDep("pending", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}\n⛔ 门控 gate='${gateName}' 未通过（${String(gateRes.detail).slice(0, 160)}）——状态回退 pending，修复后 task_claim + task_done 重试。`;
-            const rolled = updateMemory(db, row.id, { content: pendingContent, expectedVersion: row.version });
-            if (!rolled)
-                return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：请刷新后重试。`;
-            syncTaskToCard(row.id, "ready", { actor: `agent:${AGENT}`, action: "gate_fallback", detail: `任务 #${row.id} 门控未通过回退 pending` });
-            const gCard = cardNowDone ?? cardOfTask(row.id);
-            if (gCard)
-                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(gCard.id);
+            // ★ 一致性①（2026-09-19）：回退 CAS + 卡同步 + 清锁一笔事务。
+            const gAbort = runTaskTx(db, () => {
+                const pendingContent = `${taskBodyWithDep("pending", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}\n⛔ 门控 gate='${gateName}' 未通过（${String(gateRes.detail).slice(0, 160)}）——状态回退 pending，修复后 task_claim + task_done 重试。`;
+                const rolled = updateMemory(db, row.id, { content: pendingContent, expectedVersion: row.version });
+                if (!rolled)
+                    throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：请刷新后重试。`);
+                syncTaskToCard(row.id, "ready", { actor: `agent:${AGENT}`, action: "gate_fallback", detail: `任务 #${row.id} 门控未通过回退 pending` });
+                const gCard = cardNowDone ?? cardOfTask(row.id);
+                if (gCard)
+                    db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(gCard.id);
+            });
+            if (gAbort)
+                return gAbort;
             return `任务 #${row.id} 门控未通过（gate='${gateName}'：${String(gateRes.detail).slice(0, 120)}）——status=pending（fail-closed，未标 done）。请修复后 task_claim 再 task_done。` + stateReceipt({ op: "task_done_gate_fallback", id: row.id, status: "pending", version: row.version + 1, gate: gateName });
         }
         const gateNote = gateRes && gateRes.ok ? ` 门控 gate='${gateName}' PASS` : "";
-        const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}${gateNote}`;
-        const doneWrite = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS：并发 done 只有一个生效
-        if (!doneWrite)
-            return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请 task_next 刷新后重试。`;
-        bumpConfidence(db, row.id, 0.05); // 完成任务强化
-        appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
-        syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
-        if (cardNowDone) // ★ P2-6：完成即释放租约锁
-            db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
+        // ★ 一致性①（2026-09-19）：done CAS + 置信强化 + 事件 + 卡同步 + 清租约包成一笔事务 ——
+        //   中途崩溃不再出现「头已 done、卡还 running 持锁」的半笔账；慢的门控子进程验收已在锁外跑完。
+        const doneAbort = runTaskTx(db, () => {
+            const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}${gateNote}`;
+            const doneWrite = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS：并发 done 只有一个生效
+            if (!doneWrite)
+                throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请 task_next 刷新后重试。`);
+            bumpConfidence(db, row.id, 0.05); // 完成任务强化
+            appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
+            syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
+            if (cardNowDone) // ★ P2-6：完成即释放租约锁
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(cardNowDone.id);
+        });
+        if (doneAbort)
+            return doneAbort;
         return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}` + stateReceipt({ op: "task_done", id: row.id, status: "done", version: row.version + 1, cred_id: cred.credId, session_id: args.session_id ?? null });
     },
 });
@@ -1552,16 +1628,21 @@ server.addTool({
             return `#${args.memory_id} 当前 status=${st.status}，仅 pending/in_progress 可验收关闭（review 走 task_done，终态走 task_reopen）。`;
         if (args.expected_version != null && args.expected_version !== row.version)
             return `#${args.memory_id} 版本漂移（期望 v${args.expected_version}，当前 v${row.version}）：验收写拒绝；请刷新后重试。`;
-        // 不改 assignee（归属保留原文）、不发租约、不动 claim_lock 语义 —— 只闭环状态头 + 留痕
-        const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, taskBody(row.content))}\n→ 验收(${verifier})：${args.reason.trim()}`;
-        const verified = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS
-        if (!verified)
-            return `#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`;
-        appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
-        syncTaskToCard(row.id, "done", { actor: `agent:${verifier}`, action: "verify", detail: `任务 #${row.id} 第三方验收关闭（${verifier}）` });
-        const card = cardOfTask(row.id);
-        if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致
-            db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(card.id);
+        // ★ 一致性①（2026-09-19）：头 CAS + 事件 + 卡同步 + 清租约一笔事务
+        const vfAbort = runTaskTx(db, () => {
+            // 不改 assignee（归属保留原文）、不发租约、不动 claim_lock 语义 —— 只闭环状态头 + 留痕
+            const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, taskBody(row.content))}\n→ 验收(${verifier})：${args.reason.trim()}`;
+            const verified = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS
+            if (!verified)
+                throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
+            appendEvent(db, { memory_id: row.id, op: "task_verify", payload: JSON.stringify({ verified_by: verifier, from: st.status, reason: args.reason.trim(), session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计
+            syncTaskToCard(row.id, "done", { actor: `agent:${verifier}`, action: "verify", detail: `任务 #${row.id} 第三方验收关闭（${verifier}）` });
+            const card = cardOfTask(row.id);
+            if (card) // 验收关闭即释放租约锁（若曾认领），与 task_done 收口口径一致
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL WHERE id=?`).run(card.id);
+        });
+        if (vfAbort)
+            return vfAbort;
         return `任务 #${row.id} 已验收关闭（status=done，verified_by=${verifier}，未改归属/未发租约）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_verify", id: row.id, status: "done", version: row.version + 1, verified_by: verifier, cred_id: cred.credId, session_id: args.session_id ?? null });
     },
 });
@@ -1588,17 +1669,22 @@ server.addTool({
             return `#${args.memory_id} 任务头格式异常，无法归档。`;
         if (st.status === "done")
             return `#${args.memory_id} 已 done，无需归档。`;
-        markMerged(db, args.memory_id, args.superseded_by); // merged + superseded_by；移出检索候选
-        appendEvent(db, {
-            memory_id: args.memory_id,
-            op: "task_supersede",
-            payload: JSON.stringify({ superseded_by: args.superseded_by, by: AGENT }),
-            operator: `agent:${AGENT}`,
+        // ★ 一致性①（2026-09-19）：merged 归档 + 事件 + 用量记账一笔事务
+        const spAbort = runTaskTx(db, () => {
+            markMerged(db, args.memory_id, args.superseded_by); // merged + superseded_by；移出检索候选
+            appendEvent(db, {
+                memory_id: args.memory_id,
+                op: "task_supersede",
+                payload: JSON.stringify({ superseded_by: args.superseded_by, by: AGENT }),
+                operator: `agent:${AGENT}`,
+            });
+            logUsage(db, {
+                memory_id: args.memory_id, event: "supersede", reader_agent: AGENT, writer_agent: AGENT,
+                project: row.project, session_id: args.session_id, task_hint: args.task_hint,
+            });
         });
-        logUsage(db, {
-            memory_id: args.memory_id, event: "supersede", reader_agent: AGENT, writer_agent: AGENT,
-            project: row.project, session_id: args.session_id, task_hint: args.task_hint,
-        });
+        if (spAbort)
+            return spAbort;
         return `任务 #${args.memory_id} 已标记被 #${args.superseded_by} 取代（merged ⇒ 移出可做集，可经 superseded_by 追溯）`;
     },
 });
