@@ -5,7 +5,8 @@
  */
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, logExecAudit } from "./db.js";
+import { openDb, writeMemory, readMemory, dedupeDecisionFast, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, updateMemory, markMerged, logExecAudit, withTx } from "./db.js";
+import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import { createExecTools, riskPrefix } from "./exec-tools.js";
 import { hybridSearch } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
@@ -853,8 +854,6 @@ const TASK_TRANSITIONS = {
     merged: [],
     archived: [],
 };
-/** 存量状态 → E-0 标准态 归一（open/claimed 为 v1.1 前历史值；review/failed 为 E-0 取消态，归一回 in_progress） */
-const TASK_NORMALIZE = { open: "pending", claimed: "in_progress", done: "done", review: "in_progress", failed: "in_progress" };
 /** 校验迁移合法性，非法返回错误提示；空/可写由调用方决定 */
 function assertTransition(from, to) {
     const allowed = TASK_TRANSITIONS[from] || [];

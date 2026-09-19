@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
-const EXPECT_CARD_OF = { pending: "ready", in_progress: "running", blocked: "blocked" };
+import { EXPECT_CARD_OF } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：映射上移权威对照表
 const NON_TERMINAL = ["pending", "in_progress", "blocked"];
 const CARD_TERMINAL = ["done", "archived", "cancelled"];
 

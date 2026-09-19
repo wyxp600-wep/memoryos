@@ -1,10 +1,10 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— cards 域。
  * handler 自 dashboard.js 原行 1332-2396 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS } from "./db.js";
+import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS, updateMemory } from "./db.js";
 import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { randomBytes } from "node:crypto";
-import { TASK_NORMALIZE } from "./dashboard-task-util.js";
+import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
 export function registerCards(app, ctx) {
     const { db, restricted, RESTRICTED } = ctx;
     // ═══════════════════════════════════════════════════════════════════════════
@@ -96,7 +96,12 @@ export function registerCards(app, ctx) {
         try { pushCardEvt({ type: action, cardId: Number(cardId), from: fromStatus ?? null, to: toStatus ?? null, actor, ts: Date.now() }); } catch { /* 推送失败不影响落库 */ }
     }
     /** ★ 2026-09-15：卡片状态 → 关联 task 记忆状态头回写（task_assign 建的卡 ref_kind='memory'，dispatch 关联）。
-     *  卡片流转会同步 memories 里对应 type='task' 的内容头 [status:]，保持「地图卡 ↔ MCP 任务」双向一致。 */
+     *  卡片流转会同步 memories 里对应 type='task' 的内容头 [status:]，保持「地图卡 ↔ MCP 任务」双向一致。
+     *  ★ 一致性②（2026-09-19）：改走 db.updateMemory() 正门 —— 原裸 `UPDATE memories SET content=?` 不递增
+     *  version、不同步 FTS/2-gram：① MCP 侧 CAS（WHERE version=?）感知不到本回写，认领会把看板改动覆盖回去
+     *  （丢失更新）；② 检索索引脏读（原 128-129 行注释自认的既有坑）。现 CAS 写入一次完成 version+1 + 索引同步；
+     *  版本漂移（MCP 侧刚改过头）→ 让位不硬写：卡向头对齐是 C-5 投影口径，30s 任务桥 / 5min 对账兜底，
+     *  盲目硬写会与 MCP 打架（后写覆盖前写）。 */
     function syncCardToTask(cardId) {
         try {
             // 定位关联 task 记忆：优先 ref_kind='memory'，其次 card_memory dispatch 关联
@@ -109,24 +114,29 @@ export function registerCards(app, ctx) {
                 db.prepare(`SELECT memory_id id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(cardId);
             if (!memRow)
                 return;
-            const mem = db.prepare(`SELECT id, content FROM memories WHERE id=? AND type='task' AND status IN ('active','trial')`).get(memRow.id);
-            if (!mem)
+            // 卡片状态 → 任务状态头映射（★ 一致性③：改用权威对照表 task-status-map.js；E-0：review→in_progress / failed→blocked / archived→archived）
+            const toSt = CARD_TO_TASK[card.status];
+            if (!toSt)
                 return;
-            const st = mem.content.match(/\[status:([^\]]+)\]/);
-            if (!st)
-                return;
-            // 卡片状态 → 任务状态头映射（★ E-0：review→in_progress / failed→blocked / archived→archived，无 review/failed 任务态）
-            const map = { ready: "pending", running: "in_progress", done: "done", failed: "blocked", blocked: "blocked", review: "in_progress", cancelled: "cancelled", archived: "archived" };
-            const toSt = map[card.status];
-            if (!toSt || st[1] === toSt)
-                return;
-            const newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
-            db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(newContent, mem.id);
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const mem = db.prepare(`SELECT id, content, version FROM memories WHERE id=? AND type='task' AND status IN ('active','trial')`).get(memRow.id);
+                if (!mem)
+                    return;
+                const st = mem.content.match(/\[status:([^\]]+)\]/);
+                if (!st)
+                    return;
+                if (st[1] === toSt)
+                    return; // 头已是目标态（含他人刚对齐），无事可做
+                const newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
+                const ok = updateMemory(db, mem.id, { content: newContent, expectedVersion: mem.version }); // ★ 正门 CAS
+                if (ok)
+                    return; // version+1 + FTS/2-gram 同步已随写入完成
+                // 版本漂移：重读一次再试（第二次仍漂移 = MCP 侧正在改写 → 让位，交对账兜底）
+            }
+            console.error(`[syncCardToTask] 卡片 #${cardId} → 任务头回写让位：任务 #${memRow.id} 版本持续漂移（MCP 侧正在改写），交由对账对齐`);
         }
         catch (e) {
-            /* 回写失败不阻断卡片流程 —— 但必须留痕：静默会让"卡已流转、任务头未跟"完全隐身
-             * （★ 2026-09-16 A 分区验收补日志；语义未变）。⚠ 另注：此处直接 UPDATE memories.content
-             * 绕过了 db.updateMemory() 的 FTS/2-gram/向量同步，属已记录的既有坑，待 B 分区评估是否改走该函数。 */
+            /* 回写失败不阻断卡片流程 —— 但必须留痕：静默会让"卡已流转、任务头未跟"完全隐身（2026-09-16 A 分区验收口径） */
             console.error(`[syncCardToTask] 卡片 #${cardId} → 任务头回写失败：${e.message}`);
         }
     }
