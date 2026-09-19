@@ -29,6 +29,13 @@ try {
     const app = buildApp(db, { token: TOKEN });
     // 所有 inject 携带 x-memory-token（免逐处写 query）
     const inj = (o) => app.inject({ ...o, headers: { "x-memory-token": TOKEN } });
+    // ★ 一致性⑥：/v1/embeddings 共享端点 —— 无令牌 401（全局钩子覆盖）；fake embedder 下 503 拒产伪向量
+    const embNoTok = await app.inject({ method: "POST", url: "/v1/embeddings", payload: { input: "测试" } });
+    check("⑥a./v1/embeddings 无令牌 401（全局访问控制覆盖）", embNoTok.statusCode === 401, `status=${embNoTok.statusCode}`);
+    const embFake = await app.inject({ method: "POST", url: "/v1/embeddings", headers: { "x-memory-token": TOKEN }, payload: { input: "测试" } });
+    check("⑥b.fake embedder 下 503 拒产伪向量（宁不服务不污染）", embFake.statusCode === 503, `status=${embFake.statusCode} body=${JSON.stringify(embFake.body).slice(0, 70)}`);
+    const embBearer = await app.inject({ method: "POST", url: "/v1/embeddings", headers: { authorization: `Bearer ${TOKEN}` }, payload: { input: "测试" } });
+    check("⑥c.Bearer 令牌过鉴权（抵达 embedder-fake 守卫=非 401）", embBearer.statusCode !== 401, `status=${embBearer.statusCode}`);
     const emb = await getEmbedder();
     const w = async (content, type, agent, project = "p1") => writeMemory(db, { content, type, agent, agent_fpath: null, project, embedding: (await emb.embedTexts([content]))[0] });
     // F1 首页

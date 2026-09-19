@@ -54,6 +54,33 @@ export function registerMemory(app, ctx) {
         logDaemon(db, { task: "manual-edit", op: "edit", memory_id: row.id, operator: "human:dashboard", detail: "Dashboard 手动编辑记忆" });
         return { ok: true, id: row.id };
     });
+    /* ★ 一致性⑥（2026-09-19）：OpenAI 兼容 /v1/embeddings 共享嵌入端点 —— 内核侧常驻真向量嵌入
+     *  （Electron 注入 EMBED_MODE=local，bge-m3 已在本进程加载）。MCP 侧 agent 配
+     *  EMBED_MODE=api + EMBED_API_URL=http://127.0.0.1:8787/v1/embeddings + EMBED_API_KEY=<data/token>
+     *  即共享同一份真向量语义：一份模型全端共享，agent 不必各载各的模型（省 N×GB 内存与启动耗时），
+     *  并从此杜绝 MCP 侧 fake 向量混入真向量语料（半真半假比全假更糟）。
+     *  鉴权：全局访问控制钩子已覆盖（?token= / x-memory-token / cookie / Bearer 任一）。
+     *  响应与 OpenAI /v1/embeddings 同形（{object:"list", data:[{index, embedding}]}），embed.js ApiEmbedder 直读。 */
+    app.post("/v1/embeddings", async (req, reply) => {
+        const body = req.body ?? {};
+        const input = (Array.isArray(body.input) ? body.input : [body.input ?? ""]).map((t) => String(t ?? ""));
+        if (!input.length || input.some((t) => !t.trim()))
+            return reply.code(400).send({ ok: false, error: "input-required", hint: "body.input 须为非空字符串或非空字符串数组" });
+        try {
+            const embedder = await getEmbedder();
+            if (embedder.mode === "fake")
+                return reply.code(503).send({ ok: false, error: "embedder-fake", hint: "内核未以 EMBED_MODE=local/api 运行：宁可不服务，也不产出伪向量污染真向量语料（⑥纪律）" });
+            const vectors = await embedder.embedTexts(input);
+            return {
+                object: "list",
+                model: String(body.model ?? embedder.modelName ?? embedder.mode),
+                data: vectors.map((v, i) => ({ object: "embedding", index: i, embedding: Array.from(v) })),
+            };
+        }
+        catch (e) {
+            return reply.code(502).send({ ok: false, error: `embed-failed: ${e instanceof Error ? e.message : String(e)}` });
+        }
+    });
     // ★ P0-2：手动触发单条记忆向量重算
     app.post("/api/embed/recompute/:id", async (req, reply) => {
         const id = Number(req.params.id);

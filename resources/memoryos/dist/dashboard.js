@@ -137,7 +137,8 @@ function installAccessControl(app, token) {
             .map((s) => s.trim())
             .find((s) => s.startsWith(TOKEN_COOKIE + "="))
             ?.slice(TOKEN_COOKIE.length + 1);
-        const ok = safeEqual(fromQuery, token) || safeEqual(String(req.headers["x-memory-token"] ?? ""), token) || safeEqual(fromCookie, token);
+        const bearer = String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, ""); // ★ 一致性⑥：兼容 OpenAI 风格 Bearer（/v1/embeddings 共享端点用，同一令牌）
+        const ok = safeEqual(fromQuery, token) || safeEqual(String(req.headers["x-memory-token"] ?? ""), token) || safeEqual(fromCookie, token) || safeEqual(bearer, token);
         if (!ok) {
             return reply.code(401).send({ ok: false, error: "unauthorized", hint: "需带 ?token=<令牌> 访问；令牌见 data/token" });
         }
