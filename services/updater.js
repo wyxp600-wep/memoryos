@@ -2,7 +2,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
-const { createHash } = require("node:crypto");
+const { createHash, verify, createPublicKey } = require("node:crypto");
 
 /* ---------- HTTP 封装 ---------- */
 async function fetchJson(url, timeout = 15000) {
@@ -40,6 +40,21 @@ function sha256File(p) {
   }
 }
 
+/* ---------- 清单验签（T1-R1：sha256 只防传输损坏，不防来源篡改；清单必须过 ed25519 签名） ---------- */
+/* 验签公钥内置于此；私钥仅存发布机 security/update-signing/（不入 git）。
+   签名生成：node services/sign-manifest.js <filelist.json> → 同目录 <filelist>.sig */
+const UPDATE_SIGN_PUBKEY = [
+  "-----BEGIN PUBLIC KEY-----",
+  "MCowBQYDK2VwAyEAGjTuO2Lq7RU95Z1tobrj6C8UdKJ8thjg/UJEm4MqRVQ=",
+  "-----END PUBLIC KEY-----",
+].join("\n");
+function assertManifestSigned(manifestBuf, sigBuf) {
+  if (!UPDATE_SIGN_PUBKEY) throw new Error("更新包未内置验签公钥，拒绝更新");
+  if (!Buffer.isBuffer(sigBuf) || sigBuf.length < 32) throw new Error("清单缺少签名（*.sig）");
+  const ok = verify(null, manifestBuf, createPublicKey(UPDATE_SIGN_PUBKEY), sigBuf);
+  if (!ok) throw new Error("清单签名校验失败（来源不可信，拒绝更新）");
+}
+
 /**
  * 路径安全性守卫（T1）：rel 必须来自清单，拒绝任何越出 root 的取值。
  * 三种弃：含 /.. 段、绝对路径（盘符/UNC/根斜杠）、空串。
@@ -53,32 +68,38 @@ function assertSafeRel(rel, root) {
   const joined = path.resolve(root, norm);
   const rootRes = path.resolve(root) + path.sep;
   if (!joined.startsWith(rootRes)) throw new Error("清单 rel 落点越出内核目录: " + rel);
-  return norm;
+  // 返回统一正斜杠形态：win32 的 path.normalize 会产出反斜杠，二次调用会被上面的反斜杠守卫误拒
+  return norm.split(path.sep).join("/");
 }
 
-/** 更新源信任（T1）：仅接受 https + 受信主机白名单。建立传输层信任链基线。 */
+/** 更新源信任（T1-R1）：仅接受 https + 受信主机白名单（已移除第三方镜像 mirror.ghproxy.com），
+ *  且必须指向具体路径（不允许域名根——防白名单主机被当通用代理）。 */
 const TRUSTED_UPDATE_HOSTS = new Set([
   "github.com",
   "raw.githubusercontent.com",
   "objects.githubusercontent.com",
-  "mirror.ghproxy.com",
 ]);
 function assertTrustedOrigin(updateUrl) {
   let u;
   try { u = new URL(updateUrl); } catch { throw new Error("更新源不是合法 URL: " + updateUrl); }
   if (u.protocol !== "https:") throw new Error("更新源必须 https: " + updateUrl);
   if (!TRUSTED_UPDATE_HOSTS.has(u.hostname)) throw new Error("更新源不在受信白名单: " + u.hostname);
+  if (u.pathname.length <= 1) throw new Error("更新源必须指向具体路径，不允许域名根: " + updateUrl);
 }
 
 /**
  * 内核自研增量热更新。依赖经 deps 注入，避免模块间循环 require。
  * deps: { readConfig, readReleaseSettings, readVersion, getKernel, dataDir, restartCore, log }
- * 返回纯结果（{status,current,latest,applied,error?}），UI 弹窗由调用方处理。
+ * 返回纯结果（{status,current,latest,applied,restartPending?,error?}），UI 弹窗由调用方处理。
+ *
+ * T1-R3 契约：applyKernelUpdate **只改磁盘文件，不动 version.json**；
+ * version.json 由调用方在内核重启成功后经 updateLocalVersion() 写入——
+ * 重启失败时版本号保持旧值，下一轮检查会走「文件已一致但版本未落」分支再次尝试重启（自愈）。
  */
 function makeUpdater(deps) {
   const { readConfig, readReleaseSettings, readVersion, getKernel, dataDir, restartCore, log } = deps;
 
-  /** 更新内核 version.json 为 latest */
+  /** 更新内核 version.json 为 latest（仅应在内核重启成功后调用） */
   function updateLocalVersion(latest) {
     try {
       const p = path.join(getKernel(), "version.json");
@@ -86,7 +107,24 @@ function makeUpdater(deps) {
       v.version = latest;
       v.updated = new Date().toISOString();
       fs.writeFileSync(p, JSON.stringify(v, null, 2), "utf8");
-    } catch { /* ignore */ }
+    } catch (e) {
+      // 版本号写失败不影响已落盘的文件更新，但热更新审计需要留痕
+      log("更新 version.json 失败:", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 覆盖后重启内核；成功才落版本号，失败留旧版本号等下轮自愈，并立即重试一次 */
+  async function restartAfterUpdate(r) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await restartCore();
+        updateLocalVersion(r.latest);
+        return true;
+      } catch (e) {
+        log(`内核重启失败（第 ${attempt} 次，版本号保持 ${r.current}，下一轮将自动重试）:`, e instanceof Error ? e.message : String(e));
+      }
+    }
+    return false;
   }
 
   /** 执行一次内核热更新。status ∈ done / none / error / disabled */
@@ -102,9 +140,13 @@ function makeUpdater(deps) {
       const latest = String(meta.version || "");
       if (!latest || latest === current) return { status: "none", current };
       const base = new URL(".", updateUrl).toString();
-      const manifest = await fetchJson(new URL(meta.manifest || "new/filelist.json", base).toString());
+      const manifestUrl = new URL(meta.manifest || "new/filelist.json", base).toString();
+      const manifestBuf = await fetchBuffer(manifestUrl);
+      const sigBuf = await fetchBuffer(manifestUrl + ".sig");
+      assertManifestSigned(manifestBuf, sigBuf);
+      const manifest = JSON.parse(manifestBuf.toString("utf8"));
       if (!manifest.files || !manifest.files.length) throw new Error("清单为空");
-      log(`热更新 ${current} → ${latest}（${manifest.files.length} 个文件）`);
+      log(`热更新 ${current} → ${latest}（${manifest.files.length} 个文件，清单签名已验证）`);
       const todo = [];
       for (const f of manifest.files) {
         const relNorm = assertSafeRel(f.path, getKernel());
@@ -112,9 +154,9 @@ function makeUpdater(deps) {
         if (sha256File(local) !== f.hash) todo.push({ rel: relNorm, hash: f.hash });
       }
       if (!todo.length) {
-        updateLocalVersion(latest);
-        log("热更新：无文件差异，仅版本号更新");
-        return { status: "applied", current, latest, applied: 0 };
+        // 文件已全部一致但版本号还是旧值 → 上轮覆盖后重启未成功，本轮只补重启
+        log("热更新：文件已一致，版本号未落（上轮重启未完成），仅补重启");
+        return { status: "applied", current, latest, applied: 0, restartPending: true };
       }
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-hotup-"));
       const downloaded = [];
@@ -127,43 +169,64 @@ function makeUpdater(deps) {
         downloaded.push({ f, relNorm: assertSafeRel(f.rel, tmp) });
       }
       const bakRoot = path.join(dataDir(), "data", "backup", "hotupdate-" + new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
-      const shaLines = [];
+      /* ── 备份阶段：先把旧文件全部备份、并把备份清单（旧哈希）落盘，然后才允许动目标文件 ── */
+      const plan = [];
       for (const dl of downloaded) {
         const relNorm = assertSafeRel(dl.relNorm, getKernel());
         const dst = path.join(getKernel(), relNorm);
-        if (fs.existsSync(dst)) {
-          fs.mkdirSync(path.dirname(path.join(bakRoot, relNorm)), { recursive: true });
-          fs.copyFileSync(dst, path.join(bakRoot, relNorm));
+        const existed = fs.existsSync(dst);
+        let bak = null, oldSha = null;
+        if (existed) {
+          if (!fs.statSync(dst).isFile()) throw new Error("落点被目录占用，无法覆盖（请人工检查内核目录）: " + relNorm);
+          oldSha = sha256File(dst); // 旧内容哈希必须在覆盖前计算（回滚依据）
+          bak = path.join(bakRoot, relNorm);
+          fs.mkdirSync(path.dirname(bak), { recursive: true });
+          fs.copyFileSync(dst, bak);
         }
-        fs.mkdirSync(path.dirname(dst), { recursive: true });
-        fs.copyFileSync(path.join(tmp, assertSafeRel(dl.relNorm, tmp)), dst);
-        const oldSha = sha256File(dst);
-        if (oldSha) shaLines.push(oldSha + "  " + relNorm.replace(/\\/g, "/"));
+        plan.push({ relNorm, dst, bak, oldSha, tmp: path.join(tmp, assertSafeRel(dl.relNorm, tmp)) });
       }
-      if (shaLines.length) {
-        fs.mkdirSync(bakRoot, { recursive: true });
-        fs.writeFileSync(path.join(bakRoot, "manifest.sha256"), shaLines.join("\n") + "\n", "utf8");
+      fs.mkdirSync(bakRoot, { recursive: true });
+      fs.writeFileSync(path.join(bakRoot, "manifest.sha256"),
+        plan.filter((p) => p.oldSha).map((p) => p.oldSha + "  " + p.relNorm.replace(/\\/g, "/")).join("\n") + "\n", "utf8");
+      /* ── 覆盖阶段：逐文件覆盖，中途失败立即把已覆盖文件还原（新建文件则删除） ── */
+      const done = [];
+      try {
+        for (const p of plan) {
+          fs.mkdirSync(path.dirname(p.dst), { recursive: true });
+          fs.copyFileSync(p.tmp, p.dst);
+          done.push(p);
+        }
+      } catch (copyErr) {
+        for (const p of done.reverse()) {
+          try {
+            if (p.bak) fs.copyFileSync(p.bak, p.dst);
+            else fs.rmSync(p.dst, { force: true });
+          } catch (rbErr) {
+            log("回滚单文件失败:", p.relNorm, rbErr instanceof Error ? rbErr.message : String(rbErr));
+          }
+        }
+        log(`覆盖中途失败，已回滚 ${done.length} 个文件；备份留存 → ${bakRoot}`);
+        throw copyErr;
       }
       fs.rmSync(tmp, { recursive: true, force: true });
-      updateLocalVersion(latest);
-      log(`热更新完成：${todo.length} 个文件覆盖，旧版备份 → ${bakRoot}`);
-      return { status: "applied", current, latest, applied: todo.length };
+      log(`热更新完成：${plan.length} 个文件覆盖，旧版备份 → ${bakRoot}（内核重启成功后落版本号）`);
+      return { status: "applied", current, latest, applied: plan.length, restartPending: true };
     } catch (e) {
+      log("热更新执行失败:", String(e.message || e));
       return { status: "error", current, error: String(e.message || e) };
     }
   }
 
-  /** 自动热更新（后台静默）：发现新版→应用→有文件变更则重启内核 */
+  /** 自动热更新（后台静默）：发现新版→应用→重启内核→重启成功才落版本号 */
   async function runAutoHotUpdate() {
     if (global.__hotupdating) return;
     global.__hotupdating = true;
     try {
       const r = await applyKernelUpdate();
       if (r.status === "applied") {
-        log(`自动热更新：${r.current} → ${r.latest}（${r.applied} 文件）`);
-        if (r.applied > 0) {
-          try { await restartCore(); } catch { /* 重启失败不影响 */ }
-        }
+        const ok = await restartAfterUpdate(r);
+        if (ok) log(`自动热更新：${r.current} → ${r.latest}（${r.applied} 文件）`);
+        else log(`自动热更新：文件已覆盖但内核重启失败，版本号保持 ${r.current}，下一轮检查将自动补重启`);
       } else if (r.status === "error") {
         log(`自动热更新失败：${r.error}`);
       }
@@ -178,7 +241,7 @@ function makeUpdater(deps) {
     setInterval(runAutoHotUpdate, intervalMs);
   }
 
-  return { applyKernelUpdate, runAutoHotUpdate, auto };
+  return { applyKernelUpdate, runAutoHotUpdate, auto, updateLocalVersion, restartAfterUpdate };
 }
 
 module.exports = { makeUpdater, sha256File, sha256Buf };

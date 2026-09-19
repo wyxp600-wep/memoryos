@@ -135,8 +135,9 @@ async function runUpdateCheck() {
   } else if (r.status === "none") {
     opts = { message: "已是最新版本", detail: `当前版本 ${r.current}。`, buttons: ["确定"] };
   } else if (r.status === "applied") {
-    opts = { message: `已更新到 ${r.latest}`, detail: `当前版本 ${r.current} → ${r.latest}，${r.applied} 个文件。`, buttons: ["确定"] };
-    if (r.applied > 0) { try { await core.restartCore(); } catch { /* ignore */ } }
+    let restarted = true;
+    if (r.applied > 0 || r.restartPending) restarted = await updater.restartAfterUpdate(r);
+    opts = { message: `已更新到 ${r.latest}`, detail: `当前版本 ${r.current} → ${r.latest}，${r.applied} 个文件。${restarted ? "" : "\n⚠ 内核重启失败：版本号未落，下次检查更新将自动补重启。"}`, buttons: ["确定"] };
   } else {
     opts = { message: "检查更新失败", detail: `当前版本 ${r.current}\n原因：${r.error || "未知"}`, buttons: ["确定"] };
   }

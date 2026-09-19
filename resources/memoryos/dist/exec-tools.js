@@ -106,7 +106,11 @@ function spillArtifact(dataDir, tool, text) {
         const file = path.join(dir, `${tool}-${ts}-${crypto.randomBytes(3).toString("hex")}.txt`);
         fs.writeFileSync(file, String(text ?? ""), "utf8");
         return file;
-    } catch { return null; }
+    } catch (e) {
+        // 落盘失败降级返回 null（工具主结果不受影响），但必须留痕——否则大输出静默丢失无从排查
+        console.error(`[exec] artifact 落盘失败（${tool}）: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+    }
 }
 
 /* ── 路径与命令安全 ─────────────────────────────────────────── */
@@ -131,11 +135,13 @@ export function resolveInside(root, p) {
     return abs;
 }
 
-/** 命令可执行文件白名单（P0 保守默认；可用 MEMORYOS_EXEC_ALLOW 覆盖，逗号分隔） */
+/** 命令可执行文件白名单（保守默认：**不含 shell 宿主与脚本解释器**——cmd/powershell/pwsh/python
+ *  一旦放行，["powershell","-Command","…"] 即绕过整个清单，等于没有白名单；
+ *  确需时用 MEMORYOS_EXEC_ALLOW 显式加入，并自行承担 shell 逃逸面） */
 export function execAllowlist() {
     const env = process.env.MEMORYOS_EXEC_ALLOW;
     if (env && env.trim()) return new Set(env.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-    return new Set(["npm", "npx", "node", "git", "python", "python3", "py", "pwsh", "powershell", "cmd", "dir", "type", "echo"]);
+    return new Set(["npm", "npx", "node", "git"]);
 }
 
 /** 杀整棵进程树（Windows 用 taskkill /T /F，与 services/core-process.js 既有模式一致） */
