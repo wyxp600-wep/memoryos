@@ -125,7 +125,7 @@ const updater = makeUpdater({
   },
   getKernel: () => KERNEL, dataDir, restartCore: () => core.restartCore(), log,
 });
-const sched = createScheduler({ nodeExe, getKernel: () => KERNEL, dataDir, log });
+const sched = createScheduler({ nodeExe, getKernel: () => KERNEL, dataDir, log, getPort: () => port, getToken: () => TOKEN });
 
 async function runUpdateCheck() {
   const r = await updater.applyKernelUpdate();

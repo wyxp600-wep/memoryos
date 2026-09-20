@@ -18,7 +18,7 @@ const { spawn, spawnSync } = require("node:child_process");
  * 关闭/调参：SCHED_LOCK_TTL_MIN、SCHED_CHILD_TIMEOUT_MIN。
  */
 function createScheduler(deps) {
-  const { nodeExe, getKernel, dataDir, log, spawnImpl = spawn, timers = { setTimeout, clearTimeout } } = deps;
+  const { nodeExe, getKernel, dataDir, log, getPort, getToken, spawnImpl = spawn, timers = { setTimeout, clearTimeout } } = deps;
 
   const envInt = (k, d) => {
     const v = Number(process.env[k]);
@@ -129,7 +129,7 @@ function createScheduler(deps) {
       if (!fs.existsSync(script)) { log("自动采集：ingest-cli.js 不存在，跳过"); release("自动采集"); return; }
       holder = runChild({
         key: "自动采集", script, args: ["--incremental"], cwd: KERNEL,
-        env: { ...process.env, MEMORY_DB: path.join(dataDir(), "data", "memory.db"), EMBED_MODE: "local", EMBED_CACHE_DIR: path.join(KERNEL, "models") },
+        env: { ...process.env, MEMORY_DB: path.join(dataDir(), "data", "memory.db"), EMBED_MODE: "api", EMBED_API_URL: `http://127.0.0.1:${getPort()}/v1/embeddings`, EMBED_API_KEY: getToken() },
         onDone: (code, timedOut) => {
           const out = holder?.output() ?? "";
           const brief = out.trimEnd().split("\n").filter((l) => l.includes("[ingest")).pop() || "";

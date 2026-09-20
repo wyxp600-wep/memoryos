@@ -10,10 +10,26 @@
 (() => {
   'use strict';
   if (!window.EChartsLoaded) window.EChartsLoaded = {
-    // 等待 echarts 就绪
+    _p: null,
+    // ★ P1-perf：echarts（~1MB）不再随首屏同步加载 —— 首次绘图时动态注入脚本；
+    // 保留旧语义：15s 超时放弃本轮绘制，失败后复位 _p，下次进入可重试。
+    ensure() {
+      if (window.echarts) return Promise.resolve();
+      if (!this._p) {
+        this._p = new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "./echarts.min.js";
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error("echarts load failed"));
+          document.head.appendChild(s);
+          setTimeout(() => reject(new Error("echarts load timeout")), 15000);
+        });
+        this._p.catch(() => { this._p = null; });
+      }
+      return this._p;
+    },
     when(cb) {
-      const t = setInterval(() => { if (window.echarts) { clearInterval(t); cb(); } }, 200);
-      setTimeout(() => clearInterval(t), 15000);
+      this.ensure().then(() => cb()).catch(() => {});
     },
   };
 

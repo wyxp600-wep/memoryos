@@ -134,7 +134,15 @@ function createCore(deps) {
     // 遗留（P1）：执行工具未纳入 B3 受限能力位（RESTRICTED 下按能力位隐藏 exec）。
     llmEnv.MEMORYOS_EXEC_ON = "1";
     spawnCore("dashboard.js", llmEnv);
-    spawnCore("daemon.js", llmEnv);
+    // ★ P1-perf（B6′）嵌入侧车收敛：daemon 不再进程内驻留 560MB BGE-M3，改经 dashboard
+    //   常驻的 /v1/embeddings（OpenAI 兼容，Bearer=MEMORY_TOKEN）复用同一份模型；
+    //   dashboard 不可用时 reembed 失败仅记日志（daemon 小时级自愈重跑），零功能改动。
+    spawnCore("daemon.js", {
+      ...llmEnv,
+      EMBED_MODE: "api",
+      EMBED_API_URL: `http://127.0.0.1:${getPort()}/v1/embeddings`,
+      EMBED_API_KEY: getToken(),
+    });
     const t0 = Date.now();
     while (Date.now() - t0 < 60000) {
       await new Promise((r) => setTimeout(r, 400));

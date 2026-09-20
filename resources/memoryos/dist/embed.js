@@ -14,16 +14,36 @@ const RUNTIME_DIM = Number(process.env.EMBED_DIM ?? 1024);
 class TextCache {
     max;
     m = new Map();
+    hits = 0;
+    misses = 0;
+    evicted = 0;
     constructor(max = 4096) {
         this.max = max;
     }
     get(text) {
-        return this.m.get(text);
+        const v = this.m.get(text);
+        if (v) {
+            this.hits++;
+            return v;
+        }
+        this.misses++;
+        return undefined;
     }
     set(text, v) {
-        if (this.m.size >= this.max)
-            this.m.clear(); // 简单逐出
+        if (this.m.size >= this.max) {
+            // P0-perf（B7′）：满时 FIFO 逐出最旧一条，替代旧 clear() 全清 —— 全清会让后续 4096 条
+            // 全部 miss 重跑嵌入推理形成洪峰；Map 迭代序=插入序，delete 最旧 key 即 FIFO。
+            const oldest = this.m.keys().next().value;
+            this.m.delete(oldest);
+            this.evicted++;
+            if (this.evicted % 1024 === 0) {
+                console.log(`[embed-cache] FIFO 逐出 ${this.evicted} 条（上限 ${this.max}，hits=${this.hits} misses=${this.misses}）`);
+            }
+        }
         this.m.set(text, v);
+    }
+    stats() {
+        return { size: this.m.size, max: this.max, hits: this.hits, misses: this.misses, evicted: this.evicted };
     }
 }
 /* ---------- fake：确定性伪向量（仅测机制，无语义） ---------- */
