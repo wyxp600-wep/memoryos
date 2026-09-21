@@ -172,6 +172,19 @@ export async function withLlmRetry(fn, retries = 2, signal, label = "LLM") {
         }
     }
 }
+/** ★ P3-perf：嵌入侧车 env 面 —— 宿主进程同时提供 MEMORY_PORT+MEMORY_TOKEN（壳注入的两个变量）时，
+ *  agent 子进程不再各载 560MB BGE-M3，改共享 dashboard 常驻的 /v1/embeddings（Bearer=MEMORY_TOKEN）；
+ *  缺一即回落旧默认（EMBED_MODE 未设→local），零回归。令牌只走进程 env 传递，不写入任何配置文件（隐私红线）。 */
+export function agentEmbedEnv() {
+    if (process.env.MEMORY_PORT && process.env.MEMORY_TOKEN) {
+        return {
+            EMBED_MODE: "api",
+            EMBED_API_URL: "http://127.0.0.1:" + process.env.MEMORY_PORT + "/v1/embeddings",
+            EMBED_API_KEY: process.env.MEMORY_TOKEN,
+        };
+    }
+    return { EMBED_MODE: process.env.EMBED_MODE || "local" };
+}
 /* ── MCP 客户端（stdio 拉起 server.js）─────────────────────────── */
 export async function createMcpClient({ serverPath, agentName, agentFpath, cwd, env } = {}) {
     const server = serverPath || fileURLToPath(new URL("./server.js", import.meta.url));
@@ -183,8 +196,8 @@ export async function createMcpClient({ serverPath, agentName, agentFpath, cwd, 
             ...process.env,
             MEMORY_AGENT: agentName || "unknown",
             ...(agentFpath ? { MEMORY_AGENT_FPATH: agentFpath } : {}),
-            EMBED_MODE: process.env.EMBED_MODE || "local",
-            ...(env || {}),
+            ...agentEmbedEnv(),
+            ...(env || {}), // 显式 env 参数优先级最高（测试可强制 EMBED_MODE=fake）
         },
         stderr: "pipe",
     });
