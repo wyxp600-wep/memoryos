@@ -88,10 +88,14 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 | `npm run lint:sql` | SQL 占位符/实参数量体检（含自测） |
 | `npm run lint:silent` | 静默 catch 体检（含自测） |
 | `npm run snapshot:check` | 路由快照逐项比对 |
-| `npm run audit` | 执行面审计探针（临时库真跑） |
+| `npm run audit` | **执行面**审计探针（临时库真跑，验证 exec_audit 落行） |
+| `npm audit --registry=https://registry.npmjs.org` | **依赖**漏洞扫描。须显式指定官方 registry —— npmmirror 未实现安全公告端点，直接 `npm audit` 会报 `NOT_IMPLEMENTED` |
 | `npm run ui:walk` | **手动**：Agent 页 CDP 真实浏览器点击巡检（需 Chrome + dashboard 在跑 + 可用 LLM） |
 | `npm run ui:walk:settings` | **手动**：设置页 LLM 配置走查（自起内核于 8792，用临时 data 目录） |
 | `npm start` | 单独起 dashboard |
+
+> **依赖锁定**：`package-lock.json`（lockfileVersion 3）由 `node_modules/.package-lock.json` 提升生成，与已装树逐项一致。
+> 重装依赖请用 `npm ci`（严格按 lockfile 还原），**不要用 `npm install`**（会重新解析版本范围、引入漂移）。
 
 ### 壳层（仓库根）
 
