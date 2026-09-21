@@ -374,15 +374,6 @@ test("scheduler: 子进程超时 → 走杀树分支并记日志", async () => {
   assert.equal(h.sched.stats().locks["自动采集"].running, false);
 });
 
-test("scheduler: 脚本不存在时安全跳过并立即释放锁", async () => {
-  // shared-sync.mjs 当前不存在 → runSharedSync 应 log 跳过且不留悬挂锁
-  const h = makeSched();
-  await h.sched.runSharedSync();
-
-  assert.equal(h.spawned.length, 0, "脚本不存在不应拉起子进程");
-  assert.equal(h.sched.stats().locks["共享记忆同步"].running, false, "跳过路径也必须释放锁");
-});
-
 /* ======================== 三、port：端口探测 ======================== */
 
 test("port: portOpen 对已监听端口为真、对空闲端口为假", async (t) => {

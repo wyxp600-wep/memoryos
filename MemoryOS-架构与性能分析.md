@@ -15,7 +15,7 @@
 
 1. **壳层（Electron 主进程，`main.js` 仅 158 行）**：只做编排，逻辑全部下沉到 `services/`、`security/`、`window/`、`app/`。
 2. **渲染层（BrowserWindow）**：加载 `http://127.0.0.1:<port>/`（内核 Fastify 提供的零构建 SPA），关闭=隐藏到托盘（托盘常驻模式）。
-3. **内核层（独立 Node 进程，内置 `runtime/node.exe`）**：`dashboard.js`（Fastify REST + 静态 UI 服务）与 `daemon.js`（小时级治理循环）两个常驻子进程，外加按需 spawn 的批处理（`ingest-cli.js`、`shared-sync.mjs`、MCP `server.js`）。
+3. **内核层（独立 Node 进程，内置 `runtime/node.exe`）**：`dashboard.js`（Fastify REST + 静态 UI 服务）与 `daemon.js`（小时级治理循环）两个常驻子进程，外加按需 spawn 的批处理（`ingest-cli.js`、MCP `server.js`）。
 
 **关键交互机制**：壳不直接碰数据，一切数据路径走内核；壳与内核之间用 **HTTP + 令牌**（非 IPC）解耦，内核可被单独重启/热更新而不影响壳存活。
 
@@ -65,7 +65,7 @@ flowchart LR
   subgraph Kernel["内核层 内置 node.exe"]
     DASH[dashboard.js<br/>Fastify REST+静态UI]
     DAEMON[daemon.js<br/>小时级治理]
-    CLI[ingest-cli / shared-sync<br/>批处理]
+    CLI[ingest-cli<br/>批处理]
     MCP[server.js FastMCP stdio]
   end
   UI_LOAD --> DASH
@@ -166,7 +166,7 @@ graph LR
 - 外部 AI 客户端 ↔ 内核：**MCP stdio（JSON-RPC）**（`server.js`，即本会话挂载的 `memoryos` MCP 服务），工具执行仍落到同一 `db.js`；
 - 前端 ↔ 内核：同源 REST（`/api/*`），首访 `?token=` 自动种 `HttpOnly; SameSite=Strict` cookie，后续请求免显式传令牌。
 
-**连接池管理**：**无池——每进程一个句柄**。可达 5 个写者进程（dashboard / daemon / MCP server / ingest CLI / shared-sync）+ N 个读者，并发正确性完全依赖 **WAL（多读单写）+ busy_timeout(5s) + withTx 重试(3次) + 工具层锁竞争结构化提示**这条链。
+**连接池管理**：**无池——每进程一个句柄**。可达 4 个写者进程（dashboard / daemon / MCP server / ingest CLI）+ N 个读者，并发正确性完全依赖 **WAL（多读单写）+ busy_timeout(5s) + withTx 重试(3次) + 工具层锁竞争结构化提示**这条链。
 
 ### 3.2 关键结构/组件说明
 
@@ -176,7 +176,7 @@ graph LR
 |---|---|---|
 | Obsidian vault → 库 | 扫描 .md（≤5000 文件），frontmatter+正文 → notes/memory | `obsidian_sync` 元表 hash+mtime，内容不变即跳过 |
 | 库 → vault | 单向导出 Markdown + 溯源 frontmatter 到「MemoryOS 导出」目录 | 导出/写入目录从扫描中排除（**防循环导入**） |
-| jsonl 共享记忆 → 库 | 30min 周期 CLI 直读 | 增量水位，幂等 |
+| Trae jsonl 共享记忆 → 库 | 由采集源（`ingest` 的 `trae-session-jsonl` 源，L1 免 LLM）并轨承接 | `ingest_state` 记 (size,mtime)，变化才处理 |
 | 采集源 → 库 | `ingest_state` 记录 (size,mtime)，下轮只处理"变了"的文件 | stat 级空跑（几十 ms） |
 | 卡片 ↔ 任务池 | daemon 桥：ready 卡→公开任务池；agent done→卡片同步 | 事件溯源 `card_events` |
 

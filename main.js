@@ -173,7 +173,6 @@ async function finalizeStartup(cfg) {
     onRestartMcp: () => restartMcp(),
     onQuit: () => { quitting = true; app.quit(); },
   });
-  sched.scheduleSharedSync();
   sched.scheduleAutoIngest();
   updater.auto();
 }

@@ -90,35 +90,6 @@ function createScheduler(deps) {
     return { child, output: () => out };
   }
 
-  /* ---------- 共享记忆同步（免 LLM 直读 jsonl → 桌面库，幂等增量） ---------- */
-  async function runSharedSync() {
-    if (!acquire("共享记忆同步")) return;
-    let holder = null;
-    try {
-      const localScript = path.resolve(__dirname, "..", "shared-sync.mjs");
-      const syncScript = fs.existsSync(localScript) ? localScript : path.join(process.resourcesPath, "shared-sync.mjs");
-      if (!fs.existsSync(syncScript)) { log("共享记忆同步：脚本不存在，跳过", syncScript); release("共享记忆同步"); return; }
-      const KERNEL = getKernel();
-      holder = runChild({
-        key: "共享记忆同步", script: syncScript, cwd: path.dirname(syncScript),
-        env: { ...process.env, SYNC_DIST_DIR: path.join(KERNEL, "dist"), SYNC_MODELS_DIR: path.join(KERNEL, "models") },
-        onDone: (code, timedOut) => {
-          const out = holder?.output() ?? "";
-          log("共享记忆同步", timedOut ? "超时终止" : code === 0 ? "完成" : `退出码 ${code}`, out.trimEnd() || "");
-        },
-      });
-      if (!holder) release("共享记忆同步");
-    } catch (e) {
-      log("共享记忆同步异常:", String(e.message || e));
-      release("共享记忆同步");
-    }
-  }
-  function scheduleSharedSync() {
-    const ms = Math.max(60, Number(process.env.SHARED_SYNC_INTERVAL_MIN ?? 30) || 30) * 60 * 1000;
-    setTimeout(runSharedSync, 5 * 1000);
-    setInterval(runSharedSync, ms);
-  }
-
   /* ---------- 自动增量采集 ---------- */
   async function runAutoIngest() {
     if (!acquire("自动采集")) return;
@@ -156,7 +127,7 @@ function createScheduler(deps) {
     return { lockTtlMs: LOCK_TTL_MS, childTimeoutMs: CHILD_TIMEOUT_MS, locks: out };
   }
 
-  return { scheduleSharedSync, scheduleAutoIngest, runSharedSync, runAutoIngest, stats };
+  return { scheduleAutoIngest, runAutoIngest, stats };
 }
 
 module.exports = { createScheduler };
