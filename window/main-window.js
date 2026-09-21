@@ -15,6 +15,12 @@ function createMainWindow() {
   mainWin = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1080, minHeight: 680,
     autoHideMenuBar: true, backgroundColor: "#0b1020", title: "MemoryOS", show: false,
+    /* P0 加固：显式声明安全基线（与 Electron 20+ 默认一致，防未来默认漂移；对齐 welcome-window 风格） */
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
   });
   mainWin.loadURL(`http://127.0.0.1:${cfg.port}/?token=${encodeURIComponent(cfg.TOKEN)}`);
   mainWin.once("ready-to-show", () => mainWin.show());

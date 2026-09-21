@@ -25,6 +25,10 @@ const ASAR = path.join(ROOT, "resources", "app.asar");
 const SYNC_FILES = [
   "/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js", // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
   "/preload.js", "/welcome.html", "/assets/icon-512.png", "/assets/icon.ico", "/assets/tray.png", // ★ P2-7：asar-only → 落树纳管
+  // ★ 2026-09-21（A 分区跨区修复，P0）：以下壳层文件在 asar 内但不在本清单 → 改动重打包后静默丢失
+  //   （与 09-18 发现的 lint 白名单盲区同类）。补齐后所有壳层源码改动均可被 `node pack-asar.js` 带入 asar。
+  "/window/main-window.js", "/window/welcome-window.js",
+  "/services/scheduler.js", "/services/port.js", "/security/token.js", "/security/ipc.js", "/app/lifecycle.js",
 ];
 /** 有意留在 asar-only 的条目（见文件头说明），--extract-only 不会提取它们 */
 const EXTRACT_EXCLUDE = ["/package.json", "/release-settings.json"];
