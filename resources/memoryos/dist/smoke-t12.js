@@ -174,6 +174,12 @@ const sched = createScheduler({
     nodeExe: () => process.execPath,
     getKernel: () => fakeScriptDir,       // ingest-cli.js 落在此目录（存在即通过存在性校验）
     dataDir: () => fakeScriptDir,
+    // ★ 2026-09-22（A 分区）：原缺这两个注入。scheduler 的 runAutoIngest 在构建子进程 env 时
+    //   会调 getPort()/getToken()（拼 EMBED_API_URL / EMBED_API_KEY，P1-perf B6′ 嵌入侧车引入），
+    //   未注入即抛「getPort is not a function」→ 被 catch 捕获 → 不 spawn → B1/B2 失败。
+    //   属测试依赖漂移（非产品回归），补上即可。
+    getPort: () => 17877,
+    getToken: () => "t12-smoke-token",
     log,
     spawnImpl: () => { const c = fakeChild(7000 + spawned.length); spawned.push(c); lastSchedKid = c; return c; },
     timers: t2s.timers,

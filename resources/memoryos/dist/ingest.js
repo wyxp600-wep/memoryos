@@ -265,7 +265,13 @@ function glob(pattern, opts = {}) {
         }
     }
     const walk = (dir, depth) => {
-        if (depth > maxDepth || results.length >= maxFiles)
+        // ★ 2026-09-22（A 分区跨区最小修复）：此处原为 `depth > maxDepth || results.length >= maxFiles`，
+        //   在 for 循环内也有一次同样的提前 return。maxFiles 是**整棵目录树的全局上限**，
+        //   一达上限即中止后续**所有**目录遍历，且收集顺序取 readdirSync 遍历序（非日期序）
+        //   → 先遍历到的项目/日期吃光预算，其余目录永不访问。实测后果：trae session_memory
+        //   磁盘 71 个文件只解析出最早的 20 个，该通道自 09-13 起停摆。现改为遍历不截断，
+        //   收集后在函数尾部按 mtime 倒序取最近 maxFiles 个（见下方 statted 段）。
+        if (depth > maxDepth)
             return;
         let entries = [];
         try {
@@ -275,8 +281,6 @@ function glob(pattern, opts = {}) {
             return;
         }
         for (const e of entries) {
-            if (results.length >= maxFiles)
-                return;
             if (e.isDirectory()) {
                 if (e.name === ".git")
                     continue;
@@ -305,12 +309,21 @@ function glob(pattern, opts = {}) {
     else if (fs.existsSync(pattern) && fs.statSync(pattern).isFile()) {
         results.push(pattern);
     }
-    return results.filter((f) => { try {
-        return fs.statSync(f).isFile();
+    // ★ 2026-09-22（A 分区跨区最小修复）：收集完成后按 mtime 倒序取最近 maxFiles 个。
+    //   语义变化：maxFiles 由「遍历序前 N 个」改为「最近修改的 N 个」——后者才符合
+    //   「同步最新会话/笔记」的意图，且不会因新目录加入而永久停摆。
+    //   同时把原先的 isFile() 过滤合并进来（只 stat 一次，避免二次 I/O）。
+    const statted = [];
+    for (const f of results) {
+        try {
+            const st = fs.statSync(f);
+            if (st.isFile())
+                statted.push({ f, mtimeMs: st.mtimeMs });
+        }
+        catch { /* 取不到 stat 的跳过 */ }
     }
-    catch {
-        return false;
-    } });
+    statted.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return statted.slice(0, maxFiles).map((x) => x.f);
 }
 /** 读文件全文（失败返回 ''） */
 export function readText(f, maxBytes = 1_000_000) {
