@@ -2,7 +2,7 @@
  * MemoryOS — 热更新清单签名 CLI（T1-R1 配套发布工具）
  *
  * 背景：sha256 只防传输损坏不防来源篡改；updater.js 现要求清单必须带 ed25519 签名
- * （公钥内置 services/updater.js 的 UPDATE_SIGN_PUBKEY，私钥仅存发布机本目录、不入 git）。
+ * （公钥内置 services/updater.js 的 UPDATE_SIGN_PUBKEY，私钥已移出仓库至桌面 _memoryos-signing-keys、不入 git）。
  *
  * 用法：
  *   node services/sign-manifest.js keygen            首次生成密钥对（已存在则拒绝，--force 覆盖）
@@ -15,9 +15,13 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const crypto = require("node:crypto");
 
-const KEY_DIR = path.join(__dirname, "..", "security", "update-signing");
+/* P0 隔离：密钥对已移出仓库目录（原 security/update-signing 不再存放私钥）；
+   可用环境变量 MEMORYOS_SIGN_KEY_DIR 指向自定义位置。 */
+const KEY_DIR = process.env.MEMORYOS_SIGN_KEY_DIR
+  || path.join(os.homedir(), "Desktop", "_memoryos-signing-keys");
 const PRIV = path.join(KEY_DIR, "ed25519-private.pem");
 const PUB = path.join(KEY_DIR, "ed25519-public.pem");
 
