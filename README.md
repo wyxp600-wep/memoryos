@@ -104,9 +104,14 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 
 | 命令 | 作用 |
 |---|---|
+| `node --test "tests/**/*.test.js"` | **外壳层单元测试**（零依赖，用 Node 内置 `node:test`，无需根 package.json；`node --test tests/**/*.test.js` 亦可） |
 | `node pack-asar.js` | 重打包 `resources/app.asar`（改壳层源码后**必须**执行） |
 | `node pack-asar.js --check` | 校验 asar 与工作树副本是否一致 |
 | `node pack-asar.js --extract-only` | 把 asar-only 条目补到工作树 |
+
+> 外壳层测试覆盖 [tests/shell.test.js](tests/shell.test.js)：`services/core-process.js`（内核自愈：指数退避/封顶/计数隔离/健康窗/额度用尽/清定时器）、
+> `services/scheduler.js`（调度锁防重入/陈旧锁接管/子进程超时）、`services/port.js`（端口探测与顺延）、`services/updater.js`（sha256 已知向量）。
+> 另有 7 个模块（`security/ipc`、`security/token`、`app/lifecycle`、`window/*`）**硬依赖 `electron`，无法脱离 Electron 单测**——改这些请走 `npm run ui:walk` 之类的实机走查。
 
 > **打包注意**：`app.asar` 只纳入 `pack-asar.js` 的 `SYNC_FILES` 白名单里的文件。新增壳层文件务必同步加进该清单，否则改动重打包后会**静默丢失**。重打包前需先退出 MemoryOS（asar 被运行中的进程占用）。
 
