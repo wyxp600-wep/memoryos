@@ -96,6 +96,9 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 
 > **依赖锁定**：`package-lock.json`（lockfileVersion 3）由 `node_modules/.package-lock.json` 提升生成，与已装树逐项一致。
 > 重装依赖请用 `npm ci`（严格按 lockfile 还原），**不要用 `npm install`**（会重新解析版本范围、引入漂移）。
+>
+> **注意**：前端用的 ECharts 是**随仓库分发的 vendored 文件** `memoryos-dashboard-redesign/echarts.min.js`（由 `/echarts.min.js` 静态路由下发），
+> **不是** npm 依赖——`echarts` 曾作为幽灵依赖存在于 package.json（无任何代码引用），已于 2026-09-21 移除。**请勿再加回**。
 
 ### 壳层（仓库根）
 
