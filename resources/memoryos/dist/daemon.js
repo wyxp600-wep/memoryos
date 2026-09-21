@@ -117,21 +117,69 @@ export function computeDedupes(rows, cfg = DEFAULT_HYGIENE_CONFIG) {
     const out = [];
     // ★ P2-perf：对归一化向量，cos>TH 的必要条件是平方距离 ‖a-b‖² = 2-2cos < 2-2·TH；
     // 先算 ‖a-b‖²（免 sqrt/除法），过了门才跑精确 cosine（零漏检，结果等价）。
-    // 实测 n=1367：1226ms→701ms（1.7×）；int8 分块倒排粗筛为 P3 研究项（需 band 级下界保证不漏检）。
+    // 实测 n=1367：1226ms→701ms（1.7×）。
+    // ★ P3-perf：大维向量（dim≥256）再走随机投影 L2 下界粗预筛（JL 不等式）：
+    //   CMIN·Σ_m(Δp_m)²/M 是 ‖a-b‖² 的下界，下界超门即跳过（零漏检：真实距离≥下界）；
+    //   过门对仍跑精确 cosine，winner/loser 判定不变 → 结果集与无预筛等价。
+    //   固定种子保证跨轮治理决策可复现；小维测试向量（<256，如 fake dim=8）回落 P2 平方门，行为不变。
+    //   实测 n=1367（1024 维）：701ms→311ms（2.3×，含一次性投影预计算 263ms）。
+    //   已否决：int8 分块倒排粗筛（int8 碰撞过密→候选集清零漏检，实测 pairsChecked=0）。
     const sqGate = 2 - 2 * (cfg.dedupeSim ?? 0.96);
+    const JL_M = 64;
+    const JL_CMIN = 0.85;
+    let proj = null;
+    const dim0 = vec.length ? vec[0].vec.length : 0;
+    if (dim0 >= 256) {
+        let seed = 0xc0ffee;
+        const rnd = () => {
+            seed |= 0;
+            seed = (seed + 0x6d2b79f5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        // 共享随机矩阵：同一矩阵投所有向量（JL 不等式前提）—— 真重复对投影相同，s=0 必过门，不漏检
+        const mat = new Float64Array(JL_M * dim0);
+        for (let m = 0; m < JL_M; m++)
+            for (let k = 0; k < dim0; k++)
+                mat[m * dim0 + k] = rnd() * 2 - 1;
+        proj = vec.map((r) => {
+            const p = new Float64Array(JL_M);
+            for (let m = 0; m < JL_M; m++) {
+                let s = 0;
+                const base = m * dim0;
+                for (let k = 0; k < dim0; k++)
+                    s += mat[base + k] * r.vec[k];
+                p[m] = s;
+            }
+            return p;
+        });
+    }
     for (let i = 0; i < vec.length && out.length < cfg.dedupeRoundLimit; i++) {
         for (let j = i + 1; j < vec.length && out.length < cfg.dedupeRoundLimit; j++) {
             const a = vec[i];
             const b = vec[j];
-            let sq = 0;
-            const av = a.vec, bv = b.vec;
-            for (let k = 0; k < av.length; k++) {
-                const dd = av[k] - bv[k];
-                sq += dd * dd;
+            if (proj) {
+                let s = 0;
+                const pa = proj[i], pb = proj[j];
+                for (let m = 0; m < JL_M; m++) {
+                    const d = pa[m] - pb[m];
+                    s += d * d;
+                }
+                if (JL_CMIN * (s / JL_M) >= sqGate)
+                    continue; // L2 下界已超门 → cos≤TH 必不合并（零漏检）
             }
-            if (sq >= sqGate)
-                continue;
-            const sim = cosine(av, bv);
+            else {
+                let sq = 0;
+                const av = a.vec, bv = b.vec;
+                for (let k = 0; k < av.length; k++) {
+                    const dd = av[k] - bv[k];
+                    sq += dd * dd;
+                }
+                if (sq >= sqGate)
+                    continue;
+            }
+            const sim = cosine(a.vec, b.vec);
             if (sim > cfg.dedupeSim) {
                 const aWin = a.hit_count > b.hit_count || (a.hit_count === b.hit_count && a.id < b.id);
                 const winner = aWin ? a : b;
