@@ -148,3 +148,4 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 | 架构与性能分析 | [MemoryOS-架构与性能分析.md](MemoryOS-架构与性能分析.md) |
 | 全维度优化分析 | [MemoryOS-全维度优化分析-20260914.md](MemoryOS-全维度优化分析-20260914.md) |
 | 项目记忆与约定 | [PROJECT_MEMORY.md](PROJECT_MEMORY.md) |
+| 依赖漏洞可利用性评估 | [outputs/依赖漏洞可利用性评估-20260922.md](outputs/依赖漏洞可利用性评估-20260922.md) |
