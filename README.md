@@ -49,6 +49,12 @@
 
 另有两道防线：Host 白名单（限 loopback，防 DNS rebinding）、令牌缺失时 fail-closed。响应头带 CSP + nosniff + no-referrer。
 
+> ⚠ **令牌有两份，别读错**（曾导致 CDP 走查脚本 100% 失败）
+> - `%APPDATA%/MemoryOS/data/token` —— **Electron 壳的真源**（[security/token.js](security/token.js) 生成并注入内核）
+> - `resources/memoryos/data/token` —— 仅**独立跑内核**时自举生成（`launcher.cjs` / `restart-core.js`）
+>
+> 两者内容不同、互不通用。脚本要用令牌请按 `MEMORY_TOKEN` env → `%APPDATA%` 真源 → 仓库内自举 的顺序解析（`outputs/*-ui-walk.mjs` 已按此实现）。
+
 ---
 
 ## 三、MCP 工具面
@@ -83,6 +89,8 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 | `npm run lint:silent` | 静默 catch 体检（含自测） |
 | `npm run snapshot:check` | 路由快照逐项比对 |
 | `npm run audit` | 执行面审计探针（临时库真跑） |
+| `npm run ui:walk` | **手动**：Agent 页 CDP 真实浏览器点击巡检（需 Chrome + dashboard 在跑 + 可用 LLM） |
+| `npm run ui:walk:settings` | **手动**：设置页 LLM 配置走查（自起内核于 8792，用临时 data 目录） |
 | `npm start` | 单独起 dashboard |
 
 ### 壳层（仓库根）

@@ -8,12 +8,40 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));   // …/resources/memoryos/outputs
+const KERNEL = path.resolve(HERE, '..');                     // …/resources/memoryos
 const CHROME = process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PORT = 9370 + (Date.now() % 50);
-const DIR = `${os.tmpdir().replace(/\\/g, '/')}/.chrome-agentwalk-${Date.now()}`;
-const TOKEN = fs.readFileSync('C:/Users/WYX/Desktop/MemoryOS/resources/memoryos/data/token', 'utf8').trim();
-const URL = `http://127.0.0.1:8787/?token=${TOKEN}`;
+const PORT = 9370 + (Date.now() % 50);                       // 本脚本自用的 CDP 调试端口
+const DASH_PORT = Number(process.env.MEMORY_PORT || 8787);   // 被走查的 dashboard 端口
+const DIR = path.join(os.tmpdir(), `.chrome-agentwalk-${Date.now()}`);
+
+/**
+ * 令牌解析顺序：env `MEMORY_TOKEN` → 壳层真源 `%APPDATA%/MemoryOS/data/token`
+ *              → 独立内核自举 `resources/memoryos/data/token`。
+ * ★ 2026-09-21 修复：原先硬编码仓库内路径，而 Electron 壳实际用的是 %APPDATA% 那份，
+ *   两份互不相同 → 请求 401 → 白页 → 全部断言失败（曾实测：repo 份 a076caef… /
+ *   壳层份 466fe31c…；前者请求 401，后者 302）。
+ */
+function readToken() {
+    if (process.env.MEMORY_TOKEN) return process.env.MEMORY_TOKEN.trim();
+    const cands = [
+        path.join(process.env.APPDATA || '', 'MemoryOS', 'data', 'token'),
+        path.join(KERNEL, 'data', 'token'),
+    ];
+    for (const f of cands) {
+        try { const t = fs.readFileSync(f, 'utf8').trim(); if (t) return t; } catch { /* 试下一个 */ }
+    }
+    throw new Error(`未找到访问令牌：设 MEMORY_TOKEN，或确保 ${cands[0]} 存在`);
+}
+
+let TOKEN = '';
+try { TOKEN = readToken(); }
+catch (e) { console.error('✗ ' + e.message); process.exit(1); }
+if (!fs.existsSync(CHROME)) { console.error(`✗ 未找到 Chrome：${CHROME}（可用 CHROME_BIN 指定）`); process.exit(1); }
+const URL = `http://127.0.0.1:${DASH_PORT}/?token=${TOKEN}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const R = [];
 const rec = (name, pass, extra = '') => { R.push({ name, pass, extra }); console.log(`${pass ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -88,27 +116,46 @@ try {
     rec('点击导航 → Agent 页激活', clicked === true && activeOk === true, `title=${title}`);
 
     // 3) 状态行（模型 + 工具面）：证明鉴权 cookie + fetch /api/agent/status 通
+    //    断言不用魔数（原为 /qwen3:8b|dashboard|18/，「18」是过期工具数且会随模型名漂移）：
+    //    只要离开初始占位文案即证明接口已返回。
     const statusText = await ev(`document.querySelector('#agentStatusLine').textContent`);
-    rec('状态行拉到模型/工具面', /qwen3:8b|dashboard|18/.test(String(statusText)), String(statusText).slice(0, 120));
+    rec('状态行拉到模型/工具面', !!statusText && !String(statusText).includes('正在读取'), String(statusText).slice(0, 120));
     const writeDisabled = await ev(`(function(){var c=document.querySelector('#agentAllowWrites');return c?(c.disabled?'disabled':'enabled'):'missing'})()`);
-    rec('受限模式 → 「允许写入」置灰', writeDisabled === 'disabled', `checkbox=${writeDisabled}`);
+    // ★ 2026-09-21：原断言写死 `=== 'disabled'`（假定受限模式开启），而受限模式实际由
+    //   config.json 的 restricted 决定（core-process.js:128 `cfg.restricted === true ? "1" : "0"`），
+    //   默认关闭 → 勾选框可点 → 原断言必然误报为回归。改为按真实配置判定。
+    const cfgRestricted = (() => {
+        try {
+            const f = path.join(process.env.APPDATA || '', 'MemoryOS', 'config.json');
+            return JSON.parse(fs.readFileSync(f, 'utf8')).restricted === true;
+        } catch { return false; }
+    })();
+    rec(`「允许写入」与受限模式一致（restricted=${cfgRestricted}）`,
+        writeDisabled === (cfgRestricted ? 'disabled' : 'enabled'), `checkbox=${writeDisabled}`);
 
     // 4) 注入中文提问并发送（真实 agent 一轮，本地模型较慢）
     const question = '只调用一次 task_next(project="global", as="")，然后用一句话说有没有可做的任务。';
     await ev(`(function(){var t=document.querySelector('#agentInput');t.value=${JSON.stringify(question)};t.dispatchEvent(new Event('input',{bubbles:true}));return true})()`);
     const before = await ev(`document.querySelectorAll('#agentChat > div').length`);
     await ev(`document.querySelector('#agentSendBtn').click()`);
-    let answered = false, bubbles = 0;
+    let answered = false, bubbles = 0, tail = '';
     for (let i = 0; i < 60; i++) { // 最多等 240s
         await sleep(4000);
         bubbles = await ev(`document.querySelectorAll('#agentChat > div').length`);
         const busy = await ev(`document.querySelector('#agentSendBtn').disabled`);
-        if (bubbles > before && busy === false) { answered = true; break; }
+        tail = String(await ev(`(function(){var d=document.querySelectorAll('#agentChat > div');return d.length?d[d.length-1].textContent:''})()`));
+        // ★ 2026-09-21：原判定 `bubbles > before && busy === false` 会在「运行中…」占位气泡
+        //   仍在时判为完成（假绿灯——实测曾据此报「作答成功」而尾条仍是运行中文案）。
+        //   改为额外要求占位文案已消失。
+        if (bubbles > before && busy === false && !/运行中/.test(tail)) { answered = true; break; }
     }
-    const answerText = await ev(`(function(){var d=document.querySelectorAll('#agentChat > div');return d.length?d[d.length-1].textContent:''})()`);
+    const answerText = tail;
     rec('agent 作答并渲染进对话区', answered, `bubbles ${before}→${bubbles}；尾条：${String(answerText).replace(/\s+/g, ' ').slice(0, 130)}`);
-    const toolChip = await ev(`document.querySelectorAll('#agentChat details').length`);
-    rec('工具调用轨迹折叠块出现', Number(toolChip) >= 1, `details=${toolChip}`);
+    // ★ 2026-09-21：原断言查 `#agentChat details` 已失效 —— 前端 2026-09-20 把执行记录/步骤
+    //   时间线统一渲染到「执行过程」区 `#agentRunLive`，不再写入聊天区（见 app.js:5712）。
+    //   工具轨迹现为 `#agentRunLiveTimeline .run-card`（app.js:5172 / index.html:4587）。
+    const toolSteps = await ev(`document.querySelectorAll('#agentRunLiveTimeline .run-card').length`);
+    rec('工具调用轨迹（执行过程时间线）出现', Number(toolSteps) >= 1, `run-card=${toolSteps}`);
 
     // 5) 错误收集
     const errs = await ev(`JSON.stringify(window.__errs)`);
