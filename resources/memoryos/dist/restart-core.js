@@ -66,7 +66,7 @@ let ok = false;
 while (Date.now() - t0 < 60000) {
     await new Promise((r) => setTimeout(r, 800));
     try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/summary?token=${TOKEN}`);
+        const res = await fetch(`http://127.0.0.1:${port}/api/summary`, { headers: { "x-memory-token": TOKEN } });
         if (res.ok) {
             const j = await res.json();
             console.log(`内核就绪（${Date.now() - t0}ms）：记忆 ${j.total} 条`);
@@ -81,10 +81,10 @@ if (!ok) {
     process.exit(1);
 }
 // 自检：新字段是否生效
-const all = await (await fetch(`http://127.0.0.1:${port}/api/all?limit=1&token=${TOKEN}`)).json();
+const all = await (await fetch(`http://127.0.0.1:${port}/api/all?limit=1`, { headers: { "x-memory-token": TOKEN } })).json();
 const r0 = all.rows?.[0];
 const hasAi = !!(r0 && r0.ai && r0.ai.search && r0.ai.read);
 const hasVis = !!(r0 && r0.ai_visible);
-const appjs = await (await fetch(`http://127.0.0.1:${port}/app.js?token=${TOKEN}`)).text();
+const appjs = await (await fetch(`http://127.0.0.1:${port}/app.js`, { headers: { "x-memory-token": TOKEN } })).text();
 console.log(`自检：/api/all 含 ai.* = ${hasAi}；含 ai_visible = ${hasVis}；前端含 WYSIWYG = ${appjs.includes("aiWysiwygBlock")}`);
 process.exit(hasAi && hasVis && appjs.includes("aiWysiwygBlock") ? 0 : 2);

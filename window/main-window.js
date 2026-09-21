@@ -1,5 +1,5 @@
 "use strict";
-const { BrowserWindow } = require("electron");
+const { BrowserWindow, session } = require("electron");
 
 /** 主窗口管理（自持 mainWin 与一次性配置） */
 let mainWin = null;
@@ -22,7 +22,6 @@ function createMainWindow() {
       sandbox: true,
     },
   });
-  mainWin.loadURL(`http://127.0.0.1:${cfg.port}/?token=${encodeURIComponent(cfg.TOKEN)}`);
   mainWin.once("ready-to-show", () => mainWin.show());
   mainWin.on("close", (e) => { if (!(cfg.isQuitting && cfg.isQuitting())) { e.preventDefault(); mainWin.hide(); } });
   mainWin.on("closed", () => (mainWin = null));
@@ -33,6 +32,19 @@ function createMainWindow() {
   mainWin.webContents.on("will-navigate", (e, url) => {
     if (!url.startsWith(`http://127.0.0.1:${cfg.port}/`)) e.preventDefault();
   });
+
+  /* P0-3：令牌经 session cookie 注入后再加载裸 URL —— 令牌不出现在地址栏 / 会话历史 / 请求 URL，
+     消除内核 302 剥离之前的窗口期。内核已原生支持 cookie 鉴权（dashboard.js installAccessControl，
+     与前端 app.js 依赖同源 cookie 的现状一致）。种 cookie 失败则回退旧的 ?token= 方式。 */
+  const base = `http://127.0.0.1:${cfg.port}/`;
+  if (!cfg.TOKEN) {
+    mainWin.loadURL(base);
+  } else {
+    session.defaultSession.cookies
+      .set({ url: base, name: "memoryos_token", value: cfg.TOKEN, httpOnly: true, sameSite: "strict" })
+      .then(() => { if (mainWin) mainWin.loadURL(base); })
+      .catch(() => { if (mainWin) mainWin.loadURL(`${base}?token=${encodeURIComponent(cfg.TOKEN)}`); });
+  }
 }
 
 function showMain() {
