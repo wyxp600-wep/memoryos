@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>
-<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<!-- ★ P2-perf：字体本地化 —— 移除 miaoda.feishu.cn 远程字体（离线可用 + 无外发请求）；本机已装同名 webfont 时仍优先生效，否则回落系统字体 -->
 
 <style>
 /* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */
@@ -34,9 +34,10 @@
   --radius-md: 14px;
   --radius-sm: 8px;
   --sidebar-w: 260px;
-  --font-display: 'Space Grotesk', 'Noto Sans SC', sans-serif;
-  --font-body: 'Noto Sans SC', 'Space Grotesk', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* ★ P2-perf：字体本地化 —— 系统字体回落栈（Windows 微软雅黑 / macOS 苹方） */
+  --font-display: 'Space Grotesk', 'Noto Sans SC', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
 }
 
 /* ===== Dark Theme ===== */
