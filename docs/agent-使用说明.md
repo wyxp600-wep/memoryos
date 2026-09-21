@@ -1,6 +1,6 @@
 # MemoryOS Agent 使用说明
 
-> 2026-09-15 新增。内置 agent 复用现有 MCP 工具面（18 工具），不新增任何数据通道：
+> 2026-09-15 新增。内置 agent 复用现有 MCP 工具面（26 工具；权威清单以 `cd resources/memoryos && node dist/server.js --list-tools` 为准），不新增任何数据通道：
 > 所有读写仍走 `dist/server.js` 的 MCP 工具，审计（`card_events` / `daemon_log`）与埋点（`usage`）口径不变。
 
 ## 一、两条入口，同一内核
@@ -13,7 +13,7 @@
 两者共用 `dist/agent-core.js`：
 
 - **LLM 端点可插拔**：任何 OpenAI 兼容 `/v1/chat/completions`（本地 Ollama / mimo-proxy / 云端 API 都行）
-- **MCP 客户端**：stdio 拉起 `dist/server.js`，`tools/list` → 18 工具自动转成 OpenAI tools 格式
+- **MCP 客户端**：stdio 拉起 `dist/server.js`，`tools/list` → 26 工具自动转成 OpenAI tools 格式
 - **agent 循环**：LLM ⇄ 工具；`maxSteps` 末轮强制无工具收尾（防弱模型无限调工具不收口）
 - **写门禁（writeGate）**：写类工具（`memory_write` / `memory_feedback` / `memory_cite` / `task_*` / `obsidian_*`）执行前必须过审
 
@@ -40,7 +40,7 @@ CLI 读环境变量；Dashboard 读设置页 `config.json` 的 `llmUrl/llmModel`
 | `LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI 兼容端点根（不含 `/chat/completions`） |
 | `LLM_MODEL` | `qwen3:8b` | 模型名（必须支持 tool calling） |
 | `LLM_API_KEY` | 空 | 云端 API 用；**不落盘**（与 P-4171 一致，config.json 永不含明文密钥） |
-| `LLM_NUM_CTX` | Ollama 端点自动 8192 | 上下文窗口；18 个工具 schema 就占 2~3k token，4096 会不够 |
+| `LLM_NUM_CTX` | Ollama 端点自动 8192 | 上下文窗口；26 个工具 schema 占用数 k token，4096 会不够 |
 | `LLM_TIMEOUT_MS` | 180000 | 单次 LLM 调用超时 |
 | `MEMORY_AGENT` | CLI=`cli-agent`，Dashboard=`dashboard-agent` | 写库时的 agent 身份（价值漏斗按此归属） |
 | `MEMORY_AGENT_FPATH` | 自身文件路径 | 身份指纹（库内可佐证来源） |
@@ -61,7 +61,7 @@ node dist/agent.js -m "任务前先查下备份策略的记忆"      # 单问
 node dist/agent.js --work -p memoryos               # 任务队列：认领 1 条可做任务 → 干活 → task_done
 node dist/agent.js --work -p memoryos --resume       # 续做自己已认领但未结项的 in_progress 任务
 node dist/agent.js --work --loop --every 60          # 持续轮询（无任务时退出；加 --wait 一直等）
-node dist/agent.js --tools                           # 只列 18 个工具
+node dist/agent.js --tools                           # 只列 26 个工具
 node dist/agent.js --help
 ```
 
@@ -104,7 +104,7 @@ REPL 内命令：`/tools` 列工具、`/clear` 清上下文、`/quit` 退出。
 ## 五、验证与回归
 
 ```powershell
-node dist/smoke-agent.js          # LLM 工具调用 + MCP 18 工具 + 只读单轮
+node dist/smoke-agent.js          # LLM 工具调用 + MCP 26 工具 + 只读单轮
 node dist/smoke-dashboard.js      # dashboard 既有路由回归（agent 端点不影响老路由）
 node outputs/agent-ui-walk.mjs    # 真实 Chrome headless 点击巡检 Agent 页（需 dashboard 在 8787 跑着）
 ```
