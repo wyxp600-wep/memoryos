@@ -84,7 +84,7 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 | 命令 | 作用 |
 |---|---|
 | `npm test` | 聚合冒烟（`dist/smoke-all.js`，**自动发现** 24 项 `smoke-*.js`；缺环境项记 SKIP 不记 FAIL） |
-| `npm run lint` | 语法检查（`node --check`，**白名单式**显式列举 —— 新增文件需手动入列，否则不受覆盖） |
+| `npm run lint` | 语法检查（`dist/lint-syntax.js` **自动枚举** `dist/*.js` 逐一 `node --check` —— 新文件不需入列即受覆盖；2026-09-22 由白名单式改为全覆盖） |
 | `npm run lint:sql` | SQL 占位符/实参数量体检（含自测） |
 | `npm run lint:silent` | 静默 catch 体检（含自测） |
 | `npm run snapshot:check` | 路由快照逐项比对 |
@@ -92,6 +92,7 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 | `npm audit --registry=https://registry.npmjs.org` | **依赖**漏洞扫描。须显式指定官方 registry —— npmmirror 未实现安全公告端点，直接 `npm audit` 会报 `NOT_IMPLEMENTED` |
 | `npm run ui:walk` | **手动**：Agent 页 CDP 真实浏览器点击巡检（需 Chrome + dashboard 在跑 + 可用 LLM） |
 | `npm run ui:walk:settings` | **手动**：设置页 LLM 配置走查（自起内核于 8792，用临时 data 目录） |
+| `npm run ui:walk:a11y` | **手动**：看板可访问性（a11y）DOM 级体检 —— 19 个路由全扫，检查键盘可达 / 可访问名 / landmark / aria-live / 表单标签 / reduced-motion；基线落 `outputs/a11y-baseline-<日期>.json` |
 | `npm start` | 单独起 dashboard |
 
 > **依赖锁定**：`package-lock.json`（lockfileVersion 3）由 `node_modules/.package-lock.json` 提升生成，与已装树逐项一致。

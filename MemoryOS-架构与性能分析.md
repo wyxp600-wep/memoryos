@@ -42,7 +42,7 @@
 | 前端 | `index.html`(175KB)+`app.js`(272KB)+`echarts.min.js` | 仪表盘/图谱/看板 | 零构建单页，~84 处 `fetch('/api/…')` |
 | REST 内核 | `dist/dashboard.js`(2.4K 行) | Fastify，13+ 写路由 | **受限模式**：前端隐藏入口仅为呈现，API 层 403 真拦截 |
 | 治理守护 | `dist/daemon.js` | 小时级衰减/归档/去重/备份/检查点 | `--once --dry-run` 事务回滚预演 |
-| MCP | `dist/server.js` | FastMCP stdio，17 工具 | 工具级 try/catch 包装，锁竞争返回结构化提示 |
+| MCP | `dist/server.js` + `dist/server-reg-*.js` | FastMCP stdio，**26 个常驻工具**（另 3 个执行面默认关闭） | 内核 + 共享层；工具按域拆到 `server-reg-{memory,obsidian,task}.js`（2026-09-22，原 2000 行单文件）；工具级 try/catch 包装，锁竞争返回结构化提示 |
 
 ### 1.3 性能/优化要点
 
