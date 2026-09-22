@@ -18,7 +18,7 @@
     "ui:walk:settings": "node outputs/settings-ui-walk.mjs",
     "lint:sql": "node dist/lint-sql-arity.js --self-test && node dist/lint-sql-arity.js",
     "lint:silent": "node dist/lint-silent-catch.js --self-test && node dist/lint-silent-catch.js",
-    "lint": "node --check dist/server.js && node --check dist/exec-tools.js && node --check dist/agent-core.js && node --check dist/agent.js && node --check dist/db.js && node --check dist/smoke-all.js && node --check dist/smoke-exec.js && node --check dist/smoke-t12.js && node --check dist/smoke-macp.js && node --check dist/snapshot-routes.js && node --check dist/audit-probe.js && node --check dist/dashboard.js && node --check dist/dashboard-reg-core.js && node --check dist/dashboard-reg-memory.js && node --check dist/dashboard-reg-plans.js && node --check dist/dashboard-reg-ingest.js && node --check dist/dashboard-reg-desktop.js && node --check dist/dashboard-reg-static.js && node --check dist/dashboard-reg-cards.js && node --check dist/dashboard-reg-knowledge.js && node --check dist/dashboard-task-util.js && node --check dist/reconcile.js && node --check dist/smoke-p26-lifecycle.js && node --check dist/agent-stream.js && node --check dist/smoke-agent.js",
+    "lint": "node dist/lint-syntax.js",
     "start": "node dist/server.js",
     "obsidian:import": "node dist/obsidian-sync.js import",
     "obsidian:export": "node dist/obsidian-sync.js export",
