@@ -121,6 +121,13 @@ try {
     const tools = (await send("tools/list", {})).result?.tools ?? [];
     check("tools/list 含执行面三工具", ["file_read", "file_write", "exec_run"].every((n) => tools.some((t) => t.name === n)), `count=${tools.length}`);
     check("执行工具都带风险前缀", tools.filter((t) => ["file_read", "file_write", "exec_run"].includes(t.name)).every((t) => parseRiskPrefix(t.description) !== null));
+    // ★ 2026-09-22 批次③：全量工具 100% 带风险前缀（riskPrefix 未知工具 fail-closed 兜底的验收）
+    const noPrefix = tools.filter((t) => parseRiskPrefix(t.description) === null).map((t) => t.name);
+    check("tools/list 全量工具都带风险前缀（fail-closed 注入端兜底）", tools.length > 0 && noPrefix.length === 0, `count=${tools.length} 缺前缀=[${noPrefix.join(", ")}]`);
+    const l4 = tools.filter((t) => parseRiskPrefix(t.description)?.risk === "L4").map((t) => t.name);
+    check("memory_credential 分级 L4/required", l4.includes("memory_credential"), `L4=[${l4.join(", ")}]`);
+    const hb = tools.find((t) => t.name === "task_heartbeat");
+    check("task_heartbeat 分级 L0/auto（无人值守续期放行）", !!hb && parseRiskPrefix(hb.description)?.gate === false);
 
     fs.mkdirSync(path.join(WS, "sub"), { recursive: true });
     fs.writeFileSync(path.join(WS, "sub", "a.txt"), "第一行\n第二行\n第三行\n", "utf8");

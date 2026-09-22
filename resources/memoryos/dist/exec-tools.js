@@ -2,7 +2,7 @@
  * MemoryOS — 执行工具面（P0）
  * 内容：file_read（L0 只读） / file_write（L1 必审 + 改前自动备份） / exec_run（L1 必审 + 参数数组执行 + cwd 白名单 + 超时杀进程树）
  * 设计要点（对应 docs/agent-completion/FINAL-补全方案.md）：
- *  ① TOOL_RISK 是**全部 21 个工具**的风险级/审批策略单一真相源 —— 修 F1（原先 agent-core.js:15-19 硬编码 WRITE_TOOLS）。
+ *  ① TOOL_RISK 是**全部工具**（口径以 `Object.keys(TOOL_RISK)` / `node dist/smoke-toolrisk.mjs` 为准）的风险级/审批策略单一真相源 —— 修 F1（原先 agent-core.js:15-19 硬编码 WRITE_TOOLS）。
  *     server.js 在 addTool 覆写处把 `⟨risk:Lx|gate:required|auto⟩` 前缀注入工具描述；
  *     agent-core 从 tools/list 解析该前缀决定是否过 writeGate，**解析不到一律按需审批（fail-closed）**。
  *  ② 输出预算：stdout/stderr 各留 head 50 行 + tail 50 行，超限全文落 data/artifacts/ 并回传路径（修 F3 只保头部丢尾部）。
@@ -20,7 +20,7 @@ import { z } from "zod";
    L0 只读无副作用 / L1 工作区内变异 / L2 工作区外变异 / L3 网络 / L4 特权
    gate:true = 必须过 writeGate 审批；false = 自动放行                          */
 export const TOOL_RISK = {
-    // — 记忆域（既有 10）—
+    // — 记忆域 —
     memory_search: { risk: "L0", gate: false },
     memory_read: { risk: "L0", gate: false },
     memory_ask: { risk: "L0", gate: false },
@@ -31,17 +31,25 @@ export const TOOL_RISK = {
     memory_write: { risk: "L1", gate: true },
     memory_feedback: { risk: "L1", gate: true },
     memory_cite: { risk: "L1", gate: true },
-    // — Obsidian 域（既有 3）—
+    memory_credential: { risk: "L4", gate: true },   // ★ 2026-09-22 补缺：凭据签发/撤销/查询 = 特权操作
+    // — Obsidian 域 —
     obsidian_import: { risk: "L1", gate: true },
     obsidian_export: { risk: "L1", gate: true },
     obsidian_write_note: { risk: "L1", gate: true },
-    // — 任务域（既有 5）—
+    // — 任务域 —
     task_next: { risk: "L0", gate: false },
     task_assign: { risk: "L1", gate: true },
     task_claim: { risk: "L1", gate: true },
     task_done: { risk: "L1", gate: true },
     task_supersede: { risk: "L1", gate: true },
-    // — 执行域（P0 新增 3）—
+    task_gate: { risk: "L1", gate: true },           // ★ 2026-09-22 补缺（方案 A 实用分级）
+    task_delegate: { risk: "L1", gate: true },
+    task_block: { risk: "L1", gate: true },
+    task_reopen: { risk: "L1", gate: true },
+    task_verify: { risk: "L1", gate: true },
+    task_heartbeat: { risk: "L0", gate: false },     // 纯续期心跳，无人值守必需，自动放行
+    task_release: { risk: "L1", gate: true },        // 归还锁/租约；无头预授权见 HEADLESS_PREAUTHORIZED
+    // — 执行域（P0 新增）—
     file_read: { risk: "L0", gate: false },
     file_write: { risk: "L1", gate: true },
     exec_run: { risk: "L1", gate: true },
@@ -49,16 +57,21 @@ export const TOOL_RISK = {
 
 /** 无头（--work / --auto-write）模式的预授权白名单 —— 用户决策「方案 c」：
  *  仅 task_* 与 memory_* 预授权，**执行类 L1（file_write/exec_run 等）仍然拒绝**。
- *  注：obsidian_* 不在预授权内 —— 它们会写工作区外的 vault，无头模式下同样需要显式同意。 */
+ *  注：obsidian_* 不在预授权内 —— 它们会写工作区外的 vault，无头模式下同样需要显式同意。
+ *  ★ 2026-09-22（方案 A）：补 task_release —— 无头模式不归还锁/租约会泄漏资源；
+ *    task_gate/delegate/block/reopen/verify 与 memory_credential **不在**预授权内（状态流转/特权仍需人）。 */
 export const HEADLESS_PREAUTHORIZED = new Set([
-    "task_assign", "task_claim", "task_done", "task_supersede",
+    "task_assign", "task_claim", "task_done", "task_supersede", "task_release",
     "memory_write", "memory_feedback", "memory_cite",
 ]);
 
-/** 描述前缀（agent-core 解析用）；未知工具解析不到 → fail-closed 需审批 */
+/** 描述前缀（agent-core 解析用）。★ 2026-09-22 fail-closed 兜底（用户拍板「server 注入端兜底」）：
+ *  未知工具（不在 TOOL_RISK）返回 L4/required —— 注入端保证 tools/list 上 100% 工具带前缀，
+ *  新增工具漏登记只会「多审批」，绝不会静默放行；agent-core 的 LEGACY_WRITE_TOOLS 回落
+ *  仅服务真正未打前缀的旧 server（本端不再产生无前缀工具）。 */
 export function riskPrefix(name) {
     const m = TOOL_RISK[name];
-    if (!m) return "";
+    if (!m) return "⟨risk:L4|gate:required⟩ ";
     return `⟨risk:${m.risk}|gate:${m.gate ? "required" : "auto"}⟩ `;
 }
 

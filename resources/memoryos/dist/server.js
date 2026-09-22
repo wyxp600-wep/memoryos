@@ -1,9 +1,9 @@
 /**
  * MemoryOS v0.2 — MCP Server（fastmcp v3 / FastMCP）
  * Tools: memory_write（embed + 去重/冲突预检） / memory_search（混合检索 RRF）
- * ★ P2-④（2026-09-22）：26 个常驻工具按域拆分到 server-reg-memory.js / -obsidian.js / -task.js；
+ * ★ P2-④（2026-09-22）：常驻工具按域拆分到 server-reg-memory.js / -obsidian.js / -task.js（数量以 `--list-tools` 为准，勿手抄）；
  *   本文件保留内核（FastMCP 实例 + addTool 覆写 + 共享层）、执行面注册与 CLI 入口。
- *   注册顺序不变：memory(11) → obsidian(3) → task(12)；`node dist/server.js --list-tools` 逐字节可证。
+ *   注册顺序不变：memory → obsidian → task；`node dist/server.js --list-tools` 逐字节可证（数量勿手抄）。
  * 启动：stdio（默认 transport），node dist/server.js
  */
 import { FastMCP } from "fastmcp";
@@ -43,7 +43,7 @@ const server = new FastMCP({
 
 /**
  * 工具级错误兜底（P0-2.1）。
- * 现状：本覆写层覆盖 server-reg-*.js 注册的全部工具（26 个常驻），注册点仅 9 处 try/catch —— 未捕获异常会以原始堆栈
+ * 现状：本覆写层覆盖 server-reg-*.js 注册的全部工具（常驻清单以 `--list-tools` 为准），注册点仅 9 处 try/catch —— 未捕获异常会以原始堆栈
  * 形式抛给 MCP 客户端，用户看到的是内部实现细节；涉及嵌入计算 / LLM 调用 / 文件 IO
  * 的工具异常面尤其大。
  * 本包装保证：任何工具异常都被转为结构化文本结果 + stderr 留痕，绝不抛裸异常。
@@ -59,7 +59,8 @@ const _origAddTool = server.addTool.bind(server);
 server.addTool = (def) => {
     REGISTERED_TOOLS.push(def.name);
     // ★ P0 执行面（修 F1）：把风险级/审批策略前缀注入工具描述 —— 单一真相源在 exec-tools.js 的 TOOL_RISK。
-    //   agent-core 从 tools/list 解析该前缀决定是否过 writeGate；解析不到则 fail-closed（一律需审批）。
+    //   ★ 2026-09-22 fail-closed 兜底：riskPrefix 对不在 TOOL_RISK 的未知工具返回 L4/required（不再返回空串），
+    //     故本端注册的每个工具 100% 带前缀；agent-core 解析前缀决定是否过 writeGate，漏登记只会多审批、不会静默放行。
     const _pfx = riskPrefix(def.name);
     if (_pfx && !String(def.description || "").startsWith("⟨risk:")) {
         def.description = _pfx + (def.description || "");
@@ -127,7 +128,7 @@ function runTaskTx(db, fn) {
 }
 
 /* ── 工具注册：调用顺序 = REGISTERED_TOOLS 顺序，等价于原文件声明顺序；勿调整 ──
- *   memory(11) → obsidian(3) → task(12)；执行面（file_read/file_write/exec_run）在其后按需追加。 */
+ *   memory → obsidian → task；执行面（file_read/file_write/exec_run）在其后按需追加。 */
 const ctx = { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, runTaskTx, isCredentialValid, nowIso, plusHoursIso };
 registerMemoryTools(server, ctx);
 registerObsidianTools(server, ctx);
