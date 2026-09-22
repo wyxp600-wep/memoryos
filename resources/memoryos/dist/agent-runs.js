@@ -199,6 +199,12 @@ export function createRunRegistry() {
                 case "write_denied":
                     ev(run, "write_denied", { tool: s.tool, argsPreview: JSON.stringify(s.args ?? {}).slice(0, PREVIEW_MAX) });
                     break;
+                // ★ 批次①（2026-09-23）：流式文字增量 —— 走同一环形队列（MAX_EVENTS=500 内天然被
+                //   Last-Event-ID 回补覆盖，SSE 协议零改动）。delta 逐 token 推送量大，事件仍受
+                //   环形容量约束；reset=true 表示本轮出现 tool_calls，前端丢弃已渲试渲文字。
+                case "answer_delta":
+                    ev(run, "answer_delta", { delta: s.delta ?? "", reset: !!s.reset });
+                    break;
                 case "answer":
                     run.answer = s.answer;
                     run.llmSteps = s.steps ?? run.llmSteps;

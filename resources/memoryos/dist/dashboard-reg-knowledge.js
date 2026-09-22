@@ -141,6 +141,7 @@ export function registerKnowledge(app, ctx) {
                 signal: handle.run.abortCtrl.signal,
                 cache: tuning.llmCache,                  // ★ 驾驶舱「缓存」：同历史轮次命中 LLM 响应缓存
                 budgetTokens: tuning.tokenBudget,        // ★ 驾驶舱「预算上限」：超预算即中止本 run
+                stream: true,                            // ★ 批次①（2026-09-23）：各轮流式 answer_delta；cacheOn 时 runAgent 内自动降级非流式（互斥）
             });
             handle.finish("done", { answer: r.answer, usage: r.usage, estimatedTokens: r.estimatedTokens, cache: r.cache || null });
             // 会话持久化：把本轮 user/assistant 追加进 agent_sessions（写入方截断纪律）

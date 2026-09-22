@@ -2907,6 +2907,16 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
   .run-card-thinking::before { content: '💭 '; }
 
+  /* ===== 流式打字机（★ 批次①/④ 2026-09-23，pi renderer .stream-caret 模式） ===== */
+  .run-card.streaming { border-color: color-mix(in srgb, var(--accent-cyan, #22d3ee) 45%, transparent); }
+  .stream-caret {
+    display: inline-block; width: 7px; height: 13px; margin-left: 2px;
+    background: var(--accent-cyan, #22d3ee); vertical-align: -2px;
+    animation: streamCaretBlink .9s step-end infinite;
+  }
+  @keyframes streamCaretBlink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .stream-caret { animation: none; } }
+
   /* ===== 命令面板 ===== */
   .command-palette-modal {
     background: var(--bg-elevated) !important;
@@ -3353,6 +3363,16 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .run-card-empty { text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
   .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
   .run-card-thinking::before { content: '💭 '; }
+
+  /* ===== 流式打字机（★ 批次①/④ 2026-09-23，执行中心页同款） ===== */
+  .run-card.streaming { border-color: color-mix(in srgb, var(--accent-cyan, #22d3ee) 45%, transparent); }
+  .stream-caret {
+    display: inline-block; width: 7px; height: 13px; margin-left: 2px;
+    background: var(--accent-cyan, #22d3ee); vertical-align: -2px;
+    animation: streamCaretBlink .9s step-end infinite;
+  }
+  @keyframes streamCaretBlink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .stream-caret { animation: none; } }
 
   /* ===== 命令面板 ===== */
   .cmd-palette-overlay {

@@ -7,10 +7,11 @@
  *  - usage：流尾 chunk 若带 usage 则透传，否则 null（与 callLlm 口径一致）
  * 流式请求不走 LLM 响应缓存（缓存与流式互斥，缓存命中直接回放无增量）。
  * ★ 2026-09-19：本文件曾中途截断（并行会话遗留，语法错误）；已按上述原契约补全
- *   SSE data 解析 / delta 累积 / usage 透传 / 返回 { msg, usage }。尚未接线（opt-in）。
+ *   SSE data 解析 / delta 累积 / usage 透传 / 返回 { msg, usage }。
+ * ★ 2026-09-23 批次①接线：agent-core.runAgent 的 streamOn 路径（o.stream===true 且未开缓存）
+ *   各轮调用本函数；tools 参数与 callLlm 同义（非末轮传工具面，末轮传 null 强制文本收尾）。
  */
-
-export async function callLlmStream(cfg, messages, onDelta, signal) {
+export async function callLlmStream(cfg, messages, onDelta, signal, tools = null) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), (Number(cfg.timeoutMs) > 0 ? Number(cfg.timeoutMs) : 180000) * 3);
     let content = "";
@@ -18,6 +19,10 @@ export async function callLlmStream(cfg, messages, onDelta, signal) {
     let usage = null;
     const body = { model: cfg.model, messages, temperature: cfg.temperature, max_tokens: cfg.maxTokens, stream: true };
     if (cfg.numCtx) body.options = { num_ctx: cfg.numCtx };
+    if (tools && tools.length) {
+        body.tools = tools;
+        body.tool_choice = "auto";
+    }
     try {
         const res = await fetch(cfg.baseUrl + "/chat/completions", {
             method: "POST",

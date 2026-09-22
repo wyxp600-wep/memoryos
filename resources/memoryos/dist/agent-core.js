@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import crypto from "node:crypto";
+import { callLlmStream } from "./agent-stream.js";
 
 /* ── 写类工具门禁（修 F1：改为「工具自声明」驱动，不再硬编码名单）──────
  *  风险前缀由 server.js 在注册期注入工具描述（单一真相源 = exec-tools.js 的 TOOL_RISK）：
@@ -153,8 +154,10 @@ export async function callLlm(cfg, messages, tools, signal, cacheOn = false) {
  * DSH packages/core/agent-loop：瞬时错误可 retry、末轮流式、steer/inject 边界注入。
  * ★ 2026-09-19 事实校准（原注释宣称「本处落地三项」与代码不符）：
  *  - isTransientLlmError / withLlmRetry：✅ 已落地（本文件下方）——瞬时错误（网络/5xx/限流）退避重试，确定性错误立即失败。
- *  - callLlmStream：❌ 不在本文件——实现在 dist/agent-stream.js（独立 opt-in 模块，尚未接线到
- *    runAgent/agent-runs；OpenAI 兼容 SSE 流式，返回契约与 callLlm 一致 { msg, usage }，可与 withLlmRetry 互换）。
+ *  - callLlmStream：✅ 已接线（2026-09-23 批次①）——runAgent 的 streamOn 路径各轮流式调用
+ *    dist/agent-stream.js 的 callLlmStream；增量经 onStep({type:'answer_delta'}) 上抛，
+ *    该轮出现 tool_calls 即补发 reset（试渲文字丢弃，事件契约 answer 不变）；与 LLM 缓存互斥
+ *    （缓存命中直接回放、无增量可推 → cacheOn 时自动降级非流式）。
  *  - drainInjections：❌ 未实现——仅为计划项（runAgent 轮边界吸收运行中注入的用户消息，steer-lite），
  *    全仓无任何实现。接线时请同步更新本注释。 */
 const TRANSIENT_LLM_RE = /(ECONNREFUSED|ECONNRESET|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|EPIPE|ECONNABORTED|socket hang up|fetch failed|LLM HTTP 5\d\d|LLM HTTP 429|overloaded|rate.?limit|too many requests|timed? ?out)/i;
@@ -287,7 +290,8 @@ export function pickTools(allTools, filter) {
  * @param {object} o.mcp       createMcpClient() 结果
  * @param {Array}  o.messages  对话（会被原地追加；调用方负责 system/user 起步）
  * @param {number} [o.maxSteps] 最大 LLM 轮次（默认 12）
- * @param {fn}    [o.onStep]   进度回调 {type:'llm'|'tool_call'|'tool_result'|'tool_repeat'|'answer'|'write_denied'|'max_steps', ...}
+ * @param {fn}    [o.onStep]   进度回调 {type:'llm'|'answer_delta'|'tool_call'|'tool_result'|'tool_repeat'|'answer'|'write_denied'|'max_steps', ...}
+ *                   answer_delta：流式文字增量 {delta} 或试渲丢弃指令 {reset:true}（★ 批次①）
  * @param {fn}    [o.writeGate] (toolName, args) → Promise<boolean>；写类工具门禁。默认交互式 y/N 由 CLI 提供；无头默认全拒。
  * @param {string[]} [o.toolsFilter] 只暴露这些工具（最小权限：如收尾阶段只给 task_done）
  * @param {AbortSignal} [o.signal]
@@ -308,7 +312,8 @@ export async function runAgent(o) {
     let cacheHits = 0;   // ★ 驾驶舱「缓存」命中计数（随 answer 事件回报）
     // ★ DSH 参考三项（均有界/opt-in，默认不改变既有行为）：
     const retryN = o.retry ?? 2;                       // 瞬时 LLM 错误重试次数（0=关闭）
-    const streamOn = o.stream === true;                 // 末轮/各轮流式（answer_delta 增量）
+    const streamOn = o.stream === true;                 // 各轮流式（answer_delta 增量；★ 批次① 已接线）
+    const useStream = streamOn && !cacheOn;             // ★ 与缓存互斥：缓存开启 → 降级非流式（回放无增量）
     const rawTools = await mcp.tools();
     const gateByName = new Map(rawTools.map((t) => [t.name, needsGate(t)]));
     // ★ DSH 参考（tool-calls.ts 有界并行池）：并行安全判定用工具自声明风险级——
@@ -327,7 +332,18 @@ export async function runAgent(o) {
         if (signal?.aborted) throw new Error("aborted");
         // 末轮：不再给工具，强制模型基于已有结果出文本收尾（弱模型常无限调工具不收口）
         const last = steps + 1 >= maxSteps;
-        const r = await callLlm(llm, messages, last ? [] : tools, signal, cacheOn);
+        const roundTools = last ? [] : tools;
+        let r;
+        if (useStream) {
+            // ★ 批次①：每轮流式。文字增量以 answer_delta 推给呈现层；若本轮以 tool_calls 收尾，
+            //   已推文字只是「模型先说后调」的试渲 → 补发 reset 让呈现层丢弃，避免与工具卡错序。
+            r = await callLlmStream(llm, messages, (delta) => onStep({ type: "answer_delta", delta }), signal, roundTools);
+            if (r.msg && Array.isArray(r.msg.tool_calls) && r.msg.tool_calls.length)
+                onStep({ type: "answer_delta", reset: true });
+        }
+        else {
+            r = await callLlm(llm, messages, roundTools, signal, cacheOn);
+        }
         const msg = r.msg, u = r.usage;
         if (r.cached) cacheHits += 1;
         if (u) {

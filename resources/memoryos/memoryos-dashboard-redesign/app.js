@@ -5029,9 +5029,67 @@
   /* ★ 执行中心内联时间线（agent 页一体化）：发送即 SSE 实时渲染，点步骤展开终端/diff/产物。
      数据源：POST /api/agent/runs（立即回 runId）+ SSE /stream；步骤详情复用 /api/agent/runs/:id。 */
   let _agentRunLiveEs = null, _agentRunLivePoll = null, _agentRunLiveId = null, _agentRunLiveSteps = [], _agentRunLiveTimer = null, _agentRunLiveSeconds = 0;
+  /* ★ 批次①/④（2026-09-23）：流式打字机状态（pi renderer 模式）——
+     _agentStreamBuf 累积 answer_delta 文本；30ms 节流重绘；chars/4 徽标 300ms 更新；
+     _agentRunLiveExpanded 折叠持久（stepId 集合，重渲后恢复展开，LRU 上限 200）；
+     _agentRunLiveDetailHtml 缓存已拉取的详情 HTML（展开态跨重渲不丢）。 */
+  let _agentStreamBuf = '', _agentStreamTimer = null, _agentStreamBadgeAt = 0;
+  const _agentRunLiveExpanded = new Set();
+  const _agentRunLiveDetailHtml = new Map();
+  function _agentStreamClear() {
+    _agentStreamBuf = '';
+    if (_agentStreamTimer) { clearTimeout(_agentStreamTimer); _agentStreamTimer = null; }
+    _agentStreamRender();
+  }
+  function _agentStreamDelta(d) {
+    if (d && d.reset) { _agentStreamClear(); return; }   // 本轮出现 tool_calls → 丢弃试渲文字
+    _agentStreamBuf += String(d?.delta || '');
+    if (_agentStreamTimer) return;
+    _agentStreamTimer = setTimeout(() => { _agentStreamTimer = null; _agentStreamRender(); }, 30); // 30ms 节流
+  }
+  /** 打字机卡片：只更新自身节点（不整表重渲），带 .stream-caret 光标 + chars/4 token 徽标（300ms） */
+  function _agentStreamRender() {
+    const tl = $('#agentRunLiveTimeline');
+    if (!tl) return;
+    let card = document.getElementById('agentStreamCard');
+    if (!_agentStreamBuf) { if (card) card.remove(); _agentRunLiveBadge(); return; }
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'agentStreamCard';
+      card.className = 'run-card streaming';
+      card.innerHTML = '<div class="run-card-header"><span class="run-card-type tool">作答</span><span class="run-card-title">生成中</span><span class="run-card-state pending" id="agentStreamBadge"></span></div><div class="run-card-body"><pre id="agentStreamText" style="white-space:pre-wrap;word-break:break-word;margin:0"></pre></div>';
+      tl.appendChild(card);
+    }
+    const pre = card.querySelector('#agentStreamText');
+    if (pre) {
+      pre.textContent = _agentStreamBuf;
+      const caret = document.createElement('span');
+      caret.className = 'stream-caret';
+      pre.appendChild(caret);
+    }
+    const now = Date.now();
+    if (now - _agentStreamBadgeAt > 300) {   // chars/4 估算徽标 300ms 节流
+      _agentStreamBadgeAt = now;
+      const b = card.querySelector('#agentStreamBadge');
+      if (b) b.textContent = '~' + Math.ceil(_agentStreamBuf.length / 4) + ' tok';
+    }
+    tl.scrollTop = tl.scrollHeight;
+    _agentRunLiveBadge();
+  }
+  /** 状态徽标：有进行中工具 → 工具运行中(n)；流式生成中 → 等待模型…（均无则不动 meta 既有文案） */
+  function _agentRunLiveBadge() {
+    const meta = $('#agentRunLiveMeta');
+    if (!meta) return;
+    const pending = _agentRunLiveSteps.filter(s => s.state === 'pending').length;
+    if (pending > 0) meta.textContent = '⏳ 工具运行中(' + pending + ')';
+    else if (_agentStreamBuf) meta.textContent = '✍ 等待模型…';
+  }
   function _agentRunLiveStart(runId) {
     _agentRunLiveId = runId;
     _agentRunLiveSteps = [];
+    _agentStreamClear();
+    _agentRunLiveExpanded.clear();
+    _agentRunLiveDetailHtml.clear();
     const wrap = $('#agentRunLive');
     if (wrap) wrap.style.display = 'block';
     const tl = $('#agentRunLiveTimeline');
@@ -5057,43 +5115,52 @@
     _agentRunLiveTimer = setInterval(() => {
       _agentRunLiveSeconds++;
       if (timerEl) timerEl.textContent = _agentRunLiveSeconds + 's';
+      // ★ 秒表：有进行中步骤时每秒重渲（run-card-state 实时 ++.s）
+      if (_agentRunLiveSteps.some(s => s.state === 'pending' && s.t0)) _agentRunLiveRender();
       // 30秒无步骤显示提示
       if (_agentRunLiveSeconds >= 30 && !_agentRunLiveSteps.length && warnEl) {
         warnEl.style.display = 'block';
       }
     }, 1000);
     const on = (type, d) => {
-      if (type === 'thinking' || type === 'reasoning') {
-        const card = { stepId: 'think-' + Date.now(), type: 'thinking', content: d.content || d.text || '', state: 'ok', tool: '思考' };
-        _agentRunLiveSteps.push(card);
-        _agentRunLiveRender();
-      } else if (type === 'context') {
-        const card = { stepId: 'ctx-' + Date.now(), type: 'context', content: d.content || d.systemPrompt || '', state: 'ok', tool: '上下文注入' };
-        _agentRunLiveSteps.push(card);
-        _agentRunLiveRender();
-      } else if (type === 'step') {
+      // ★ 批次①/④（2026-09-23）：删除幻影监听分支（thinking/reasoning/context —— 后端从不发这三种
+      //   事件，属死代码）；补齐后端实发的 started/tool_repeat/max_steps；write_denied 判空 meta。
+      if (type === 'step') {
         const st = _agentRunLiveSteps.find(x => x.stepId === d.stepId) || { stepId: d.stepId, tool: d.tool, argsPreview: d.argsPreview, state: 'pending' };
-        st.state = 'pending'; st.argsPreview = d.argsPreview || st.argsPreview; st.tool = d.tool;
+        st.state = 'pending'; st.argsPreview = d.argsPreview || st.argsPreview; st.tool = d.tool; st.t0 = Date.now();
         if (!_agentRunLiveSteps.includes(st)) _agentRunLiveSteps.push(st);
+        _agentRunLiveBadge();
         _agentRunLiveRender();
       } else if (type === 'step_end') {
         const st = _agentRunLiveSteps.find(x => x.stepId === d.stepId);
-        if (st) { st.state = d.ok ? 'ok' : 'error'; st.elapsedMs = d.elapsedMs; st.preview = d.preview || ''; st.outChars = d.outChars; st.hasDiff = d.hasDiff; st.artifactPath = d.artifactPath; }
+        if (st) { st.state = d.ok ? 'ok' : 'error'; st.elapsedMs = d.elapsedMs; st.preview = d.preview || ''; st.outChars = d.outChars; st.hasDiff = d.hasDiff; st.artifactPath = d.artifactPath; st.t0 = null; }
+        _agentRunLiveBadge();
         _agentRunLiveRender();
+      } else if (type === 'started') {
+        if (meta) meta.textContent = '▶ ' + (d.note || '已开始运行');
+      } else if (type === 'tool_repeat') {
+        _agentRunLiveSteps.push({ stepId: 'rep-' + Date.now(), tool: '重复调用拦截', state: 'ok', preview: (d.tool || '') + (d.count ? ` 相同参数第 ${d.count} 次，已跳过执行` : ' ' + (d.note || '')) });
+        _agentRunLiveRender();
+      } else if (type === 'max_steps') {
+        if (meta) meta.textContent = '⚠ ' + (d.note || '达到最大步数，已强制收尾');
       } else if (type === 'write_denied') {
-        _agentRunLiveMeta.textContent = '✋ 有写操作被拦截（未勾选「允许写入」或受限模式）';
+        if (meta) meta.textContent = '✋ 有写操作被拦截（未勾选「允许写入」或受限模式）';
+      } else if (type === 'answer_delta') {
+        _agentStreamDelta(d);
       } else if (type === 'answer') {
+        _agentStreamClear();
         // 终态：拉全量补 diff 字段，再收 SSE
         fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).then(j => {
-          if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); _agentRunLiveMeta.textContent = j.status + ' · ' + (j.toolCalls || 0) + ' 工具 · ' + (((j.finishedAt - j.startedAt) / 1000).toFixed(1)) + 's'; }
+          if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); if (meta) meta.textContent = j.status + ' · ' + (j.toolCalls || 0) + ' 工具 · ' + (((j.finishedAt - j.startedAt) / 1000).toFixed(1)) + 's'; }
           _agentRunLiveStop();
         }).catch(() => _agentRunLiveStop());
       } else if (type === 'done') {
+        _agentStreamClear();
         _agentRunLiveStop();
       }
     };
     _agentRunLiveEs = new EventSource('/api/agent/runs/' + encodeURIComponent(runId) + '/stream');
-    ['step', 'step_end', 'thinking', 'reasoning', 'context', 'write_denied', 'answer', 'done'].forEach(ev => _agentRunLiveEs.addEventListener(ev, e => { try { on(ev, JSON.parse(e.data)); } catch {} }));
+    ['step', 'step_end', 'started', 'tool_repeat', 'max_steps', 'write_denied', 'answer_delta', 'answer', 'done'].forEach(ev => _agentRunLiveEs.addEventListener(ev, e => { try { on(ev, JSON.parse(e.data)); } catch {} }));
     _agentRunLiveEs.onerror = () => {
       // 降级轮询（2s）
       if (_agentRunLivePoll) return;
@@ -5107,35 +5174,35 @@
     if (_agentRunLiveEs) { _agentRunLiveEs.close(); _agentRunLiveEs = null; }
     if (_agentRunLivePoll) { clearInterval(_agentRunLivePoll); _agentRunLivePoll = null; }
     if (_agentRunLiveTimer) { clearInterval(_agentRunLiveTimer); _agentRunLiveTimer = null; }
+    _agentStreamClear();
   }
   function _agentRunLiveRender() {
     const tl = $('#agentRunLiveTimeline');
     if (!tl) return;
     tl.innerHTML = '';
-    if (!_agentRunLiveSteps.length) { tl.innerHTML = '<div class="run-card-empty">agent 运行中，执行过程将实时显示在这里…</div>'; return; }
+    if (!_agentRunLiveSteps.length && !_agentStreamBuf) { tl.innerHTML = '<div class="run-card-empty">agent 运行中，执行过程将实时显示在这里…</div>'; return; }
     for (const s of _agentRunLiveSteps) {
       const card = document.createElement('div');
       card.className = 'run-card';
+      card.dataset.stepId = String(s.stepId);
       // 判断类型
       let cardType = 'tool';
       if (s.type === 'thinking') cardType = 'thinking';
-      else if (s.type === 'context') cardType = 'context';
       else if (s.tool && (s.tool.includes('write') || s.tool.includes('文件') || s.tool.includes('Bash') || s.tool.includes('shell'))) cardType = 'code';
-      const typeLabel = { thinking: '思考', tool: '工具', code: '代码', context: '上下文', system: '系统' }[cardType] || '工具';
+      const typeLabel = { thinking: '思考', tool: '工具', code: '代码', system: '系统' }[cardType] || '工具';
       const stateCls = s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : 'pending';
-      const stateText = s.state === 'ok' ? '完成' : s.state === 'error' ? '失败' : '进行中';
+      // ★ 秒表：进行中步骤用 t0 实时计时（1s 定时器重渲驱动）；完成态用 elapsedMs
+      const stateText = s.state === 'ok' ? '完成' : s.state === 'error' ? '失败'
+        : s.state === 'pending' && s.t0 ? '进行中 · ' + ((Date.now() - s.t0) / 1000).toFixed(1) + 's' : '进行中';
       const ms = s.elapsedMs != null ? ' · ' + (s.elapsedMs / 1000).toFixed(1) + 's' : '';
       // 构建内容
       let bodyHtml = '';
       if (s.type === 'thinking') {
         bodyHtml = `<div class="run-card-thinking">${esc(s.content || s.preview || '思考中…')}</div>`;
-      } else if (s.type === 'context') {
-        bodyHtml = `<div class="run-card-body">注入系统提示词</div><pre>${esc(s.content || '')}</pre>`;
       } else {
-        // 工具调用卡片
-        if (s.argsPreview) bodyHtml += `<div class="run-card-body">${esc(s.argsPreview)}</div>`;
-        if (s.preview) bodyHtml += `<pre>${esc(s.preview)}</pre>`;
-        // 子操作（写入文件、执行命令等）
+        // 工具调用卡片：args 只显前 120 字摘要（全量进详情面板）
+        if (s.argsPreview) bodyHtml += `<div class="run-card-body" style="color:var(--text-muted)">${esc(String(s.argsPreview).slice(0, 120))}${String(s.argsPreview).length > 120 ? '…' : ''}</div>`;
+        if (s.preview) bodyHtml += `<pre${s.state === 'error' ? ' style="background:color-mix(in srgb, var(--danger) 12%, transparent);border-color:color-mix(in srgb, var(--danger) 55%, transparent)"' : ''}>${esc(s.preview)}</pre>`;
         if (s.subOps && s.subOps.length) {
           for (const op of s.subOps) {
             const opIcon = op.type === 'write' ? '📝' : op.type === 'bash' ? '⌨️' : '🔧';
@@ -5153,15 +5220,30 @@
         </div>
         ${bodyHtml}
         <div data-detail="${s.stepId}" style="display:none;margin-top:6px"></div>`;
-      // 点击展开详情
+      // ★ 折叠持久：重渲后从缓存恢复已展开详情（pi expansion store 模式，Map 即 LRU，容量 200）
+      const cachedHtml = _agentRunLiveDetailHtml.get(String(s.stepId));
+      if (_agentRunLiveExpanded.has(String(s.stepId)) && cachedHtml) {
+        const box = card.querySelector('[data-detail]');
+        box.innerHTML = cachedHtml;
+        box.style.display = '';
+        card.classList.add('sel');
+      }
+      // 点击展开/收起详情
       card.onclick = (e) => {
         if (e.target.dataset.a === 'diff') { _agentRunLiveDetail(s.stepId, true); e.stopPropagation(); return; }
         if (e.target.dataset.a === 'art') { _agentRunLiveDetail(s.stepId, false, true); e.stopPropagation(); return; }
         if (e.target.tagName === 'BUTTON' || e.target.closest('details')) return;
+        const key = String(s.stepId);
+        if (_agentRunLiveExpanded.has(key)) {   // 已展开 → 折叠
+          _agentRunLiveExpanded.delete(key);
+          _agentRunLiveRender();
+          return;
+        }
         _agentRunLiveDetail(s.stepId);
       };
       tl.appendChild(card);
     }
+    _agentStreamRender();   // 打字机卡片挂尾（无缓冲则 no-op）
     // 自动滚动到底部
     tl.scrollTop = tl.scrollHeight;
   }
@@ -5195,6 +5277,14 @@
     }
     box.innerHTML = html;
     box.style.display = '';
+    // ★ 折叠持久：登记展开态 + 缓存详情 HTML（重渲后原样恢复；Map 容量 200 即 LRU）
+    _agentRunLiveExpanded.add(String(stepId));
+    _agentRunLiveDetailHtml.set(String(stepId), html);
+    if (_agentRunLiveDetailHtml.size > 200) {
+      const oldest = _agentRunLiveDetailHtml.keys().next().value;
+      _agentRunLiveDetailHtml.delete(oldest);
+      _agentRunLiveExpanded.delete(oldest);
+    }
     const bd = box.querySelector('[data-a2="diff"]');
     if (bd) bd.onclick = () => _agentRunLiveDetail(stepId, true);
     const ba = box.querySelector('[data-a2="art"]');
