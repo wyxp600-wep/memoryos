@@ -3,7 +3,7 @@
  * 职责：
  *  ① 可插拔 LLM 端点（OpenAI 兼容 /chat/completions + tool_calls）——默认本地 Ollama qwen3:8b，
  *     可切任意云端 API（LLM_BASE_URL / LLM_MODEL / LLM_API_KEY，或运行时传入 llm 覆盖）。
- *  ② MCP 客户端：stdio 拉起 dist/server.js（MemoryOS MCP，18 工具），tools/list → OpenAI tools 格式。
+ *  ② MCP 客户端：stdio 拉起 dist/server.js（MemoryOS MCP，工具清单以 `--list-tools` 为准），tools/list → OpenAI tools 格式。
  *  ③ Agent 循环：LLM ⇄ 工具；写类工具经 writeGate 门禁（交互确认 / 无头自动）。
  * 纪律：记忆写操作先获同意（writeGate）；绝不写入敏感凭据（系统提示词约束 + 人工 gate 双保险）。
  */
@@ -64,7 +64,7 @@ export function resolveLlm(llm = {}) {
     const baseUrl = rawUrl.replace(/\/chat\/completions\/?$/i, "").replace(/\/+$/, "");
     const model = String(llm.model || env.LLM_MODEL || env.INGEST_MODEL || "qwen3:8b").trim();
     const apiKey = String(llm.apiKey ?? env.LLM_API_KEY ?? env.INGEST_KEY ?? "");
-    // Ollama 默认上下文 4096 不够装 18 个工具 schema + 长对话；对 Ollama 端点注入 options.num_ctx
+    // Ollama 默认上下文 4096 不够装全量工具 schema + 长对话；对 Ollama 端点注入 options.num_ctx
     const isOllama = /:11434|ollama/i.test(baseUrl);
     const numCtx = Number(llm.numCtx || env.LLM_NUM_CTX || (isOllama ? 8192 : 0));
     return {

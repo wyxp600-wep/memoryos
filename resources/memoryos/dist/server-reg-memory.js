@@ -1,5 +1,5 @@
 /**
- * P2-④（2026-09-22，A 分区接管 B 分区）：server.js MCP 工具面按域拆分 —— 记忆域（11 个工具）。
+ * P2-④（2026-09-22，A 分区接管 B 分区）：server.js MCP 工具面按域拆分 —— 记忆域（数量以 `--list-tools` 为准）。
  *
  * 搬移口径：自 server.js 原 L97–L805 逐字搬移（含原 L44–L60 的注入防御围栏 fenceUntrusted，仅本域使用）；
  *   注册顺序、工具名、描述、schema、响应文案一律不变 —— 由 `node dist/server.js --list-tools` 逐字节比对兜底。

@@ -1,5 +1,5 @@
 /**
- * P2-④（2026-09-22，A 分区接管 B 分区）：server.js MCP 工具面按域拆分 —— 任务域（12 个工具）+ 任务 helper 簇。
+ * P2-④（2026-09-22，A 分区接管 B 分区）：server.js MCP 工具面按域拆分 —— 任务域（数量以 `--list-tools` 为准）+ 任务 helper 簇。
  *
  * 搬移口径：自 server.js 原 L892–L1951 逐字搬移（其中 stateReceipt / TxAbort+runTaskTx 已上移 server.js 共享层）；
  *   含状态机白名单、任务头解析、确定性验收门（GATE_PRESETS/runTaskGate）、BEGIN IMMEDIATE 事务包装、卡片投影。
