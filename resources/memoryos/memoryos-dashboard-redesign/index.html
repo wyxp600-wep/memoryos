@@ -3126,9 +3126,18 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .filter-btn:focus-visible, .page-btn:focus-visible,
   .agent-sidebar-quick-item:focus-visible, .agent-session-item:focus-visible,
   .stat-card:focus-visible, th[data-sort]:focus-visible,
-  .more-panel-tab:focus-visible, .context-menu-item:focus-visible {
+  .more-panel-tab:focus-visible, .context-menu-item:focus-visible,
+  .word-cloud-item:focus-visible, .rank-item:focus-visible, .notes-vchip:focus-visible,
+  .session-chip:focus-visible, [data-a11y-click]:focus-visible, .row-open:focus-visible {
     outline: 2px solid var(--c-primary-bright); outline-offset: 2px;
   }
+  /* ★ P2-⑤ a11y：数据行的「行内主操作」—— 行本身不进 Tab 序列，键盘等价路径是这个按钮；
+     外观沿用原来的序号文本（虚线下面线用于提示可交互）。 */
+  .row-open {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0;
+    cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
+  }
+  .row-open:hover { color: var(--c-primary-bright); }
   /* ★ P2-⑤ a11y：视觉隐藏但仍对屏幕阅读器可见（用于 h1 等纯语义元素） */
   .sr-only {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

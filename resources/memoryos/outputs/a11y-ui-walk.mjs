@@ -116,6 +116,11 @@ const AUDIT_EXPR = `(function(){
     focusable: disc.matches('a[href],button,[tabindex]:not([tabindex="-1"])') ? 1 : 0,
     hasExpanded: disc.hasAttribute('aria-expanded') ? 1 : 0,
   } : { present: 0, focusable: 0, hasExpanded: 0 };
+  // P0-1c 数据行键盘等价路径：可点行必须含行内主操作 .row-open（行本身不进 Tab 序列，故不能只看"行可聚焦"）
+  var trs = document.querySelectorAll('#allTableBody tr[data-id], #ruleTableBody tr[data-id]');
+  var withPrimary = 0;
+  for (var r = 0; r < trs.length; r++) if (trs[r].querySelector('.row-open')) withPrimary++;
+  out.rows = { total: trs.length, withPrimary: withPrimary };
   // P1-1 landmark / 标题层级
   out.landmarks = {
     main: document.querySelectorAll('main,[role="main"]').length,
@@ -220,17 +225,36 @@ try {
 
     // —— 真实键盘交互（属性达标 ≠ 能用）：聚焦导航项 → CDP 派发 Enter → 必须真的切页 ——
     const KEY = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    // Enter 必须三连发（rawKeyDown → char → keyUp）：只发 rawKeyDown/keyUp 时 Chrome 不触发
+    // 原生控件的默认激活（实测：原生 <button> 收不到 click，而自定义 keydown 处理器的元素能过 —— 会误判）
+    const pressEnter = async () => {
+        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...KEY });
+        await send('Input.dispatchKeyEvent', { type: 'char', text: '\r', unmodifiedText: '\r' });
+        await send('Input.dispatchKeyEvent', { type: 'keyUp', ...KEY });
+    };
     await ev(`(function(){var n=document.querySelector('.nav-item[data-route="tasks"]');if(n)n.focus();return document.activeElement && document.activeElement.getAttribute('data-route')})()`);
     const focused = await ev(`document.activeElement && document.activeElement.getAttribute ? document.activeElement.getAttribute('data-route') : null`);
-    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...KEY });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', ...KEY });
+    await pressEnter();
     await sleep(1200);
     const tasksActive = await ev(`!!document.querySelector('#page-tasks.active')`);
     rec('键盘可达：Tab 聚焦导航项 + Enter 真实切页', focused === 'tasks' && tasksActive === true, 'focused=' + focused + ' page-tasks.active=' + tasksActive);
 
+    // —— 真实键盘交互：数据行的行内主操作 → Enter 打开详情（行本身不进 Tab，故必须验这个按钮） ——
+    await ev(`(function(){var n=document.querySelector('.nav-item[data-route="all"]');if(n)n.click();return 1})()`);
+    await sleep(2200);
+    const rowFocus = await ev(`(function(){var b=document.querySelector('#allTableBody tr[data-id] .row-open');if(!b)return 'missing';b.focus();return String(document.activeElement.className||'')})()`);
+    await pressEnter();
+    await sleep(1200);
+    const modalOpen = await ev(`!!document.querySelector('#detailModal.show')`);
+    rec('数据行键盘等价路径：聚焦行内主操作 + Enter 打开详情', /row-open/.test(String(rowFocus)) && modalOpen === true, 'focused=' + rowFocus + ' detailModal.show=' + modalOpen);
+    const ESC = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...ESC });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', ...ESC });
+    await sleep(400);
+
     // —— 诊断：交互件机器标记覆盖（定位"标记没生效"类问题）——
     const markCovRaw = await ev(`(function(){
-      var sel = '.nav-item[data-route], .agent-sidebar-quick-item, .agent-session-item, .stat-card[data-route], #tabMap, th[data-sort], .more-panel-tab, .context-menu-item';
+      var sel = '.nav-item[data-route], .agent-sidebar-quick-item, .agent-session-item, .stat-card[data-route], #tabMap, th[data-sort], .more-panel-tab, .context-menu-item, .word-cloud-item, .rank-item, .notes-vchip, .session-chip, [data-a11y-click]';
       var els = document.querySelectorAll(sel), noT = 0, noRole = 0, notMarked = 0, sample = '';
       for (var i = 0; i < els.length; i++) {
         var e = els[i];
@@ -270,6 +294,7 @@ try {
         || perRoute.find((p) => p.landmarks)?.landmarks || { main: 0, nav: 0 };
     const headings = perRoute.find((p) => p.headings)?.headings || { total: 0, h1: 0 };
     const live = Math.max(0, ...perRoute.map((p) => p.ariaLive || 0));
+    const rowsAgg = perRoute.reduce((a, p) => ((p.rows && p.rows.total > (a.total || 0)) ? p.rows : a), { total: 0, withPrimary: 0 });
 
     // P2-2 prefers-reduced-motion：模拟 reduce 后仍存在非零 transition/animation
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -295,6 +320,7 @@ try {
     rec('P0-1 主操作件键盘可达（可点但不可聚焦）= 0', badPrimary.length === 0, badPrimary.length + ' 个；例：' + JSON.stringify(badPrimary.slice(0, 4)));
     console.log('ℹ P0-1b 数据行/列表项整行点击（信息项，不入门禁）：' + badRows.length + ' 个；例：' + JSON.stringify(badRows.slice(0, 3)));
     rec('P0-2 可聚焦但无可访问名 = 0', badNoName.length === 0, badNoName.length + ' 个；例：' + JSON.stringify(badNoName.slice(0, 4)));
+    rec('P0-1c 数据行含行内主操作（键盘等价路径）', rowsAgg.total > 0 && rowsAgg.withPrimary === rowsAgg.total, `rows=${rowsAgg.total} withPrimary=${rowsAgg.withPrimary}`);
     rec('P1-1 有 landmark（main+nav）', landmarks.main > 0 && landmarks.nav > 0, `main=${landmarks.main} nav=${landmarks.nav}`);
     rec('P1-1 有标题层级（≥1 个 h1）', headings.h1 > 0, `heading 总数=${headings.total} h1=${headings.h1}`);
     rec('P1-2 有 aria-live 播报区', live > 0, 'aria-live/status/alert/log=' + live);

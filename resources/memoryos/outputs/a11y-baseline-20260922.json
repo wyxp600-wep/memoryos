@@ -1,6 +1,6 @@
 {
   "meta": {
-    "at": "2026-09-22T10:36:45.878Z",
+    "at": "2026-09-22T11:59:29.111Z",
     "dashPort": 8787,
     "node": "v24.18.1",
     "chrome": "default"
@@ -12,6 +12,11 @@
       "extra": "focused=tasks page-tasks.active=true"
     },
     {
+      "name": "数据行键盘等价路径：聚焦行内主操作 + Enter 打开详情",
+      "ok": true,
+      "extra": "focused=row-open detailModal.show=true"
+    },
+    {
       "name": "P0-1 主操作件键盘可达（可点但不可聚焦）= 0",
       "ok": true,
       "extra": "0 个；例：[]"
@@ -20,6 +25,11 @@
       "name": "P0-2 可聚焦但无可访问名 = 0",
       "ok": true,
       "extra": "0 个；例：[]"
+    },
+    {
+      "name": "P0-1c 数据行含行内主操作（键盘等价路径）",
+      "ok": true,
+      "extra": "rows=491 withPrimary=491"
     },
     {
       "name": "P1-1 有 landmark（main+nav）",
@@ -69,6 +79,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -92,6 +106,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -818,6 +836,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -842,6 +864,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -856,22 +882,7 @@
       "focusableNoName": []
     },
     {
-      "clickableNotFocusable": [
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "notes-vchip",
-          "route": "",
-          "text": "ZSK"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "notes-vchip",
-          "route": "",
-          "text": "知识库"
-        }
-      ],
+      "clickableNotFocusable": [],
       "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
@@ -880,6 +891,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -905,6 +920,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -919,50 +938,7 @@
       "focusableNoName": []
     },
     {
-      "clickableNotFocusable": [
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "run-card",
-          "route": "",
-          "text": "只调用一次 task_next(project=\"globa"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "run-card",
-          "route": "",
-          "text": "只调用一次 task_next(project=\"globa"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "run-card",
-          "route": "",
-          "text": "只调用一次 task_next(project=\"globa"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "run-card",
-          "route": "",
-          "text": "只调用一次 task_next(project=\"globa"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "session-chip",
-          "route": "",
-          "text": "4aa3ea6a 2✕"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "session-chip",
-          "route": "",
-          "text": "8063c9a1 0✕"
-        }
-      ],
+      "clickableNotFocusable": [],
       "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
@@ -971,6 +947,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -996,6 +976,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -1019,6 +1003,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -1044,6 +1032,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -1067,6 +1059,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -1092,6 +1088,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -1106,148 +1106,7 @@
       "focusableNoName": []
     },
     {
-      "clickableNotFocusable": [
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "1 - **多智能体任务计划文件存放位置**：计划文件、JS"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "2 - **多智能体任务计划 v1.1.0 规范**：必须包"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "3 项目根目录为aiagent记忆与规则，包含源码、发行层与"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "4 - 改前说明改哪些文件、改什么、为什么；改后说明如何验证"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "5 开工前主动查阅记忆库/历史日志，不要让用户复述数天前的任"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "6 记忆库通过MEMORY.md实现跨工具（WorkBudd"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "7 [decision] MemoryOS 新增「任务看板」"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "8 MemoryOS 新增 memory_ask 工具（RG"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "9 MemoryOS v0.3 验证基准：tsc 编译通过 "
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "10 项目记忆写入时机：当用户说'更新记忆'或'沉淀'时，先"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "1 开工前主动查阅记忆库/历史日志，不要让用户复述数天前的任"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "2 [decision] MemoryOS 新增「任务看板」"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "3 MemoryOS 新增 memory_ask 工具（RG"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "4 MemoryOS v0.3 验证基准：tsc 编译通过 "
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "5 记忆库通过MEMORY.md实现跨工具（WorkBudd"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "6 - **多智能体任务计划 v1.1.0 规范**：必须包"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "7 项目根目录为aiagent记忆与规则，包含源码、发行层与"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "8 - **多智能体任务计划文件存放位置**：计划文件、JS"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "9 项目记忆写入时机：当用户说'更新记忆'或'沉淀'时，先m"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "div",
-          "cls": "rank-item",
-          "route": "",
-          "text": "10 - 改前说明改哪些文件、改什么、为什么；改后说明如何验"
-        }
-      ],
+      "clickableNotFocusable": [],
       "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
@@ -1256,6 +1115,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -1281,6 +1144,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -1305,6 +1172,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -1328,6 +1199,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,
@@ -4091,6 +3966,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -4115,6 +3994,10 @@
         "focusable": 0,
         "hasExpanded": 0
       },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
@@ -4129,288 +4012,7 @@
       "focusableNoName": []
     },
     {
-      "clickableNotFocusable": [
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "文件"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "任务"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "记忆"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "用户"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "验证"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "自动"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "规则"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "进程"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "注入"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "目录"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "使用"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "实现"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "会话"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "数据"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "调用"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "前端"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "默认"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "改动"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "真实"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "新增"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "更新"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "项目"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "导致"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "避免"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "返回"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "重启"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "直接"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "结论"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "工作"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "修复"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "写入"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "落地"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "当前"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "确认"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "依赖"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "覆盖"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "命中"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "实证"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "修改"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "span",
-          "cls": "word-cloud-item",
-          "route": "",
-          "text": "连接"
-        }
-      ],
+      "clickableNotFocusable": [],
       "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
@@ -4419,6 +4021,10 @@
         "present": 0,
         "focusable": 0,
         "hasExpanded": 0
+      },
+      "rows": {
+        "total": 491,
+        "withPrimary": 491
       },
       "landmarks": {
         "main": 2,

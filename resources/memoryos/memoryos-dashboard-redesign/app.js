@@ -547,7 +547,7 @@
       const selCls = selectedIds.has(m.id) ? ' selected' : '';
       return `<tr data-id="${m.id}" class="row-${esc(m.type)}${selCls}">
        <td><input type="checkbox" class="row-checkbox" data-id="${m.id}" aria-label="选择记忆 #${m.id}" ${checked}></td>
-       <td class="mono text-muted">${String(start + i + 1).padStart(2, '0')}</td>
+       <td class="mono text-muted"><button class="row-open" data-id="${m.id}" aria-label="打开记忆 #${m.id}" title="打开详情">${String(start + i + 1).padStart(2, '0')}</button></td>
        <td class="memory-content">${renderMemoryLinks(m.content)}</td><td><span class="sdot" style="background:${SECTOR_COLOR_P6[m.sector] || '#64748b'}" title="${esc(m.sector || '')}"></span><span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span></td>
        <td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td>
        <td class="mono" style="font-size:12px">${esc(m.agent)}</td>
@@ -1096,7 +1096,7 @@
       let rows = S.memories;
       if (q) rows = rows.filter(m => m.content.toLowerCase().includes(q) || String(m.agent).toLowerCase().includes(q) || String(m.type).includes(q));
       $('#allCount').textContent = '搜索结果：' + rows.length + ' 条';
-      $('#allTableBody').innerHTML = rows.map((m, i) => `<tr data-id="${m.id}"><td class="mono text-muted">${String(i + 1).padStart(2, '0')}</td><td class="memory-content">${esc(m.content)}</td><td><span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span></td><td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td><td class="mono" style="font-size:12px">${esc(m.agent)}</td><td><span class="eff-bar"><span class="eff-bar-fill" style="width:${Math.min(100, (m.eff || 0) * 100)}%"></span></span><span class="mono" style="font-size:12px">${(m.eff || 0).toFixed(2)}</span></td><td class="mono" style="font-size:13px;color:var(--accent-cyan)">${m.hits}</td><td class="mono text-secondary" style="font-size:12px">${fmtDate(m.created_at)}</td></tr>`).join('');
+      $('#allTableBody').innerHTML = rows.map((m, i) => `<tr data-id="${m.id}"><td class="mono text-muted"><button class="row-open" data-id="${m.id}" aria-label="打开记忆 #${m.id}" title="打开详情">${String(i + 1).padStart(2, '0')}</button></td><td class="memory-content">${esc(m.content)}</td><td><span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span></td><td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td><td class="mono" style="font-size:12px">${esc(m.agent)}</td><td><span class="eff-bar"><span class="eff-bar-fill" style="width:${Math.min(100, (m.eff || 0) * 100)}%"></span></span><span class="mono" style="font-size:12px">${(m.eff || 0).toFixed(2)}</span></td><td class="mono" style="font-size:13px;color:var(--accent-cyan)">${m.hits}</td><td class="mono text-secondary" style="font-size:12px">${fmtDate(m.created_at)}</td></tr>`).join('');
       $$('#allTableBody tr').forEach(tr => tr.onclick = () => openDetail(Number(tr.dataset.id)));
       toast(q ? '检索到 ' + rows.length + ' 条相关记忆' : '显示全部记忆');
     });
@@ -1468,7 +1468,7 @@
     const show = ruleStatus === 'all' ? ruleRows : ruleRows.filter(x => x.status === ruleStatus);
     $('#ruleCount').textContent = '共 ' + show.length + ' 条';
     $('#ruleTableBody').innerHTML = show.length ? show.map((m, i) =>
-      `<tr data-id="${m.id}"><td class="mono text-muted">${String(i + 1).padStart(2, '0')}</td>
+      `<tr data-id="${m.id}"><td class="mono text-muted"><button class="row-open" data-id="${m.id}" aria-label="打开规则 #${m.id}" title="打开详情">${String(i + 1).padStart(2, '0')}</button></td>
        <td class="memory-content">${esc(m.content)}</td>
        <td class="mono" style="font-size:12px">${esc(m.agent)}</td>
        <td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td>
@@ -3106,12 +3106,13 @@
    * 背景（CDP 实测基线，outputs/a11y-baseline-20260922.json）：看板大量"主操作件"是
    *   <a>/<div>/<span> + JS `.onclick`，无 href / tabindex → 不在 Tab 序列、键盘用户完全够不着
    *   （P0-1 命中 54，去重 36 个元素：导航 18 / 排序表头 7 / 侧栏快捷项 4 / 统计卡 4 / 会话项 2 / 任务地图 1）。
-   * 取舍：只标记「主操作件」；**不**把表格整行点击（556 个 dataRow：tr/word-cloud/rank 等）也塞进
-   *   Tab 序列 —— 那会让 Tab 序爆炸、键盘体验反而更差；数据行需另行走内主操作或 roving tabindex 方案。
-   * 动态内容（表格重渲染、会话列表、右键菜单）由 MutationObserver 增量补齐；只 observe childList，
-   *   自身写属性不会回环触发。
+   * 取舍（P0 批 + 本批修订）：**主操作件与离散列表项**（导航/入口/标签/排序表头/词云/排行/chip/可点卡片）
+   *   统一标记为可聚焦 + Enter/Space 可触发；**数据行（tr）本身仍不进 Tab 序列** —— 行是容器不是动作，
+   *   其键盘等价路径是**行内主操作**（`button.row-open`，见 renderAllTable / renderAll / renderRules 三处模板）。
+   * 动态内容（表格重渲染、会话列表、词云、右键菜单、runs 看板）由 MutationObserver 增量补齐；
+   *   只 observe childList，自身写属性不会回环触发。
    */
-  const A11Y_SEL = '.nav-item[data-route], .agent-sidebar-quick-item, .agent-session-item, .stat-card[data-route], #tabMap, th[data-sort], .more-panel-tab, .context-menu-item';
+  const A11Y_SEL = '.nav-item[data-route], .agent-sidebar-quick-item, .agent-session-item, .stat-card[data-route], #tabMap, th[data-sort], .more-panel-tab, .context-menu-item, .word-cloud-item, .rank-item, .notes-vchip, .session-chip, [data-a11y-click]';
   function markA11y(root) {
     const scope = (root && root.querySelectorAll) ? root : document;
     const NATIVE_FOCUSABLE = 'a[href],button,input,select,textarea,[contenteditable="true"]';
@@ -6072,6 +6073,7 @@
         </div>
         <div class="run-meta">${esc(r.status)} · ${r.stepIndex} 步 · ${r.toolCalls} 工具 · ${((r.finishedAt - r.startedAt) / 1000).toFixed(1)}s${esc(taskLine)}</div>`;
       card.onclick = () => _runsOpen(r.runId);
+      card.setAttribute('data-a11y-click', '1'); // ★ P2-⑤：标记为可点卡片 → 由 initA11yInteractions 补键盘可达
       board.appendChild(card);
     }
   }
