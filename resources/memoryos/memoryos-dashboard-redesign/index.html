@@ -3121,8 +3121,12 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .topbar-actions { gap: 10px; }
 
   /* ===== 可访问性：键盘焦点可见 ===== */
+  /* ★ P2-⑤（2026-09-22）：补上本次被标记为可聚焦的主操作件——否则键盘用户看不到焦点在哪（半成品） */
   .nav-item:focus-visible, .btn-primary:focus-visible, .btn-ghost:focus-visible,
-  .filter-btn:focus-visible, .page-btn:focus-visible {
+  .filter-btn:focus-visible, .page-btn:focus-visible,
+  .agent-sidebar-quick-item:focus-visible, .agent-session-item:focus-visible,
+  .stat-card:focus-visible, th[data-sort]:focus-visible,
+  .more-panel-tab:focus-visible, .context-menu-item:focus-visible {
     outline: 2px solid var(--c-primary-bright); outline-offset: 2px;
   }
 

@@ -1,0 +1,5532 @@
+{
+  "meta": {
+    "at": "2026-09-22T10:25:54.155Z",
+    "dashPort": 8787,
+    "node": "v24.18.1",
+    "chrome": "default"
+  },
+  "checks": [
+    {
+      "name": "键盘可达：Tab 聚焦导航项 + Enter 真实切页",
+      "ok": true,
+      "extra": "focused=tasks page-tasks.active=true"
+    },
+    {
+      "name": "P0-1 主操作件键盘可达（可点但不可聚焦）= 0",
+      "ok": true,
+      "extra": "0 个；例：[]"
+    },
+    {
+      "name": "P0-2 可聚焦但无可访问名 = 0",
+      "ok": false,
+      "extra": "1 个；例：[{\"role\":\"checkbox\",\"tag\":\"computedString\"}]"
+    },
+    {
+      "name": "P1-1 有 landmark（main+nav）",
+      "ok": true,
+      "extra": "main=2 nav=1"
+    },
+    {
+      "name": "P1-1 有标题层级（≥1 个 h1）",
+      "ok": false,
+      "extra": "heading 总数=0 h1=0"
+    },
+    {
+      "name": "P1-2 有 aria-live 播报区",
+      "ok": false,
+      "extra": "aria-live/status/alert/log=0"
+    },
+    {
+      "name": "P1-3 表单控件均有标签",
+      "ok": false,
+      "extra": "9 个；例：[{\"tag\":\"input\",\"type\":\"text\",\"id\":\"globalSearch\",\"ph\":\"语义检索记忆…\"},{\"tag\":\"input\",\"type\":\"text\",\"id\":\"agentSessionSearch\",\"ph\":\"搜索会话…\"},{\"tag\":\"textarea\",\"type\":\"textarea\",\"id\":\"agentInput\",\"ph\":\"给 agent 下指令（Enter 发送，Shift+Enter 换行）\"},{\"tag\":\"input\",\"type\":\"checkbox\",\"id\":\"selectAllCb\",\"ph\":\"\"}]"
+    },
+    {
+      "name": "P1-4 导航当前项有 aria-current",
+      "ok": true,
+      "extra": "active=1 缺 aria-current=0"
+    },
+    {
+      "name": "P2-1 折叠/切换件有 aria-expanded",
+      "ok": false,
+      "extra": "缺=2"
+    },
+    {
+      "name": "P2-2 prefers-reduced-motion 生效",
+      "ok": false,
+      "extra": "模拟 reduce 后仍有动效元素=2348 例：div.logo-icon t=0s a=4s"
+    },
+    {
+      "name": "CDP 0 未捕获异常",
+      "ok": true,
+      "extra": ""
+    }
+  ],
+  "perRoute": [
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "agentSessionSearch",
+          "ph": "搜索会话…"
+        },
+        {
+          "tag": "textarea",
+          "type": "textarea",
+          "id": "agentInput",
+          "ph": "给 agent 下指令（Enter 发送，Shift+Enter 换行）"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-agent",
+      "route": "(initial)",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "agentSessionSearch",
+          "ph": "搜索会话…"
+        },
+        {
+          "tag": "textarea",
+          "type": "textarea",
+          "id": "agentInput",
+          "ph": "给 agent 下指令（Enter 发送，Shift+Enter 换行）"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-agent",
+      "route": "agent",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "01 [session_id: 6ab13d86f05f7c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "02 [session_id: 6ab13d86f05f7c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "03 /healthz可独立落地但会触发snapshot门禁"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "04 /healthz可独立落地但会触发snapshot门禁"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "05 每日复盘需先本地取证当日jsonl，无实质对话应如实声"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "06 - **测试依赖漂移也会让门禁变红（本例 `smoke"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "07 - **★ 提交时如何不混入他人未提交改动：`git "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "08 - **★ `ingest.js` 的 glob `m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "09 脚本执行后输出\"Moved N files\"表示成功，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "10 机制存在≠机制生效，关键路径需做拉起闭环验证 后台失败"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "11 生产环境memory.db的cards表为空 应用启动"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "12 看板模块存在卡片详情监听器泄漏和Tab状态残留问题 O"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "13 当前会话仅挂载了integrated_code_mod"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "14 看板图包含辅助记忆节点和历史卡片，不全是任务 /api"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "15 内化需含确定性步骤/脚本才有价值，纯LLM提示词型sk"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "16 任务以/api/tasks（kind=task）为准，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "17 脚本在桌面干净时输出\"0 files\"属正常幂等结果经"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "18 任务双层同步需通过task_assign默认建卡等机制"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "19 syncTaskToCard函数可实现任务状态到卡片的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "20 MCP server默认连接工作区库而非生产库 生产库"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "21 低频+低温同时出现是典型电流墙（EDC）特征 EDC拉"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "22 smoke-exec.mjs临时验收脚本存在路径硬编码"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "23 脚本执行成功时会输出\"Moved N files\"格式"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "24 502时先查proxy-check.log新鲜度区分临"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "25 工作树存在2个文档和1个二进制文件未提交 resour"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "26 诊断看门狗需验证任务状态、端口监听和日志新鲜度 整改必"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "27 需同时核查任务状态、端口监听和日志新鲜度判断代理保活是"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "28 用户上传的是MCP Servers手动配置对话框截图 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "29 仓库卫生失控，存在大量未提交文件和备份文件 项目缺乏R"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "30 services/core-process.js覆盖1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "31 - **`services/scheduler.js`"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "32 - **附带发现（已查清）：`shared-sync."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "33 - **附带发现（待处理）：`shared-sync."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "34 - **写测试自身容易踩的两个坑**（2026-09-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "35 - **★ 怎么证明测试「有牙」而非空跑：变异测试**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "36 - **外壳层测试现状**（2026-09-21，co"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "37 - **echarts 是幽灵依赖，已移除**（202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "38 - **★ 诊断「某模块是否真的被加载」的可靠手法**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "39 - **★ 6 项依赖漏洞均可利用性评估结论：当前部署"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "40 - **本项目仓库卫生/备份约定**（2026-09-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "41 - **依赖漏洞现状（2026-09-21 实测，待决"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "42 - **★ 无 lockfile 时如何零风险补上**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "43 - **UI 走查定位与用法**（2026-09-21"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "44 - **测试脚本的 4 类常见缺陷（2026-09-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "45 - **★ 令牌有两份，脚本别读错**（2026-09"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "46 - **仓库文档地图**（2026-09-21 新增 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "47 - **两种门禁覆盖机制不同，勿混**（2026-09"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "48 - **文档硬编码计数必然漂移 → 应指向运行时查询口"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "49 - **asar 内窗口鉴权验证技巧**（2026-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "50 - **令牌传递现状与正解**（2026-09-21，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "51 - **安全评估必须定位到真实 HTTP 面文件，勿凭"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "52 - **asar 重打包流程约定**（2026-09-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "53 - **打包同步白名单盲区与修复全链路**（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "54 - **密钥目录移出仓库必须同步改硬编码路径**（20"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "55 - **多 AI 并行下「仓库卫生」必须先读 CLAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "56 智能手机问题诊断方法论（2026-09-21 深度分析"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "57 本环境前端「运行时渲染」验证已打通（2026-09-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "58 MemoryOS D1-D5 改造已落地并过门禁（20"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "59 MemoryOS agent 模块 + 任务看板现状核"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "60 红档三修状态更新：已提交 commit ccb38c1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "61 红档三修落地（2026-09-19，未提交待用户批）："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "62 【结构性档收尾（2026-09-19，提交 0ea11"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "63 【结构性档落地（2026-09-19，提交 27a1b"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "64 【本周档四项落地（清单 #6/#7/#8/#9），20"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "65 【E-0 状态机落码 + Mimosa 退场实锤，20"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "66 【Mimosa 插件已禁用 + G10 转义坑，202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "67 zcode_protocol进程内存监测包含会话统计信"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "68 【Mimosa 拦截根因 + 根治配置，2026-09"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "69 【任务领取复盘「立刻」档修复落地，2026-09-19"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "70 【卡片实时认领显示，2026-09-18 落地（续 S"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "71 **结论（2026-09-18 workbuddy，实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "72 【SSE 实时看板 + 任务地图归档默认隐藏，2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "73 **结论（2026-09-18 workbuddy，D"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "74 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "75 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "76 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "77 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "78 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "79 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "80 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "81 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "82 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "83 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "84 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "85 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "86 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "87 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "88 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "89 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "90 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "91 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "92 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "93 【越界停手法实证 2026-09-18】MemoryO"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "94 **结论（2026-09-18 workbuddy，实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "95 【更正·归档指向】#4309 为**误建条目**：其 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "96 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "97 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "98 **结论（2026-09-18 workbuddy，C"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "99 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "100 [task][assignee:?][status:"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "selectAllCb",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "id": "",
+          "ph": ""
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-all",
+      "route": "all",
+      "focusableNoName": [
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        },
+        {
+          "role": "checkbox",
+          "tag": "computedString"
+        }
+      ]
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-tasks",
+      "route": "tasks",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "notes-vchip",
+          "route": "",
+          "text": "ZSK"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "notes-vchip",
+          "route": "",
+          "text": "知识库"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "obsidianVaultInput",
+          "ph": "例如 C:\\Users\\WYX\\Desktop\\知识库\\知识库"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "obsidianProjectInput",
+          "ph": "global（推荐，所有 Agent 可检索）"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "notesRailSearch",
+          "ph": "筛选标题 / 路径…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-obsidian",
+      "route": "obsidian",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-graph",
+      "route": "graph",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "run-card",
+          "route": "",
+          "text": "只调用一次 task_next(project=\"globa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "run-card",
+          "route": "",
+          "text": "只调用一次 task_next(project=\"globa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "run-card",
+          "route": "",
+          "text": "只调用一次 task_next(project=\"globa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "session-chip",
+          "route": "",
+          "text": "4aa3ea6a 2✕"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "session-chip",
+          "route": "",
+          "text": "8063c9a1 0✕"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-runs",
+      "route": "runs",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-connect",
+      "route": "connect",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-governance",
+      "route": "governance",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-trend",
+      "route": "trend",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-cross",
+      "route": "cross",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-audit",
+      "route": "audit",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "1 - **多智能体任务计划文件存放位置**：计划文件、JS"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "2 - **多智能体任务计划 v1.1.0 规范**：必须包"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "3 项目根目录为aiagent记忆与规则，包含源码、发行层与"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "4 - 改前说明改哪些文件、改什么、为什么；改后说明如何验证"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "5 开工前主动查阅记忆库/历史日志，不要让用户复述数天前的任"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "6 记忆库通过MEMORY.md实现跨工具（WorkBudd"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "7 [decision] MemoryOS 新增「任务看板」"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "8 MemoryOS 新增 memory_ask 工具（RG"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "9 MemoryOS v0.3 验证基准：tsc 编译通过 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "10 项目记忆写入时机：当用户说'更新记忆'或'沉淀'时，先"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "1 开工前主动查阅记忆库/历史日志，不要让用户复述数天前的任"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "2 [decision] MemoryOS 新增「任务看板」"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "3 MemoryOS 新增 memory_ask 工具（RG"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "4 MemoryOS v0.3 验证基准：tsc 编译通过 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "5 记忆库通过MEMORY.md实现跨工具（WorkBudd"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "6 - **多智能体任务计划 v1.1.0 规范**：必须包"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "7 项目根目录为aiagent记忆与规则，包含源码、发行层与"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "8 - **多智能体任务计划文件存放位置**：计划文件、JS"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "9 项目记忆写入时机：当用户说'更新记忆'或'沉淀'时，先m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "rank-item",
+          "route": "",
+          "text": "10 - 改前说明改哪些文件、改什么、为什么；改后说明如何验"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-top",
+      "route": "top",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-zombies",
+      "route": "zombies",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-arbitrate",
+      "route": "arbitrate",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-ingest",
+      "route": "ingest",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "01 - **`powercfg /q` 输出含中文标签**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "02 - **含中文路径的工作区禁 `powershell "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "03 ## 五、章节索引（全文在 `MEMORY-DETAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "04 - **系统受保护文件（hosts）**：带 BOM，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "05 - **对话取证**：`conversation_se"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "06 - **计划任务零窗口**：计划任务 → `wscri"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "07 - **端口**：80 常被 IIS(W3SVC) 占"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "08 - **网络**：google 被墙 → 搜索用 **"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "09 - **managed node 22 的 `fs.c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "10 - **safe-delete 垫片**：删除失败时命"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "11 - **PowerShell 工具 stdout 常被"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "12 - **Bash PATH 可能缺 coreutils"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "13 - 未明说时授权 AI 自选（如\"你自己选\"）→ 事后"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "14 - 偏好：**辅助程序收敛成单文件**（反感散落多脚本"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "15 - 角色：跨境 ERP（wimoor-erp）技术负责"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "16 - 全中文；结构化、简洁；结论先行；表格化 + ✅/❌"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "17 - **agents.md 真相源纪律**：写入前必须"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "18 - **多 AI 并行项目第一动作 = 读 `CLAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "19 - 先说清交付物再动手；**不交付半成品**（依赖离线"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "20 ### 错误模式十类（动手前对照；详版见 DETAIL"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "21 - **通用任务协作规则 v3.0**（2026-09"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "22 5. 若 `mcp__memoryos__*` 不可用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "23 4. **WorkBuddy 内核不支持 hooks*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "24 3. 完成重要任务（>30min 修复/技术决策/踩坑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "25 2. 命中须 `memory_cite` 标注来源；确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "26 1. 收到用户**任何消息**（含闲聊/探针/打招呼/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "27 ## ⚠ 最高优先级：开工先检索记忆库（不可跳过 · "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "28 # 用户长期偏好（跨项目 · 索引版） > 细节全文见"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "29 - 已入库任务统一通过 MemoryOS 看板展示，避"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "30 - 若当前 Agent 无 MCP 能力（WorkBu"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "31 - 领任务：先 `task_next`/`task_c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "32 - **禁止**在各自客户端私有任务区建\"只在本工具可"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "33 - 建任何任务，一律通过 MCP task_assig"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "34 ### 任务统一入口（2026-09-14 沉淀，所有"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "35 coding agent 必须持续执行直到 query"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "36 ## Core Truths **Be genuine"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "37 # SOUL.md - Who You Are *Yo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "38 3. **scope 必须双扫**：`memory_s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "39 2. **无豁免**：上述「开工先搜后干」**不受 s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "40 1. **工具是 deferred**：`mcp__m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "41 ## 记忆召回硬约束（2026-09-07 手工写入，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "42 - **待办**：sendInterview/send"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "43 - **llmChat**：加 per-call ti"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "44 - **parseReply 增强**：处理 `(独白"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "45 - **LLM 生成反馈三件套**（用户 9/1 报\""
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "46 - **E2E 验证**：用 Node CDP（`.m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "47 - **三端链路**：`vnext.html` 前端 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "48 ## 十二、StoryLab 工作区（2026-09-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "49 - 提交前先 `git ls-files | grep"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "50 - `git gc` 报 `failed to cle"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "51 - 大仓 `git add -A`（3.5 万文件）约"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "52 - **git 命令禁止接 `| head` / `|"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "53 - **gitignore 含斜杠的规则锚定仓库根**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "54 ### 硬坑（本次代价：.git 从 0 涨到 14G"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "55 5. **登记防复发**：移交区变更同步写回 CLAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "56 4. **只接手授权范围**：已完成的标完成、未完成的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "57 3. **核查已完成项**：`git log` / `"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "58 1. **读 CLAIM.md**：确认硬分区，知道哪"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "59 ### 接手/接管流程（并行 AI 退出或额度耗尽时，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "60 4. **评审对手计划而非执行它**：执行即正面撞车。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "61 3. **建 git 基线**：无版本控制时这是唯一回"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "62 2. **出分区表 + 占用登记文件**（根目录 `C"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "63 1. **先探测对手痕迹**：`ls -a` 看 `."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "64 ## 十一、多 AI 并行工作区防冲突（2026-08"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "65 - **应对**：①高价值任务前先确认当前模型是否临近"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "66 - **结论**：429 不是\"慢一点就好\"的小问题，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "67 - **证据**：8/29 18:33 用户要求\"建立"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "68 ### 2026-08-30 实测：429 阻断真实任"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "69 ### 2026-08-29 弹窗修正确认（指向 §四"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "70 - 计划任务需设 `ExecutionTimeLimi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "71 - 改为**计划任务每 5 分钟跑一次性检查脚本**："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "72 - 曾用 bat 无限循环守护 + 登录时触发，失败："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "73 ### 2026-08-24 加固（踩坑记录） wor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "74 - **2026-08-30 能力扩展（8/30 落地"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "75 - 测试：`curl -X POST http://1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "76 - 代理挂了 → 最多 5 分钟内被计划任务自动拉起（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "77 - 检查代理：`netstat -an | grep "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "78 - 自动保活：Windows Task Schedul"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "79 - 模型配置：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "80 - **已删除（8/29 清理）**：`check-p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "81 - 自检日志：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "82 - 任务定义备份：`...\\workspace\\tas"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "83 - 看门狗（**2026-08-29 起，VBS 零窗"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "84 - 代理脚本：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "85 - 按 `model` 字段自动路由到对应后端 wor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "86 - 修复 `max_tokens` 超出模型上限 → "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "87 - 修复 content part `{\"type\":"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "88 ### 解决方案 本地代理 `mimo-proxy.j"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "89 - agnes: `500 max_tokens ex"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "90 - mimo: `400 Param Incorrec"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "91 ### 背景 mimo-v2.5-pro 和 agne"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "92 ## 十、WorkBuddy 自定义模型代理（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "93 - **当前状态**：已接入，未建自动化任务。等用户明"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "94 - **接入邮箱**：`ecjj5272@agent."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "95 ## 九、Agent Mail 邮件通道（2026-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "96 5. **报告落盘 + CLAIM 登记**，结论先行"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "97 4. **人工抽验最重磅 P0**：逐字比对行号与内容"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "98 ### 实证优先正面范式（2026-08-30 代码审"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "99 - **质量标准**：每条记忆需具体到可执行（文件路径"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "100 - **合并规则**：语义相似但表述不同的条目 → "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "101 - **根因**：`conversation_sea"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "102 - **连续空转**：8/27 08:08、8/28"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "103 ### 自动化任务自身的可靠性（2026-08-29"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "104 - **教训（2026-08-29）**：仅读 AI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "105 - **高频错误模式**：共 **十类**（①意图跑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "106 - **分析维度**：用户真实意图 / AI错误类型"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "107 - **全项目扫描（2026-09-09 修正）**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "108 - **技能配置**：选择能增强任务执行能力的技能 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "109 - **专家选择**：选择与任务领域匹配的专家（如L"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "110 - **执行频率**：根据任务性质设置（每日、每周、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "111 - **任务命名**：使用描述性名称，体现任务目的（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "112 ## 八、自动化任务管理与对话反思（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "113 - **环境坑**：受管 Python 无 pyya"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "114 - **已落地 artifacts**：`agent"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "115 - **四维度闭环**：①规则显化 ②流程锁死 ③技"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "116 ### 大项目 AI 约束文档落地（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "117 - **本地技能安装与 UI 刷新（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "118 - 取证步骤：①按 `os.path.getmtim"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "119 - **本地 jsonl 取证法（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "120 - **conversation_search**："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "121 - **完整对话在云端**（`edge-sync`）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "122 - **sessions 表**存元数据（id/cw"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "123 ### WorkBuddy 对话存储（2026-08"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "124 - **Ozon API 现状（2026-08-27"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "125 - **图标空盒根因**：`@icon-park/v"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "126 - **导航机制**：`layout/index.v"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "127 - **1688-collector sidecar"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "128 - **栈**：前端 Vue3 + Element "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "129 ## 六、wimoor-erp 项目速查（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "130 - **期望跨会话连续性**（2026-08-27 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "131 - **偏好的产出形态**：自动化任务、知识管理系统"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "132 - **近期最想解决的事**：建立自动化的对话分析和"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "133 - **当前重心**：持续优化AI协作效率，建立知识"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "134 - **已自有**：个人知识/规范手册类系统 → 勿"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "135 - **技术栈**：Vue3 + Spring Bo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "136 - **角色**：跨境 ERP（wimoor-erp"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "137 ## 五、用户背景卡（2026-08-20，持续更新"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "138 - **Codex 弹窗同源**：`Codex Dr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "139 - **活进程回写（hosts 清理秒级复发根因，2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "140 - **兜底做法**：此类修改，产出正确脚本交给用户"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "141 - **沙箱拦截真实写入**：WorkBuddy 沙"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "142 - **BOM 编码坑**：`C:\\Windows\\"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "143 ### 系统受保护文件写入（hosts 等，2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "144 - **装前先清残留**：注册表有卸载项但程序目录只"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "145 - **NSIS 安装器退出码不可信**：163 M"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "146 ### 安装器与退出码（2026-08-29 实战）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "147 - **特权端口（<1024）绑定需管理员**：S3"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "148 ### 端口冲突与特权端口（2026-08-27 实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "149 - **诊断性禁用看门狗必须收尾（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "150 - **VBS `W.Exec` 仍创窗口（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "151 - **排查 5 分钟周期性闪窗的取证法**：50m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "152 - **沙箱对 `Desktop` 无写权限**：改"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "153 - 已落地：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "154 - VBS 内部起进程：`Set sh = Crea"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "155 - 计划任务动作：`wscript.exe //B "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "156 - **零窗口正解**：VBS + `wscript"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "157 - **`-WindowStyle Hidden` "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "158 ### Windows 计划任务与弹窗根治（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "159 - **教训**：「safe-delete 垫片需 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "160 - **重打包 MemoryOS 桌面版的标准姿势*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "161 - 解法：凡涉及 `fs.cpSync` 的构建/拷"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "162 - 对照实证：系统 `C:\\Program File"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "163 - **managed node 22.22.2 的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "164 - 附带坑：自建临时目录若卡在 trash 失败，会"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "165 - 解法：命令前加 **`CODEBUDDY_SAF"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "166 - 症状：`build-portable.mjs` "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "167 - **删除被重定向到回收站**：本环境把 `fs."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "168 ### WorkBuddy 删除钩子 + node "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "169 - **不可逆删除走\"待删区\"而非回收站 API**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "170 - 无 mysql 客户端 → 受管 Python "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "171 - Git Bash 下 `taskkill` 参数"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "172 - Maven：依赖已在 `~/.m2` 时**只重"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "173 - PowerShell 经 Bash 调用被拦 /"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "174 - **铁律**：凡路径交给 Python/Node"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "175 - **Git Bash `/c/Users/..."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "176 ### Windows 路径铁律（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "177 - **诊断工具**：受管 Python `urll"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "178 - **网速**：国内 ~100-200Mbps；国"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "179 - **搜索**：google 被墙 + 无代理 →"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "180 - **hosts 劫持**：Steam++ + S"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "181 ### 网络环境（2026-08-20） workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "182 - 验证前端**不能停在** build 通过 / "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "183 ### 交互可用性验证（2026-08-22 用户严"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "184 - **环境硬约束**：无 `TeamCreate`"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "185 - **实证闭环**：图标不显色 → 先读源码 + "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "186 - **图标色跟随主题**：禁写死 `!import"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "187 - **Vue scoped 样式不穿透子组件 SV"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "188 - 验证样式下发：curl 主模块抓 `?vue&t"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "189 - 后台 dev server 会被系统回收；用户报"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "190 - 须用宿主进程启动（`dangerouslyDis"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "191 ## 三、前端开发全流程（Vue3 项目） work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "192 - **多 AI 并行先读 CLAIM.md**：见"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "193 - **实验性改动须成对收尾**：见「四、环境与工具"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "194 - **交付即闭环，不许留\"待用户点一下\"就断线**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "195 - **排查周期性现象先自查自装定时器**：见「一、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "196 - **先建基线再大改**：无 git/无上游基线时"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "197 - **端口/进程操作先报备**：杀进程、改启动脚本"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "198 - **复用既有 skill**：涉及 Ozon A"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "199 - **大系统禁整体重写**：wimoor-erp "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "200 - **不交付半成品**：依赖离线（sidecar/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "201 - **先说清交付物再动手**：任何 build 类"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "202 - **意图方向先确认**：见「一、AI 协作工作流"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "203 - **进化引擎升级（2026-08-23 实战）*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "204 - **持续改进**：定期回顾错误模式，优化工作流程"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "205 - **知识积累**：将反思结果转化为可复用条目，写"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "206 - ⑩ **未核实即假定专家/连接器/工具存在（自封"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "207 - ⑨ **多 AI 并行未先读协调文件**（202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "208 - ⑧ **过早宣布\"已根治/已验证\"**（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "209 - ⑦ **验证只验状态码不验内容**（2026-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "210 - ⑥ **忽略用户原话里的关键名词**（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "211 - ⑤ **不自查自己埋的坑**（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "212 - ④ **命名/品牌错误**：品牌名\"星璇\"误写为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "213 - ③ **过度操作**：附带无关重构、主动\"建议\""
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "214 - ② **交付半成品**：build 通过 / c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "215 - ① **意图跑偏**：用户说\"分析竞品X\"→ 真"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "216 - **高频错误模式**（对话分析验证）： work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "217 - **任务后总结**：每次任务完成后，总结成功点和"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "218 ### 错误反思机制（2026-08-23~24 实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "219 - **实证优先**：现象异常且反复时，先读文件/抓"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "220 - 改前说明改哪些文件、改什么、为什么；改后说明如何"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "221 - **①分析根因 → ②给出方案（含权衡/涉及文件"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "222 ## 一、AI 协作工作流（强约束，2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "223 # 用户长期偏好（跨项目） > ## ⚠ 最高优先级"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "224 - 先方案后动手：提供方案须先陈述权衡分析（trad"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "225 ## MemoryOS 同步规则（自动维护，勿手改）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "226 所有输出必须用中文 记住犯得错误并修改，记忆下次不再"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "227 prefix_rule(pattern=[\"C:\\\\"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "228 ## Vibe Be the assistant y"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "229 - You're not the user's vo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "230 - Never send half-baked re"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "231 - When in doubt, ask befor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "232 - Private things stay priv"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "233 --- title: \"SOUL.md Templa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "234 - 中文回复：所有面向用户的输出必须使用中文。（来源"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "235 - 明确区分\"已验证编译\"与\"待用户点测交互\"，不得"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "236 ponytail skill enforces YA"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "237 角色与方法:后端架构师;方法论=先认知再检索、先方案"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "238 结构化表达:四维框架(显式规则/锁定流程/技术兜底/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "239 硬约束:技能/程序单文件;方案先列trade-off"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "240 技术栈:前端为主,熟悉CSS/DOM;精通Vue3/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "241 UI设计偏好:交互元素易点无需滚动;模态内容短减少滚"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "242 记忆沉淀工作流:重要任务完成后AI自动沉淀不用问;①"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "243 沟通风格:docs before code、evid"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "244 执行原则v3——0先砍任务:最大浪费=高效做不必要的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "245 codex rules允许使用PowerShell "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "246 绑定特权端口需以管理员身份运行程序，对外部行为（邮件"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "247 开工先memory_search检索已有记忆；执行遵"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "248 在subagent模式下，推理预算固定为16000 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "249 turnNumber追踪会话轮次，attempt=1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "250 审查前读CLAIM.md对齐分区并声明只读范围，仅审"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "251 遇到技术问题（如端口冲突排查 W3SVC/IIS 绑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "252 更新记忆库时须同步维护FTS全文索引且embeddi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "253 MCP服务器采用fastmcp v3顶层导出Fast"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "254 记忆写入长度规范：每条记忆 content 控制在 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "255 finishReason为框架内部枚举（如tool-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "256 MCP连接采用连接池+lease租约机制，按work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "257 代码审查 AI 交付物时必须限定范围，只审 AI 近"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "258 AI 代码审查按六类过度工程模式扫描：delete（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "259 finishReason=tool-calls 表示"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "260 MCP连接默认使用stdio传输协议而非SSE或HT"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "261 审查输出需按文件或模块分组，每条发现必须包含文件路径"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "262 zcode 模型请求重试配置 maxAttempts"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "263 MCP连接采用session级别隔离（mcpIsol"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "264 插件型MCP服务器采用plugin:<namespa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "265 workspaceKey 使用完整 Windows "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "266 ZCode memory模块默认启用但memoryE"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "267 ZCode配置来源优先级：用户级配置（configS"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "268 对话rewind机制会保留从目标消息往前N条上下文并"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "269 Model ID格式含workspace类型前缀（如"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "270 ZCode启动时序：先完成bootstrap.run"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "271 默认工作目录为~/.zcode/workspace/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "272 记忆去重：similarity>0.96执行merg"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "273 前后端分离场景下，若前端卡片数据通过API动态加载成"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "274 测试覆盖缺口：serve_api.py 缺 HTTP"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "275 do_POST 未校验 Content-Type（s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "276 CSS 样式修改应先锁定目标选择器，避免全局样式污染"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "277 现有体系新增缺口：反馈层到记忆层的回写闭环尚未实现，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "278 去重阈值设为 cosine similarity >"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "279 新增 API 扫描端点时，必须同步更新前端渲染逻辑并"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "280 Dashboard 连接真实 API 后，静态资源需"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "281 dist/ 包含 17 个编译产物文件，构建指令输出"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "282 POST /api/archive接口必须支持事务性"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "283 D6 检索过滤：effectiveness ≤ 0."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "284 D3 去重机制：similarity > 0.96 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "285 serve_api.py的--port默认值必须设为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "286 serve_api.py的CORS仅回显白名单内的O"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "287 8000静态服务由static_server.py替"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "288 修改后端代码后必须重启8120服务才能生效，否则更改"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "289 WorkBuddy AI 记忆入口：~/.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "290 Trae 记忆入口：~/.trae-cn/memor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "291 智能体规则注入清单不能仅凭目录结构推断，需逐目录探查"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "292 国内访问 huggingface 需注入 EMBED"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "293 openEdit(id, forcedType) 支"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "294 SOURCE_SPECS 中 glob 过宽会扫描出"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "295 代理配置文件注入后需自动生成时间戳备份至~/.cod"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "296 端到端验收需覆盖6项核心场景：dry-run不落库、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "297 wimoor-erp 项目禁止修改 common/s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "298 wimoor-erp 项目严格禁止引入 Ant De"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "299 所有功能逻辑必须收敛在单文件内，禁止跨文件散落 tr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "300 技术栈固定为Vue3+Element Plus+Vi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "301 界面设计必须支持响应式布局，适配不同窗口尺寸。 tr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "302 固定定位元素（如 fixed div）在窗口滚动时不"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "303 UI 交互元素须易于访问和点击，按钮应避免需滚动才能"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "304 IDENTITY.md 在手动 bootstrap "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "305 沟通风格应遵循「温暖、直接、不啰嗦」三原则：该认真时"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "306 修改本文件（SOUL.md）时必须主动告知用户，因为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "307 每次会话启动时记忆是空的，必须读取并维护这些文件来延"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "308 涉及外部发声时，若不确定则先询问用户再行动。依据：你"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "309 用户赋予的访问权限涉及私密信息（消息、文件、日历等）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "310 遇到任务先自行尝试解决（读文件、查上下文、搜索），确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "311 允许表达观点、偏好和态度，包括不同意或觉得某事有趣/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "312 避免表演性礼貌用语（如\"Great question"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "313 双代理并行深读（Java + 前端各一）后，代理结论"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "314 单次写入不超过3000字符，条目按重要性排序。 wo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "315 每条记忆需具体到可执行级别（包含文件路径/命令/参数"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "316 环境已变或工具更新的过时条目必须删除，并用新版替代。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "317 语义相似的条目必须合并为一条精炼表述，避免记忆库冗余"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "318 自动化流程第一步固定为本地 jsonl 取证，con"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "319 软删除恢复方法：UPDATE sessions SE"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "320 本地 jsonl 取证法是 conversation"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "321 views/finance 是纯前端孤岛，无对应后端"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "322 跨日会话开工前，必须先确认 Docker 等基础设施"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "323 开工前主动查阅记忆库/历史日志，不要让用户复述数天前"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "324 提供 AI 模型或订阅建议时，必须附带计费口径（积分"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "325 辅助程序/工具脚本优先交付单文件方案，将检测与启动逻"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "326 诊断性临时操作（如禁用计划任务）必须设置自动收尾机制"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "327 沙箱环境对桌面目录无写权限，涉及快捷方式修改或管理员"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "328 PowerShell Out-File 默认 UTF"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "329 PowerShell 直接调 WScript 执行 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "330 回复用户时禁止使用 emoji，需保持纯文本格式以确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "331 ZCode Explore 子代理严格运行于只读模式"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "332 单条操作与批量操作逻辑完全同构时，应直接复用同一实现"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "333 input/output token比约为95:1且"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "334 zcode 会话元数据中 workspaceRoot"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "335 后端AI模块存在过度构建风险，应用Explore p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "336 base64内联图片格式(data:image/pn"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "337 单模独占前提已失效，修改代码前必须先确认 WorkB"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "338 双AI并发改同一代码库会导致文件互相覆盖、.m2/N"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "339 条件渲染的UI片段建议用独立变量承载（如diagno"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "340 通过三元链实现多区间条件映射（如分数80+/60+/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "341 语义化颜色体系应统一映射：success=绿色、wa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "342 诊断折叠块（diagnose-collapse/to"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "343 筛选按钮的hover和active状态应合并选择器统"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "344 CSS组件样式优先使用语义化CSS变量（如--acc"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "345 crossRepeat 字段检测跨场次复读现象，记录"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "346 单场景默认轮次上限12轮（max_rounds: 1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "347 发言纪律限制每次≤3句（max_line_lengt"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "348 记忆超10条时需触发压缩合并机制（memory_ca"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "349 初始化函数initHealthScore内部直接调用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "350 调试阶段可直接运行构建产出的exe文件进行本地测试验"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "351 当原文仅有结构框架而无实际内容时，不应强行生成记忆条"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "352 健康度分数计算：取所有报告的 humanScore "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "353 跨场次重复标记合并：使用 `a || b` 模式优先"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "354 后端 reports 数据中的 scanCount "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "355 tags组件按语义分色：普通tag用--bg-ter"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "356 渐进增强完成区块中，V3质量健康度初始化(initH"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "357 gravity=high场景下必须强制附加'推进核心"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "358 dupian扫描结果需同时聚合执法级命中数与huma"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "359 仪表盘健康度计算采用三段阈值：≥80绿/≥60黄/<"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "360 gravity模式控制场景推进强度：low=参考建议"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "361 侧边栏导航使用overflow-y: auto独立滚"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "362 采用CSS Grid布局（grid-template"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "363 praises默认填充需覆盖'没人留下内心'的元评价"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "364 反哺指令应跳过平淡(type=flat)问题，优先选"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "365 当存在 dupian 时，应同时评估 human_s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "366 跨轮复读检测只需回溯前3轮（range(max(0,"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "367 相邻轮完全复读(type=\"echo\")保留原逻辑，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "368 观察级cliché(hit tier=\"观\")仅记账"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "369 扫描命中数需排除观察级记录，使用 scan_coun"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "370 亮点轮判定需同时满足内心层长度 > 10 且 hum"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "371 台词重复检测应使用 cross_repeat 跨轮 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "372 collect_candidates规则：inner"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "373 advice生成策略：取issues第一条转述为下一"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "374 毒舌红线条目用常量集合存储（_AI_CLICHES）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "375 editorial.py 的 collect_can"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "376 cross_repeat 跨轮复读检测仅在 turn"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "377 平淡轮判定阈值：台词字符数 < 4 视为无效输出；内"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "378 毒舌编辑部采用确定性规则（mock模式）与LLM评审"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "379 ad-hoc指令扩展中的笔记是信息源而非行动指令——"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "380 用户存在错误时必须直接指出，不得为迎合用户而执行错误"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "381 修改前应先制定完整计划，确保一次性修改到位，避免反复"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "382 修改后的文件统一存放至桌面，保持项目目录整洁，避免污"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "383 严格保护敏感信息（如.env、API Key、Tok"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "384 生成和修改代码时需保持严谨，确保逻辑正确、无漏洞。 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "385 严禁直接修改源文件，必须复制文件后在副本上修改，保留"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "386 代码修改完成后必须说明验证方式，确保变更可被检验。 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "387 修改代码前需明确告知将要修改哪些文件，不隐瞒改动范围"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "388 修改代码前必须先阅读项目结构，了解整体架构后再动手。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "389 调试阶段可直接运行构建产出的exe文件进行本地测试验"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "390 允许对内部依赖目录（_internal）按app*前"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "391 构建前清理：先删除目标目录（桌面或临时路径）下同名打"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        },
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "projDirInput",
+          "ph": "或手动输入项目绝对路径，如 C:\\Users\\WYX\\Desktop\\wimoor-erp"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-rules",
+      "route": "rules",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-skills",
+      "route": "skills",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "文件"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "任务"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "记忆"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "用户"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "验证"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "自动"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "规则"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "进程"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "注入"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "目录"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "使用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "实现"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "会话"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "数据"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "调用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "前端"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "默认"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "改动"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "真实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "新增"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "更新"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "项目"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "导致"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "避免"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "返回"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "重启"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "直接"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "结论"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "工作"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "修复"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "写入"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "落地"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "当前"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "确认"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "依赖"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "覆盖"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "命中"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "实证"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "修改"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "span",
+          "cls": "word-cloud-item",
+          "route": "",
+          "text": "连接"
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "id": "globalSearch",
+          "ph": "语义检索记忆…"
+        }
+      ],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 2,
+      "landmarks": {
+        "main": 2,
+        "nav": 1
+      },
+      "headings": {
+        "total": 0,
+        "h1": 0
+      },
+      "ariaLive": 0,
+      "visiblePage": "page-summary",
+      "route": "summary",
+      "focusableNoName": []
+    }
+  ]
+}

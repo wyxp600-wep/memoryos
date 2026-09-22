@@ -16,6 +16,7 @@
     "audit": "node dist/audit-probe.js",
     "ui:walk": "node outputs/agent-ui-walk.mjs",
     "ui:walk:settings": "node outputs/settings-ui-walk.mjs",
+    "ui:walk:a11y": "node outputs/a11y-ui-walk.mjs",
     "lint:sql": "node dist/lint-sql-arity.js --self-test && node dist/lint-sql-arity.js",
     "lint:silent": "node dist/lint-silent-catch.js --self-test && node dist/lint-silent-catch.js",
     "lint": "node dist/lint-syntax.js",

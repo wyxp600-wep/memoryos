@@ -1105,7 +1105,12 @@
   /* ===== 路由 ===== */
   const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], agent: ['Agent', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'], runs: ['执行中心', 'Agent 执行过程 · 工具调用 · 审批 · 产物 · 会话'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], governance: ['治理中心', '成本治理 · 门控 · 进化验证 · 凭据 · A2A 协议'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
   function navigate(route) {
-    $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
+    $$('.nav-item').forEach(n => {
+      const on = n.dataset.route === route;
+      n.classList.toggle('active', on);
+      // ★ P2-⑤ a11y：当前页除视觉 active 类外，同步 aria-current 给屏幕阅读器
+      if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+    });
     $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + route));
     const [t, s] = PAGE_TITLES[route] || [route, ''];
     // $('#pageTitle').innerHTML = t + ' <span>' + s + '</span>';
@@ -3094,6 +3099,47 @@
     $('#shortcutsHelp')?.addEventListener('click', (e) => { if (e.target.id === 'shortcutsHelp') e.target.classList.remove('show'); });
   }
 
+  /* ===== 可访问性（P2-⑤，2026-09-22）：主操作件键盘可达 =====
+   * 背景（CDP 实测基线，outputs/a11y-baseline-20260922.json）：看板大量"主操作件"是
+   *   <a>/<div>/<span> + JS `.onclick`，无 href / tabindex → 不在 Tab 序列、键盘用户完全够不着
+   *   （P0-1 命中 54，去重 36 个元素：导航 18 / 排序表头 7 / 侧栏快捷项 4 / 统计卡 4 / 会话项 2 / 任务地图 1）。
+   * 取舍：只标记「主操作件」；**不**把表格整行点击（556 个 dataRow：tr/word-cloud/rank 等）也塞进
+   *   Tab 序列 —— 那会让 Tab 序爆炸、键盘体验反而更差；数据行需另行走内主操作或 roving tabindex 方案。
+   * 动态内容（表格重渲染、会话列表、右键菜单）由 MutationObserver 增量补齐；只 observe childList，
+   *   自身写属性不会回环触发。
+   */
+  const A11Y_SEL = '.nav-item[data-route], .agent-sidebar-quick-item, .agent-session-item, .stat-card[data-route], #tabMap, th[data-sort], .more-panel-tab, .context-menu-item';
+  function markA11y(root) {
+    const scope = (root && root.querySelectorAll) ? root : document;
+    const NATIVE_FOCUSABLE = 'a[href],button,input,select,textarea,[contenteditable="true"]';
+    const add = (el) => {
+      if (el.disabled === true) return;
+      if (el.dataset.a11yKey === '1') return;
+      // ★ 必须按「原生可聚焦性」判定，不能看 el.tabIndex —— 实测 <a> 无 href 时 tabIndex 仍返回 0，
+      //   用 `el.tabIndex < 0` 做守卫会跳过它、tabindex 属性根本没写上（探针实证 tabindexAttr=null）。
+      if (!el.matches(NATIVE_FOCUSABLE) && !el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+      // th 保留 columnheader 角色（只加 tabindex），其余按标签定角色
+      if (el.tagName !== 'TH' && !el.getAttribute('role')) el.setAttribute('role', el.tagName === 'A' ? 'link' : 'button');
+      el.dataset.a11yKey = '1';
+    };
+    if (scope.matches && scope.matches(A11Y_SEL)) add(scope);
+    scope.querySelectorAll(A11Y_SEL).forEach(add);
+  }
+  function initA11yInteractions() {
+    markA11y(document.body);
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      const t = e.target;
+      if (!t || !t.dataset || t.dataset.a11yKey !== '1') return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      e.preventDefault();
+      t.click();
+    });
+    new MutationObserver((muts) => {
+      for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) markA11y(n);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
   // ===== 表格列排序 =====
   let sortField = null, sortDir = 'asc';
   function initTableSort() {
@@ -3110,8 +3156,9 @@
           sortDir = 'asc';
         }
         // 更新表头指示
-        headers.forEach(h => { h.textContent = h.textContent.replace(/ [↑↓]$/, ''); });
+        headers.forEach(h => { h.textContent = h.textContent.replace(/ [↑↓]$/, ''); h.setAttribute('aria-sort', 'none'); });
         th.textContent += sortDir === 'asc' ? ' ↑' : ' ↓';
+        th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending'); // ★ P2-⑤ a11y：排序状态暴露给屏幕阅读器
         renderAllTable();
       };
     });
@@ -3589,6 +3636,7 @@
   initTheme();
   initRipple();
   initKeyboard();
+  initA11yInteractions(); // ★ P2-⑤：主操作件键盘可达（标记 + Enter/Space 触发 + 动态内容观察）
   /* ===== ★ P6 知识图谱 + 卡片看板（调用 /api/graph /api/cards 新后端）===== */
   const CARD_STATES_UI = [
     ['triage', '待细化', '#64748b'], ['todo', '待就绪', '#3b82f6'], ['ready', '可认领', '#06b6d4'], ['running', '执行中', '#a8557f'],
