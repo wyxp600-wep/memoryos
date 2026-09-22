@@ -3209,53 +3209,6 @@
     }
   }
 
-  // ===== 侧栏折叠 =====
-  function initSidebarCollapse() {
-    const sidebar = document.querySelector('.sidebar');
-    const main = document.querySelector('.main-content');
-    const logo = document.querySelector('.sidebar-logo');
-    if (!sidebar || !main || !logo) return;
-
-    // 恢复折叠状态
-    if (localStorage.getItem('memoryos-sidebar-collapsed') === 'true') {
-      sidebar.classList.add('collapsed');
-      main.classList.add('sidebar-collapsed');
-    }
-
-    // 双击 Logo 折叠/展开
-    logo.style.cursor = 'pointer';
-    logo.title = '双击折叠/展开侧栏';
-    logo.addEventListener('dblclick', () => {
-      const collapsed = sidebar.classList.toggle('collapsed');
-      main.classList.toggle('sidebar-collapsed', collapsed);
-      localStorage.setItem('memoryos-sidebar-collapsed', collapsed);
-      // 侧栏折叠/展开后内容区宽度变化，触发图表自适应
-      setTimeout(resizeAllCharts, 50);
-    });
-
-    // 窄屏抽屉菜单：汉堡按钮开、遮罩与导航点击关
-    const toggleBtn = document.getElementById('sidebarToggle');
-    const backdrop = document.getElementById('sidebarBackdrop');
-    const closeDrawer = () => {
-      sidebar.classList.remove('open');
-      if (backdrop) backdrop.classList.remove('show');
-    };
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', () => {
-        sidebar.classList.add('open');
-        if (backdrop) backdrop.classList.add('show');
-      });
-    }
-    if (backdrop) {
-      backdrop.addEventListener('click', closeDrawer);
-    }
-    // 抽屉打开时点击任意导航项/Logo 关闭
-    sidebar.querySelectorAll('.nav-item, .sidebar-logo').forEach((el) => {
-      el.addEventListener('click', () => closeDrawer());
-    });
-    window.addEventListener('resize', () => { if (window.innerWidth > 768) closeDrawer(); });
-  }
-
   // ===== 记忆内链接跳转 =====
   function initMemoryLinks() {
     document.addEventListener('click', (e) => {
@@ -6316,7 +6269,6 @@
   initFilterTags();
   initMemoryLinks();
   initDataActions();
-  initSidebarCollapse();
   initConnectScan();
   initAgent();
   initRuns();

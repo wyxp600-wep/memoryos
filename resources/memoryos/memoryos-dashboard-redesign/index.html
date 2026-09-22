@@ -72,7 +72,6 @@
 [data-theme="dark"] .status-bar-track { background: rgba(255,255,255,0.06); }
 [data-theme="dark"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
 [data-theme="dark"] .global-loading { background: rgba(10,15,20,0.85); }
-[data-theme="dark"] .sidebar { background: rgba(15, 22, 32, 0.85); border-right-color: rgba(255,255,255,0.08); }
 [data-theme="dark"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }
 [data-theme="dark"] .nav-item { color: rgba(226,232,240,0.7); }
 [data-theme="dark"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
@@ -734,41 +733,8 @@ html, body {
   min-height: 100vh;
 }
 
-/* ===== Sidebar ===== */
-.sidebar {
-  width: var(--sidebar-w);
-  min-height: 100vh;
-  background: rgba(255,255,255,0.65);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-right: 1px solid var(--border-glass);
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  z-index: 100;
-  transition: width 0.25s ease;
-}
-.sidebar.collapsed { width: 64px; }
-.sidebar.collapsed .logo-text,
-.sidebar.collapsed .nav-label,
-.sidebar.collapsed .nav-group-title,
-.sidebar.collapsed .sidebar-footer-text { display: none; }
-.sidebar.collapsed .nav-item { justify-content: center; padding: 10px; }
-.sidebar.collapsed .sidebar-logo { justify-content: center; padding: 16px 0; }
-.sidebar.collapsed .nav-badge { position: absolute; top: 4px; right: 4px; font-size: 9px; min-width: 16px; height: 16px; }
 .main-content { transition: margin-left 0.25s ease; }
-.main-content.sidebar-collapsed { margin-left: 64px; }
 
-.sidebar-logo {
-  padding: 28px 24px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--border-glass);
-}
 .logo-icon {
   width: 42px;
   height: 42px;
@@ -799,11 +765,6 @@ html, body {
   text-transform: uppercase;
 }
 
-.sidebar-nav {
-  flex: 1;
-  padding: 16px 12px;
-  overflow-y: auto;
-}
 .nav-section-label {
   font-size: 10px;
   font-weight: 700;
@@ -879,10 +840,6 @@ html, body {
   color: var(--accent-cyan);
 }
 
-.sidebar-footer {
-  padding: 16px;
-  border-top: 1px solid var(--border-glass);
-}
 .daemon-status {
   display: flex;
   align-items: center;
@@ -2253,23 +2210,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 /* ===== 响应式断点（窗口缩小自适应） ===== */
 /* ≥1280 默认大屏布局不变；以下逐步降列/堆叠/折叠侧栏 */
 
-/* 汉堡按钮：大屏默认隐藏，仅窄屏抽屉显示 */
-.sidebar-toggle {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: 1px solid var(--border-glass);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.2s;
-}
-.sidebar-toggle:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
-.sidebar-backdrop { display: none; }
 
 /* 中屏：四列统计 → 两列，双栏 → 单列 */
 @media (max-width: 1280px) {
@@ -2282,18 +2222,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .search-box { width: 200px; }
 }
 
-/* 小屏：自动折叠侧栏为图标条（复用 .collapsed 视觉，纯 CSS 无需 JS） */
 @media (max-width: 992px) {
-  .sidebar { width: 64px; }
-  .sidebar .logo-text,
-  .sidebar .nav-label,
-  .sidebar .nav-section-label,
-  .sidebar .sidebar-footer-text,
-  .sidebar .logo-sub { display: none; }
-  .sidebar .nav-item { justify-content: center; padding: 10px; }
-  .sidebar .nav-badge { position: absolute; top: 4px; right: 4px; font-size: 9px; min-width: 16px; height: 16px; }
-  .sidebar .sidebar-logo { justify-content: center; padding: 16px 0; }
-  .main-content { margin-left: 64px; }
   .stat-grid { grid-template-columns: 1fr; }
   .shortcuts-help-grid, .shortcuts-grid { grid-template-columns: 1fr; }
   .topbar { padding: 14px 18px; }
@@ -2313,34 +2242,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
   .page { padding: 16px 14px 32px; }
 
-  /* 抽屉式侧栏：默认隐藏，点击汉堡滑入 */
-  .sidebar {
-    width: 260px;
-    transform: translateX(-100%);
-    transition: transform 0.3s ease;
-    box-shadow: 0 0 40px rgba(0,0,0,0.25);
-  }
-  .sidebar.open { transform: translateX(0); }
-  .sidebar .logo-text,
-  .sidebar .nav-label { display: block; }
-  .sidebar .logo-sub { display: block; }
-  .sidebar .nav-section-label { display: block; }
-  .sidebar .sidebar-footer-text { display: block; }
-  .sidebar .nav-item { justify-content: flex-start; padding: 11px 14px; }
-  .sidebar .nav-badge { position: static; font-size: 11px; min-width: auto; height: auto; }
-  .sidebar .sidebar-logo { justify-content: flex-start; padding: 28px 24px 20px; }
-  .main-content { margin-left: 0; }
 
-  .sidebar-toggle { display: flex; }
-  .sidebar-backdrop {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 90;
-    background: rgba(0,0,0,0.4);
-    backdrop-filter: blur(2px);
-  }
-  .sidebar-backdrop.show { display: block; }
 }
   /* ── 受限模式（能力位由后端 /api/summary 下发）：隐藏用户不可用的入口 ──
      入口不删除，仅隐藏 —— 后端 MEMORY_RESTRICTED=0 时能力位转 false，界面自动恢复 */
@@ -2630,17 +2532,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   ::-webkit-scrollbar-thumb:hover { background: rgba(34,211,238,0.55); background-clip: padding-box; border:2px solid transparent; }
   ::-webkit-scrollbar-track { background: transparent; }
 
-  /* ===== 侧边栏：深色玻璃 + 霓虹激活态 ===== */
-  .sidebar {
-    background: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(244,248,251,0.82)) !important;
-    backdrop-filter: blur(28px) saturate(1.4); -webkit-backdrop-filter: blur(28px) saturate(1.4);
-    border-right: 1px solid var(--border-glass) !important;
-  }
-  [data-theme="dark"] .sidebar {
-    background: linear-gradient(180deg, rgba(11,19,28,0.92), rgba(8,14,21,0.92)) !important;
-    border-right-color: rgba(34,211,238,0.10) !important;
-  }
-  .sidebar-logo { border-bottom: 1px solid var(--line-soft) !important; }
   .logo-icon {
     background: linear-gradient(135deg, var(--c-primary-bright), var(--c-violet)) !important;
     box-shadow: 0 0 20px rgba(34,211,238,0.45), inset 0 1px 0 rgba(255,255,255,0.3) !important;
@@ -3106,9 +2997,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   }
 
   /* ===== 响应式修复 ===== */
-  /* 侧栏折叠即显示切换按钮（修复 768~992px 无法展开） */
   @media (max-width: 992px) {
-    .sidebar-toggle { display: flex !important; }
     .topbar-actions { flex-wrap: wrap; gap: 8px !important; }
   }
   @media (max-width: 768px) {
@@ -4934,8 +4823,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   <button class="error-reload" data-action="reload">重新加载</button>
 </div>
 
-<!-- 抽屉菜单遮罩（窄屏点击侧栏外关闭） -->
-<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
 <!-- Command Palette -->
 <div class="modal-overlay" id="commandPalette">
