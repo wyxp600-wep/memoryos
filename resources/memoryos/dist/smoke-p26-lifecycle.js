@@ -83,7 +83,9 @@ try {
     check("C4.非进行中任务 release 被拒（负路径）", /仅进行中任务可释放/.test(await call("task_release", { memory_id: a })));
 
     /* ── D. 释放后可被他人接管重领 + fencing ── */
-    const claim2 = await call("task_claim", { memory_id: a, as: "any" });   // 指派他人须 as=any 强制托管认领（assignee 校验会拦）
+    // ★ 2026-09-19（弊端 H2）：as="any" 托管认领会改写归属——须携 scope>=write 凭据（与硬模式同口径）
+    const d1Cred = String(await call("memory_credential", { action: "issue", agent: "p26-life", scope: "write", ttl_hours: 1 })).split("：").pop().trim();
+    const claim2 = await call("task_claim", { memory_id: a, as: "any", credential: d1Cred });   // 指派他人须 as=any 强制托管认领（assignee 校验会拦）+ H2 凭据
     check("D1.释放后可被他人接管重领", /已认领/.test(claim2) && headStatus(a) === "in_progress", claim2.replace(/\s+/g, " ").slice(0, 80));
     check("D2.错误 lease 的完成写被拒（fencing）", /本次完成拒绝|租约/.test(await call("task_done", { memory_id: a, conclusion: "x", lease_token: "00000000-0000-0000-0000-000000000000" })));
 

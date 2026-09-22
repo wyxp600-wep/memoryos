@@ -135,17 +135,17 @@ try {
     // task 交接：assign → claim → done（MVP 协同闭环，真实 MCP 链路）
     const ta = (await send("tools/call", {
         name: "task_assign",
-        arguments: { content: "排查 Ozon scope 未开通", assignee: "claude", project: "global" },
+        arguments: { content: "排查 Ozon scope 未开通", assignee: "codex", project: "global" },
     }));
     const tat = ta.result?.content?.[0]?.text ?? "";
     const tid = (tat.match(/#(\d+)/) ?? [])[1];
     check("task_assign 分派并返回任务号", /已分派任务 #\d+/.test(tat) && !!tid, JSON.stringify(tat.slice(0, 60)));
     const tcl = (await send("tools/call", {
         name: "task_claim",
-        arguments: { as: "claude", memory_id: Number(tid) },
+        arguments: { as: "codex", memory_id: Number(tid) },
     }));
     const tclt = tcl.result?.content?.[0]?.text ?? "";
-    check("task_claim 认领 claimed", tclt.includes("已认领") && tclt.includes("in_progress by claude"), JSON.stringify(tclt.slice(0, 60)));
+    check("task_claim 认领 claimed", tclt.includes("已认领") && tclt.includes("in_progress by codex"), JSON.stringify(tclt.slice(0, 60)));
     const tdn = (await send("tools/call", {
         name: "task_done",
         arguments: { memory_id: Number(tid), conclusion: "需要向平台申请 order/read scope" },
@@ -197,14 +197,14 @@ try {
     // ★ P2-6（C-2/C-4）生命周期工具 + fencing + memory_write 版本化（端到端）
     const ta2 = (await send("tools/call", {
         name: "task_assign",
-        arguments: { content: "P2-6 生命周期样本：验证 heartbeat/release/block/reopen 与 fencing", assignee: "smoke" },
+        arguments: { content: "P2-6 生命周期样本：验证 heartbeat/release/block/reopen 与 fencing", assignee: "codex" },
     }));
     const ta2t = ta2.result?.content?.[0]?.text ?? "";
     const tid2 = (ta2t.match(/#(\d+)/) || [])[1];
     check("P2-6a.task_assign 建立样本任务", !!tid2, JSON.stringify(ta2t.slice(0, 50)));
     const tcl2 = (await send("tools/call", {
         name: "task_claim",
-        arguments: { memory_id: Number(tid2), as: "smoke" },
+        arguments: { memory_id: Number(tid2), as: "codex" },
     }));
     const tcl2t = tcl2.result?.content?.[0]?.text ?? "";
     const lease = (tcl2t.match(/lease_token=([0-9a-f]+)/) || [])[1];
@@ -217,7 +217,7 @@ try {
     check("P2-6c.过期/伪造租约被 fencing 拒绝", tdnBadt.includes("租约已被接管"), JSON.stringify(tdnBadt.slice(0, 60)));
     const thb = (await send("tools/call", {
         name: "task_heartbeat",
-        arguments: { memory_id: Number(tid2), as: "smoke" },
+        arguments: { memory_id: Number(tid2), as: "codex" },
     }));
     const thbt = thb.result?.content?.[0]?.text ?? "";
     check("P2-6d.task_heartbeat 续租成功", thbt.includes("续租成功"), JSON.stringify(thbt.slice(0, 60)));
@@ -241,13 +241,13 @@ try {
     check("P2-6g.task_release 释放回 pending", trlt.includes("已释放"), JSON.stringify(trlt.slice(0, 60)));
     const tcl3 = (await send("tools/call", {
         name: "task_claim",
-        arguments: { memory_id: Number(tid2), as: "smoke", expected_version: 99 },
+        arguments: { memory_id: Number(tid2), as: "codex", expected_version: 99 },
     }));
     const tcl3t = tcl3.result?.content?.[0]?.text ?? "";
     check("P2-6h.陈旧版本领取被拒（乐观版本 fencing）", tcl3t.includes("版本漂移"), JSON.stringify(tcl3t.slice(0, 70)));
     const tcl4 = (await send("tools/call", {
         name: "task_claim",
-        arguments: { memory_id: Number(tid2), as: "smoke" },
+        arguments: { memory_id: Number(tid2), as: "codex" },
     }));
     const tcl4t = tcl4.result?.content?.[0]?.text ?? "";
     check("P2-6i.释放后可重新认领（pending → in_progress）", tcl4t.includes("已认领"), JSON.stringify(tcl4t.slice(0, 60)));
@@ -259,7 +259,7 @@ try {
     check("P2-6j.task_block 标记受阻（in_progress → blocked）", tblkt.includes("已标记受阻"), JSON.stringify(tblkt.slice(0, 60)));
     const thb2 = (await send("tools/call", {
         name: "task_heartbeat",
-        arguments: { memory_id: Number(tid2), as: "smoke" },
+        arguments: { memory_id: Number(tid2), as: "codex" },
     }));
     const thb2t = thb2.result?.content?.[0]?.text ?? "";
     check("P2-6k.受阻态续租被拒（状态守卫）", thb2t.includes("无需续租"), JSON.stringify(thb2t.slice(0, 50)));

@@ -95,6 +95,18 @@ try {
     r = reconcileTasksAndCards(db);
     check("M8.终态任务（done）不参与对账（卡不被改写）", cardStatus(c7) === "running", `card=${cardStatus(c7)}`);
 
+    /* ── M9：卡侧富状态不被对账强拉（修 #3，2026-09-19）── */
+    const t9a = task("p26-rec", "in_progress", "（review 保护）");
+    const c9a = addCard(t9a.id, "review");
+    const t9b = task("p26-rec", "blocked", "（failed 保护）");
+    const c9b = addCard(t9b.id, "failed");
+    const t9c = task("p26-rec", "pending", "（todo 保护）");
+    const c9c = addCard(t9c.id, "todo");
+    r = reconcileTasksAndCards(db);
+    check("M9a.卡 review 不被对账拉回 running（review 泳道保留）", cardStatus(c9a) === "review", `card=${cardStatus(c9a)}`);
+    check("M9b.卡 failed 不被对账拉回 blocked（failed 恢复路保留）", cardStatus(c9b) === "failed", `card=${cardStatus(c9b)}`);
+    check("M9c.卡 todo 不被对账拉回 ready（depends 依赖门不被绕过）", cardStatus(c9c) === "todo", `card=${cardStatus(c9c)}`);
+
     db.close();
     db = null;
 } catch (e) {

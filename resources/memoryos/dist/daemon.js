@@ -10,7 +10,7 @@
  *   ③ 去重    sim>0.96 合并，存活者=命中多者；跨来源印证 conf+0.1；LIMIT 50/轮
  * 验收：--once --dry-run 输出计划且不落库。
  */
-import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory } from "./db.js";
+import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory, updateMemory } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
 import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
 import fs from "node:fs";
@@ -312,7 +312,9 @@ export function applyPlan(db, plan, dryRun) {
         try {
             db.exec("PRAGMA wal_checkpoint(PASSIVE)");
         }
-        catch { /* WAL 收拢失败不视为治理失败 */ }
+        catch (e) {
+            console.error(`[daemon] WAL 收拢失败（PASSIVE，不阻断治理）: ${e instanceof Error ? e.message : String(e)}`);
+        }
         lines.push(`已应用：eff更新 ${plan.decays.length}，归档 ${plan.archives.length}，去重 ${plan.dedupes.length}，试用考核 ${plan.trials.length}`);
     }
     catch (e) {
@@ -648,6 +650,7 @@ export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}
             db.exec(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`); // 目标文件必须不存在；单引号转义
         }
         catch (e) {
+            console.error(`[daemon] VACUUM 前置快照失败（放弃本次 VACUUM，${snapshot}）: ${e instanceof Error ? e.message : String(e)}`);
             return { ok: false, error: `快照失败，已放弃 VACUUM：${e instanceof Error ? e.message : String(e)}` };
         }
     }
@@ -655,6 +658,7 @@ export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}
         db.exec("VACUUM");
     }
     catch (e) {
+        console.error(`[daemon] VACUUM 失败（可能被其他连接占用，下轮重试）: ${e instanceof Error ? e.message : String(e)}`);
         return { ok: false, error: `VACUUM 失败（可能被其他连接占用，下轮重试）：${e instanceof Error ? e.message : String(e)}`, snapshot };
     }
     const afterFreelist = one("PRAGMA freelist_count");
@@ -703,12 +707,16 @@ export function reapExpiredLeases(db, opts = {}) {
         try {
           const rel = db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(c.id);
           const m = rel ? db.prepare(`SELECT id, content, version, status FROM memories WHERE id=?`).get(rel.memory_id) : null;
-          const st = m ? (m.content.match(/\[status:([a-z_]+)\]/) || [])[1] : null;
+          // ★ 2026-09-19（弊端 H5）：status 只解析首行（与 server.js readTaskState 同口径）——正文引用的标记不再影响 reaper 判定
+          const _hl = m ? m.content.slice(0, m.content.indexOf("\n") < 0 ? m.content.length : m.content.indexOf("\n")) : "";
+          const st = _hl.match(/\[status:([a-z_]+)\]/)?.[1] || null;
           if (m && ["active", "trial"].includes(String(m.status)) && st === "in_progress") {
             // 任务头回 pending：CAS（MCP 侧正在改写 → 版本漂移 → 整体回滚，下轮再试）
-            const cas = db.prepare(`UPDATE memories SET content=?, version=version+1 WHERE id=? AND version=?`)
-                .run(m.content.replace(`[status:${st}]`, "[status:pending]"), m.id, m.version);
-            if (Number(cas.changes) !== 1) {
+            // ★ 修 #5（2026-09-19）：裸 UPDATE 改走 updateMemory 正门 CAS —— 原写法 version+1 但
+            //   不同步 FTS/2-gram、不置 embedding_stale（一致性②同款漏网，头回 pending 后检索索引脏读）。
+            //   漂移 → null → 整体回滚下轮再试，语义不变。
+            const cas = updateMemory(db, m.id, { content: m.content.replace(`[status:${st}]`, "[status:pending]"), expectedVersion: m.version });
+            if (!cas) {
               db.exec("ROLLBACK");
               continue;
             }

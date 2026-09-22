@@ -1,11 +1,16 @@
 /**
  * smoke-agent.js — MemoryOS Agent 冒烟
  *  ① LLM 端点工具调用直测（qwen3:8b / 任意 OpenAI 兼容，--llm-url/--llm-model 覆盖）
- *  ② MCP 客户端连通 + tools/list（22 工具）
+ *  ② MCP 客户端连通 + tools/list（期望工具面由 server --list-tools 派生，不再手抄清单）
  *  ③ 只读 agent 单轮（memory_context 注入，不触发写门禁）
  * 用法：node dist/smoke-agent.js [--llm-url U --llm-model M]
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { createMcpClient, resolveLlm, callLlm, mcpToolsToOpenai, runAgent, buildSystemPrompt } from "./agent-core.js";
+
+const execFileP = promisify(execFile);
 
 const extra = process.argv.slice(2);
 function opt(name) {
@@ -47,36 +52,24 @@ const ok = (name, cond, detail = "") => {
     const mcp = await createMcpClient({ agentName: "smoke", agentFpath: "dist/smoke-agent.js" });
     try {
         const tools2 = await mcp.tools();
-        /* 断言策略（★ 2026-09-16 第三次修正同类问题 → 2026-09-17 第四次）：**禁止写死工具总数**。
-         *   F16 是 smoke-mcp 写死 17；随后我把它改成"18 或 21"仍属写死 —— P2-6 再加 4 个生命周期工具后总数变 22，
-         *   断言又立刻过期（本次实跑 got 22 → FAIL）。正解：期望值由**分组定义推导**，并在不符时打印差集，
-         *   这样新增工具只改分组一处，且仍能抓到"注册缺失"（清单断言）与"多出意料外工具"（差集）。
-         *   第四次：server.js 新增 3 工具（memory_credential / task_gate / task_delegate）又超期 REQUIRED ——
-         *   本次把它们并入分组，后续加新工具同样只改分组定义。 */
-        const REQUIRED = [
-            "memory_write", "memory_search", "memory_ask", "memory_projects", "memory_context",
-            "memory_read", "memory_feedback", "memory_cite", "memory_report", "memory_health",
-            "memory_credential",
-            "obsidian_import", "obsidian_export", "obsidian_write_note",
-            "task_assign", "task_claim", "task_done", "task_supersede", "task_next",
-            "task_gate", "task_delegate",
-            // ★ P2-6（C-2/#4198）新增 task 生命周期工具
-            "task_heartbeat", "task_release", "task_block", "task_reopen",
-        ];
-        const LIFECYCLE = ["task_heartbeat", "task_release", "task_block", "task_reopen"];   // P2-6（C-2）
-        const EXEC = ["file_read", "file_write", "exec_run"];                                // P0（默认关闭，需 MEMORYOS_EXEC_ON=1）
+        /* 断言策略（★ 2026-09-19 第 6 次同类修正 = 根治）：**手抄清单必过期** —— 前五次见 git 历史
+         *   （F16 写死 17 → "18 或 21" → P2-6 22 工具 → memory_credential/task_gate/task_delegate →
+         *   task_verify 落地后 REQUIRED 仍停在 25，实跑 got 26 必 FAIL）。根治：期望清单改由
+         *   `node dist/server.js --list-tools` 打印的**实际注册清单**派生（server.js 的 addTool 覆写层
+         *   维护 REGISTERED_TOOLS，单一事实源；新增/删减工具只改 server 注册一处，本冒烟零维护）。
+         *   断言语义 = 「客户端 tools/list 所见 == server 实际注册」的 wire 层一致性；单个工具的功能
+         *   正确性由 smoke-mcp / smoke-macp 逐一调用覆盖，不在本断言职责内。 */
+        const listOut = await execFileP(process.execPath, [fileURLToPath(new URL("./server.js", import.meta.url)), "--list-tools"], { maxBuffer: 1 << 20 });
+        const tm = /##TOOLS##(\[[^\n]*\])/.exec(String(listOut.stdout));
+        const expected = tm ? JSON.parse(tm[1]) : [];
+        const EXEC = ["file_read", "file_write", "exec_run"];   // P0（默认关闭，需 MEMORYOS_EXEC_ON=1；暴露开关一致性单测）
         const names = tools2.map((t) => t.name);
         const execOn = process.env.MEMORYOS_EXEC_ON === "1";
-        // ★ REQUIRED 已含 P2-6 生命周期 4 工具（22 = 记忆 10 + Obsidian 3 + 任务 9），
-        //   故期望值不得再叠加 LIFECYCLE（早期版本在此重复计 4 个，导致期望恒比实际多 4 → 必 FAIL）。
-        const expected = [...REQUIRED, ...(execOn ? EXEC : [])];
         const unexpected = names.filter((n) => !expected.includes(n));
         const missing = expected.filter((n) => !names.includes(n));
-        ok(`MCP 工具面与分组定义一致（期望 ${expected.length} 个：基线 ${REQUIRED.length} + ${execOn ? "执行面 3" : "执行面默认关闭"}）`,
-            names.length === expected.length && missing.length === 0 && unexpected.length === 0,
-            `got ${names.length}｜缺失=[${missing.join(", ")}]｜多出=[${unexpected.join(", ")}]`);
-        ok("必备工具全部注册（防静默缺失）", REQUIRED.every((n) => names.includes(n)), `${REQUIRED.length}/${REQUIRED.length} 在册（${REQUIRED.filter((n) => !names.includes(n)).length ? "缺 " + REQUIRED.filter((n) => !names.includes(n)).join(", ") : "0 缺失"}）`);
-        ok("P2-6 生命周期 4 工具已注册", LIFECYCLE.every((n) => names.includes(n)), LIFECYCLE.filter((n) => !names.includes(n)).join(", ") || "4/4");
+        ok(`MCP 工具面与 server 注册清单一致（--list-tools 派生，期望 ${expected.length} 个）`,
+            expected.length > 0 && names.length === expected.length && missing.length === 0 && unexpected.length === 0,
+            `got ${names.length}｜缺失=[${missing.join(", ")}]｜多出=[${unexpected.join(", ")}]${expected.length ? "" : "｜--list-tools 输出解析失败"}`);
         const execNames = EXEC.filter((n) => names.includes(n));
         ok("执行面 3 工具的暴露与开关一致", execOn ? execNames.length === 3 : execNames.length === 0, `实际暴露 ${execNames.length} 个${execNames.length ? `: ${execNames.join(", ")}` : ""}`);
         const tn = await mcp.callTool("task_next", { project: "global", as: "" });
@@ -102,4 +95,10 @@ const ok = (name, cond, detail = "") => {
     }
 }
 console.log(failed ? `\n${failed} 项失败` : "\n全部通过");
-process.exit(failed ? 1 : 0);
+/* ★ 2026-09-19 修进程崩溃：Windows + Node 24 下紧跟 mcp.close() 的 process.exit 会与
+ *   stdio transport 句柄关闭竞态，触发 libuv 断言（win/async.c:76，退出码 0xC0000409 fail-fast），
+ *   把一条断言失败放大成整进程崩溃。改设 exitCode 让事件循环自然排空后退出；
+ *   2 秒兜底强退（unref 不保活），防个别句柄滞留挂住 smoke-all。 */
+process.exitCode = failed ? 1 : 0;
+const _forceExit = setTimeout(() => process.exit(process.exitCode), 2000);
+if (typeof _forceExit.unref === "function") _forceExit.unref();

@@ -68,8 +68,13 @@ function fenceUntrusted(label, content, toolName) {
  * 实现方式：覆盖「实例上的 addTool 方法」（实例属性遮蔽原型方法），而非改写 16 个注册点 ——
  * 这样注册点的参数类型推断与可读性完全不变，只在运行时多包一层 try/catch。
  */
+// ★ 2026-09-19 单一事实源：所有经覆写层注册的工具名都记入 REGISTERED_TOOLS。
+//   `node dist/server.js --list-tools` 打印该清单后退出，冒烟（smoke-agent）用它派生期望工具面，
+//   根治「手抄清单第 5 次过期」（task_verify 落地后 smoke 的 REQUIRED 仍停在 25 → 必 FAIL）。
+const REGISTERED_TOOLS = [];
 const _origAddTool = server.addTool.bind(server);
 server.addTool = (def) => {
+    REGISTERED_TOOLS.push(def.name);
     // ★ P0 执行面（修 F1）：把风险级/审批策略前缀注入工具描述 —— 单一真相源在 exec-tools.js 的 TOOL_RISK。
     //   agent-core 从 tools/list 解析该前缀决定是否过 writeGate；解析不到则 fail-closed（一律需审批）。
     const _pfx = riskPrefix(def.name);
@@ -963,23 +968,36 @@ function taskHead(status, assignee) {
 }
 /** 依赖段：`[depends:12,15]`（紧跟状态头之后，可缺省） */
 const TASK_DEP_RE = /\[depends:([0-9,\s]+)\]/;
+/** ★ 2026-09-19（弊端 H4/H5）：头字段（status/assignee/depends/gate）只解析头行——
+ *  正文里引用的 [depends:]/[gate:]/[status:] 标记视为普通正文，不再影响依赖判定/门控/对账。 */
+function headLineOf(content) {
+    const s = String(content ?? "");
+    const i = s.indexOf("\n");
+    return i < 0 ? s : s.slice(0, i);
+}
 function readTaskState(content) {
-    const m = content.match(TASK_HEAD_RE);
+    const m = String(content ?? "").match(TASK_HEAD_RE);
     if (!m)
         return null;
-    const am = content.match(/\[assignee:([^\]]*)\]/);
-    const dm = content.match(TASK_DEP_RE);
+    const hl = headLineOf(content);
+    const am = hl.match(/\[assignee:([^\]]*)\]/);
+    const dm = hl.match(TASK_DEP_RE);
     const deps = dm ? dm[1].split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)) : [];
     return { assignee: am ? am[1] : "?", status: TASK_NORMALIZE[m[1]] || m[1], deps };
 }
-/** 拆掉状态头和依赖段的纯正文 */
+/** 拆掉状态头和头行依赖段的纯正文（正文中引用的 [depends:] 属正文，不剥） */
 function taskBody(content) {
-    return content.replace(TASK_HEAD_RE, "").replace(TASK_DEP_RE, "").trim();
+    return String(content ?? "").replace(TASK_HEAD_RE, "").replace(/^\s*\[depends:[^\]]*\]/, "").trim();
 }
 /** 构造正文时保留依赖段 */
 function taskBodyWithDep(status, assignee, deps, body) {
     const depStr = deps.length ? ` [depends:${deps.join(",")}]` : "";
     return `${taskHead(status, assignee)}${depStr} ${body}`;
+}
+/** ★ 2026-09-19（弊端 H4，纵深一层）：写入任务正文的自由文本（结论/原因）中性化其可能引用的
+ *  状态标记——正文无法再"种"依赖/门控/归属（〔status: 之类对解析器无效）。 */
+function sanitizeTaskText(t) {
+    return String(t ?? "").replace(/\[(status|depends|gate|assignee):/g, "〔$1:");
 }
 /** 依赖是否全部 done */
 /**（depsSatisfied 已于 2026-09-19 移除：done 判据并入 task_next 内的 depDoneOf —— 按头文本判定 + merged 传递解析，见该处注释） */
@@ -999,7 +1017,8 @@ const GATE_PRESETS = {
     "snapshot": { label: "snapshot --check", argv: ["dist/snapshot-routes.js", "--check"] },
 };
 function taskGateName(content) {
-    const m = content.match(/\[gate:([a-z0-9-]+)\]/);
+    // ★ 2026-09-19（弊端 H4）：gate 标记只认头行——正文里引用的 [gate:预设] 不再触发验收（与 headLineOf 同源）
+    const m = headLineOf(content).match(/\[gate:([a-z0-9-]+)\]/);
     return m ? m[1] : null;
 }
 /** 验收命令的确定性 cwd：resources/memoryos 目录（lint/snapshot 类脚本按 import.meta.url 自定位，
@@ -1135,6 +1154,7 @@ server.addTool({
                     cardInfo = ` + 地图卡 #${cardId}`;
                 }
                 catch (e) {
+                    console.error(`[task_assign] 建卡失败（任务 #${row.id}）: ${e instanceof Error ? e.message : String(e)}`);
                     cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
                 }
             }
@@ -1208,6 +1228,7 @@ server.addTool({
                 cardInfo = ` + 地图卡 #${cardId}`;
             }
             catch (e) {
+                console.error(`[task_delegate] 建卡失败（任务 #${row.id}）: ${e instanceof Error ? e.message : String(e)}`);
                 cardInfo = `（建卡失败：${e instanceof Error ? e.message : String(e)}）`;
             }
             logUsage(db, {
@@ -1260,6 +1281,10 @@ server.addTool({
             const cred = checkWriteCredential(who, args.credential); // ★ A1/#8：归属校验 + scope>=write
             if (!cred.ok)
                 return cred.msg;
+            // ★ 2026-09-19（弊端 H2）：as="any" 托管认领会改写归属——默认软模式无凭据放行是治理漏洞；
+            //   as="any" 必须携带 scope>=write 凭据（硬模式口径天然满足；本人认领保持软模式兼容）。
+            if (args.as === "any" && !args.credential)
+                return `as="any" 托管认领会改写任务归属：请先 memory_credential(action=issue, scope=write) 签发凭据并随 credential 入参携带；若以本人身份认领则不传 as。`;
             if (args.as !== "any" && st.assignee !== "?" && st.assignee !== who) {
                 return `#${args.memory_id} 指派给 ${st.assignee}，你不是接收方（可传 as=any 强制托管认领）。`;
             }
@@ -1311,13 +1336,16 @@ server.addTool({
  *  卡向头对齐），故此处 UPDATE 不走 cards 的 CARD_TRANSITIONS 白名单，属设计内差异而非绕过。 */
 function syncTaskToCard(memoryId, cardStatus, opts = {}) {
     try {
-        const rel = db.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch' LIMIT 1`).get(memoryId);
-        if (!rel)
+        // ★ 2026-09-19（弊端 U2）：同步本任务的全部 dispatch 卡（多卡时逐一，原 LIMIT 1 会让多余的卡永久失同步）
+        const rels = db.prepare(`SELECT card_id FROM card_memory WHERE memory_id=? AND relation='dispatch'`).all(memoryId);
+        if (!rels.length)
             return false;
-        const cid = Number(rel.card_id);
-        const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
-        if (!card)
-            return false;
+        let synced = 0;
+        for (const rel of rels) {
+            const cid = Number(rel.card_id);
+            const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
+            if (!card)
+                continue;
         // ★ 2026-09-18：opts.assignee 三态 —— undefined=保持原值 / null=清空 / 字符串=设为该值。
         //   task_claim 传认领者 → 卡片即时显示「已领取·谁」；task_release 侧清空走专用 UPDATE（见下）。
         const setAssignee = opts.assignee === undefined ? "" : ", assignee=?";
@@ -1326,8 +1354,10 @@ function syncTaskToCard(memoryId, cardStatus, opts = {}) {
             upd.run(cardStatus, cid);
         else
             upd.run(cardStatus, opts.assignee, cid);
-        db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, opts.actor ?? "dispatcher", opts.action ?? "mcp_sync", card.status, cardStatus, opts.detail ?? `任务 #${memoryId} MCP 流转同步`);
-        return true;
+            db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, opts.actor ?? "dispatcher", opts.action ?? "mcp_sync", card.status, cardStatus, opts.detail ?? `任务 #${memoryId} MCP 流转同步`);
+            synced++;
+        }
+        return synced > 0;
     }
     catch (e) {
         // ★ 2026-09-16（A 分区验收）：原为静默 `catch { return false }` —— 状态同步失败会完全隐身，
@@ -1361,7 +1391,8 @@ function touchCardLease(memoryId, lock, minutes = 10) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, "dispatcher", lock ? "lease_set" : "heartbeat", "running", "running", lock ? `MCP 租约锁定（${min}min，lock=${String(lock).slice(0, 8)}…）` : `MCP 心跳续窗（${min}min）`);
         return true;
     }
-    catch {
+    catch (e) {
+        console.error(`[lease] 卡片租约触达失败（任务 #${memoryId}）: ${e instanceof Error ? e.message : String(e)}`);
         return false;
     }
 }
@@ -1488,7 +1519,7 @@ server.addTool({
             return `#${args.memory_id} ${tErr}`;
         // ★ 一致性①（2026-09-19）：头 CAS + 事件 + 卡投影一笔事务
         const blkAbort = runTaskTx(db, () => {
-            const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${args.reason.trim()}`;
+            const body = `${taskBody(row.content)}\n⛔ 受阻(${AGENT})：${sanitizeTaskText(args.reason).trim()}`;
             const blocked = updateMemory(db, row.id, { content: taskBodyWithDep("blocked", st.assignee, st.deps, body), expectedVersion: row.version }); // ★ CAS
             if (!blocked)
                 throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
@@ -1534,7 +1565,7 @@ server.addTool({
         const ropenAbort = runTaskTx(db, () => {
             if (row.status === "archived") // ★ 2026-09-19：重开即复活 —— 列 archived → active，否则重开后头/列错位、任务依旧不可见
                 db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(row.id);
-            const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${args.reason.trim()}`;
+            const body = `${taskBody(row.content)}\n↻ 重开(${AGENT})：${sanitizeTaskText(args.reason).trim()}`;
             const reopened = updateMemory(db, row.id, { content: taskBodyWithDep("in_progress", who, st.deps, body), expectedVersion: row.version }); // ★ CAS
             if (!reopened)
                 throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请刷新后重试。`);
@@ -1585,6 +1616,10 @@ server.addTool({
         if (st.status === "done")
             return `#${args.memory_id} 已完成，无需重复标记。`;
         // v1.1 状态机：仅 in_progress / review → done 合法
+        // ★ 2026-09-19（弊端 H1）：归属守卫——仅认领者本人（或未认领任务）可完成；
+        //   第三方验收关闭走 task_verify（verified_by 留痕），接手工作走 task_reopen 重派。
+        if (st.assignee !== "?" && st.assignee !== AGENT)
+            return `#${row.id} 由 ${st.assignee} 认领，你（${AGENT}）不是认领者，不能代为完成：第三方验收请走 task_verify（带依据），需接手请 task_reopen 重派后再完成。`;
         const tErr = assertTransition(st.status, "done");
         if (tErr)
             return `#${args.memory_id} ${tErr}`;
@@ -1610,7 +1645,7 @@ server.addTool({
             //   原实现卡片停在 running 持锁，与记忆头 pending 打架，5 分钟后还会被 reconcile 强行对齐。
             // ★ 一致性①（2026-09-19）：回退 CAS + 卡同步 + 清锁一笔事务。
             const gAbort = runTaskTx(db, () => {
-                const pendingContent = `${taskBodyWithDep("pending", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}\n⛔ 门控 gate='${gateName}' 未通过（${String(gateRes.detail).slice(0, 160)}）——状态回退 pending，修复后 task_claim + task_done 重试。`;
+                const pendingContent = `${taskBodyWithDep("pending", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${sanitizeTaskText(args.conclusion).trim()}\n⛔ 门控 gate='${gateName}' 未通过（${String(gateRes.detail).slice(0, 160)}）——状态回退 pending，修复后 task_claim + task_done 重试。`;
                 const rolled = updateMemory(db, row.id, { content: pendingContent, expectedVersion: row.version });
                 if (!rolled)
                     throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：请刷新后重试。`);
@@ -1624,10 +1659,21 @@ server.addTool({
             return `任务 #${row.id} 门控未通过（gate='${gateName}'：${String(gateRes.detail).slice(0, 120)}）——status=pending（fail-closed，未标 done）。请修复后 task_claim 再 task_done。` + stateReceipt({ op: "task_done_gate_fallback", id: row.id, status: "pending", version: row.version + 1, gate: gateName });
         }
         const gateNote = gateRes && gateRes.ok ? ` 门控 gate='${gateName}' PASS` : "";
+        // ★ 2026-09-19（弊端 H3）：M2 验收双轨对齐——卡带 meta.acceptance 且未跑 [gate:] 门控时不放过 done
+        //   （web 侧 /status 已按 #7 修复口径拦截；MCP 路径同口径，消除 task_done 绕行通道）。
+        if (!gateRes) {
+            const accCard = cardOfTask(row.id);
+            let accMeta = null;
+            try { accMeta = accCard && accCard.meta ? JSON.parse(String(accCard.meta)) : null; }
+            catch { accMeta = null; }
+            const hasAcc = accMeta && accMeta.acceptance != null && !(Array.isArray(accMeta.acceptance) && accMeta.acceptance.length === 0);
+            if (hasAcc)
+                return `任务 #${row.id} 的卡带验收标准（meta.acceptance），但未执行 [gate:<预设>] 门控——task_done 不允许未经确定性验收即关闭（与 web 侧同口径）。请先在任务头声明 gate，或由人工移除卡的验收标准后重试。`;
+        }
         // ★ 一致性①（2026-09-19）：done CAS + 置信强化 + 事件 + 卡同步 + 清租约包成一笔事务 ——
         //   中途崩溃不再出现「头已 done、卡还 running 持锁」的半笔账；慢的门控子进程验收已在锁外跑完。
         const doneAbort = runTaskTx(db, () => {
-            const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${args.conclusion.trim()}${gateNote}`;
+            const newContent = `${taskBodyWithDep("done", st.assignee, st.deps, body)}\n→ 结论(${AGENT})：${sanitizeTaskText(args.conclusion).trim()}${gateNote}`;
             const doneWrite = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version }); // ★ CAS：并发 done 只有一个生效
             if (!doneWrite)
                 throw new TxAbort(`#${row.id} 并发写冲突（版本已漂移 v${row.version}）：任务已被其他会话改写；请 task_next 刷新后重试。`);
@@ -1747,7 +1793,10 @@ server.addTool({
     async execute(args) {
         const rows = db.prepare(`SELECT id, content, agent, source_ref, created_at FROM memories
        WHERE type='task' AND status IN ('active','trial') AND project IN (?, 'global') AND sensitivity != 'secret'
-       ORDER BY julianday(created_at), id ASC LIMIT 500`).all(args.project);
+       ORDER BY julianday(created_at) DESC, id DESC LIMIT 500`).all(args.project);
+        // ★ 2026-09-19（弊端 M5）：按创建时间降序（新任务优先）+ 超上限显式提示——原升序在积压超 500 条时把新任务埋没
+        const totalOpen = db.prepare(`SELECT COUNT(*) n FROM memories
+       WHERE type='task' AND status IN ('active','trial') AND project IN (?, 'global') AND sensitivity != 'secret'`).get(args.project).n;
         // 全体任务状态/依赖解码 + done 集合
         const states = new Map();
         for (const r of rows) {
@@ -1781,6 +1830,16 @@ server.addTool({
                 doneIds.add(resolveTaskId(t.id));
         }
         const depDoneOf = (deps) => deps.every((d) => doneIds.has(resolveTaskId(d)));
+        // ★ 2026-09-19（弊端 M6）：依赖死端检测——依赖处于终态（cancelled/archived）或不存在时永远等不到 done，
+        //   标注出来让调用方重挂依赖，而不是永久挂起
+        const taskById = new Map(allTasks.map((t) => [Number(t.id), t]));
+        const depDeadOf = (d) => {
+            const t = taskById.get(resolveTaskId(d));
+            if (!t)
+                return true;
+            const stt = readTaskState(t.content)?.status;
+            return String(t.status) === "archived" || stt === "cancelled" || stt === "archived";
+        };
         const who = !args.as || args.as === "any" ? AGENT : args.as;
         // ★ 2026-09-19（实操问题 #7）：同 agent 多会话隔离 —— 取最近 task_claim 事件的 session_id，
         //   与调用方 session_id 比对：非本会话 → 单列「同名其他会话」，消除「我在做」串台。
@@ -1844,12 +1903,13 @@ server.addTool({
                 continue;
             const depDone = depDoneOf(s.deps);
             const blockedBy = s.deps.filter((d) => !doneIds.has(resolveTaskId(d)));
+            const depLabel = blockedBy.map((dd) => "#" + dd + (depDeadOf(dd) ? "†" : "")).join(", ");
             if (s.status === "pending") {
                 if (!args.as || args.as === "any" || s.assignee === who || s.assignee === "?") {
                     if (depDone)
                         avail.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} → ${s.assignee}: ${taskBody(r.content).slice(0, 80)} ${isCardTask(r) ? "(卡)" : ""}` });
                     else
-                        blocked.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} 阻塞（等 #${blockedBy.join(",#")}）→ ${taskBody(r.content).slice(0, 60)}${lastEvtOf(r.id)}` });
+                        blocked.push({ prio: prioOf(r), key: tsOf(r), label: `#${r.id} ${srcTag(r)} 阻塞（等 ${depLabel}）→ ${taskBody(r.content).slice(0, 60)}${lastEvtOf(r.id)}${blockedBy.some(depDeadOf) ? "（†=依赖已终态/不存在：需重挂依赖才能解锁）" : ""}` });
                 }
             }
             else if (s.status === "in_progress" && s.assignee === who) {
@@ -1883,6 +1943,9 @@ server.addTool({
                 /* 统计失败不回退原返回 */
             }
         }
+        // ★ 2026-09-19（弊端 M5）：超上限显式提示——任务数超过 500 条窗口时旧部分不显示
+        if (totalOpen > rows.length)
+            out += "\n（上限提示：共 " + totalOpen + " 条任务，仅显示最近 " + rows.length + " 条）";
         return out;
     },
 });
@@ -1914,7 +1977,13 @@ if (_EXEC_OFF) {
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
+// ★ 2026-09-19 --list-tools：单一事实源查询口——打印实际注册清单后退出。
+//   不启动 stdio transport、不写 connect 心跳（这不是一次客户端连接）；模块加载期的
+//   DB 打开/迁移与正常启动一致（幂等，无额外写）。stdout 走管道时 process.exit 可能截断缓冲，
+//   故用写回调解 exit；输出加 ##TOOLS## 前缀防未来 stdout 污染（本文件现无 console.log）。
+if (process.argv.includes("--list-tools")) {
+    process.stdout.write("##TOOLS##" + JSON.stringify(REGISTERED_TOOLS) + "\n", () => process.exit(0));
+} else if (isMain) {
     // 连接心跳：每次 server 被某个客户端 stdio 拉起时留痕（op=connect）。MEMORY_AGENT 由 MCP 配置 env 注入 → 可精确到"哪个 agent 连上了"
     try {
         appendEvent(db, {

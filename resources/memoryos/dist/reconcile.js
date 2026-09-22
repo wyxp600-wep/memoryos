@@ -1,7 +1,9 @@
 /**
  * MemoryOS ★ P2-6（C-5 / #4201）：三方对账与投影重建守护（任务记忆 ⇄ 看板卡片）。
  *  - 投影重建：任务记忆（active/trial 且非终态）无 dispatch 卡 → 补建卡（事件 reconcile_created）
- *  - 状态对齐：记忆头 pending/in_progress/blocked ↔ 卡片 ready/running/blocked 失配 → 修复（事件 reconcile_aligned）
+ *  - 状态对齐：记忆头 pending/in_progress/blocked ↔ 卡片失配 → 修复（事件 reconcile_aligned）。
+ *    ★ 修 #3（2026-09-19）：只对齐投影三态 ready/running/blocked；review/failed/triage/todo 等
+ *    卡侧富状态不碰（原口径会把 review 泳道抹掉、把 failed/todo 恢复路拉死、绕过 depends 依赖门）
  *  - 镜像滞后：修复时卡片 updated_at 滞后 >5 分钟 → daemon_log 告警（op=lag）
  *  实现纪律：参数绑定（无内联 SQL 字面量）+ 字符串切分（无正则转义）+ 幂等（一致的对不命中）。
  *  由常驻 daemon 每 5 分钟调用（daemon.js runReconcile）。
@@ -12,27 +14,34 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { EXPECT_CARD_OF } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：映射上移权威对照表
 const NON_TERMINAL = ["pending", "in_progress", "blocked"];
-const CARD_TERMINAL = ["done", "archived", "cancelled"];
+// ★ 修 #3（2026-09-19）：对账只对齐「投影三态」ready/running/blocked（C-5 的映射目标集）。
+//   原 CARD_TERMINAL 跳过口径太宽：review/failed/triage/todo 既不在终态名单、又不是映射目标，
+//   会被强拉回三态 —— review 进卡 5 分钟即被抹（syncCardToTask 把 review 写成头 in_progress，
+//   对账又按 in_progress→running 拉回）；failed→todo 恢复路被拉回 blocked；todo→ready 绕过
+//   dispatch 的 depends 依赖门。这些卡侧富状态由卡片流转/dispatcher/reaper 自己拥有，对账不碰。
+const PROJECTABLE = new Set(["ready", "running", "blocked"]);
 
-/** 从任务记忆正文里取状态头（字符串切分，不用正则） */
-function headStatus(content) {
-    const a = String(content ?? "").split("[status:")[1];
-    if (!a)
-        return null;
-    return a.split("]")[0].trim() || null;
+/** ★ 2026-09-19（弊端 H5）：头部字段只解析首行（与 server.js headLineOf 口径统一）——
+ *  正文里引用的 [status:]/[assignee:] 标记不再影响对账。 */
+function headLineOf(content) {
+    const s = String(content ?? "");
+    const i = s.indexOf("\n");
+    return i < 0 ? s : s.slice(0, i);
 }
-
-/** 从任务记忆正文里取 assignee（字符串切分） */
+/** 从任务记忆头部行取状态头（锚定首行，正文引用无效） */
+function headStatus(content) {
+    const m = headLineOf(content).match(/\[status:([a-z_]+)\]/);
+    return m ? m[1] : null;
+}
+/** 从任务记忆头部行取 assignee（锚定首行，正文引用无效） */
 function headAssignee(content) {
-    const a = String(content ?? "").split("[assignee:")[1];
-    if (!a)
-        return null;
-    const v = a.split("]")[0].trim();
+    const m = headLineOf(content).match(/\[assignee:([^\]]*)\]/);
+    const v = m ? m[1].trim() : null;
     return !v || v === "?" ? null : v;
 }
 
 export function reconcileTasksAndCards(db) {
-    const out = { created: 0, aligned: 0, lagAlerts: 0 };
+    const out = { created: 0, aligned: 0, lagAlerts: 0, divergenceAlerts: 0 };
     try {
         const pairs = db
             .prepare(`SELECT cm.memory_id, cm.card_id, m.content, c.status AS card_status, c.updated_at AS card_updated
@@ -44,10 +53,11 @@ export function reconcileTasksAndCards(db) {
         for (const p of pairs) {
             const st = headStatus(p.content);
             const want = st ? EXPECT_CARD_OF[st] : null;
-            if (!want || p.card_status === want || CARD_TERMINAL.includes(p.card_status))
+            if (!want || p.card_status === want || !PROJECTABLE.has(p.card_status))
                 continue;
             const lagMin = p.card_updated ? (Date.now() - Date.parse(p.card_updated)) / 60000 : null;
-            db.prepare(`UPDATE cards SET status=?, updated_at=strftime(?, ?) WHERE id=?`).run(want, "%Y-%m-%dT%H:%M:%fZ", "now", p.card_id);
+            // ★ 修 #17（2026-09-19）：对齐递增 cards.version —— reaper/MCP 侧卡写均递增，对账独缺会造成卡侧 fencing 口径不齐
+            db.prepare(`UPDATE cards SET status=?, version=version+1, updated_at=strftime(?, ?) WHERE id=?`).run(want, "%Y-%m-%dT%H:%M:%fZ", "now", p.card_id);
             db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(p.card_id, "reconciler", "reconcile_aligned", p.card_status, want, `任务 #${p.memory_id} 三方对账：头 ${st} → 卡 ${want}（C-5）`);
             out.aligned++;
             if (lagMin != null && lagMin > 5) {
@@ -55,6 +65,18 @@ export function reconcileTasksAndCards(db) {
                 db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run("reconcile", "lag", p.memory_id, `卡片 #${p.card_id} 镜像滞后 ${Math.round(lagMin)} 分钟（任务 #${p.memory_id}），已修复至 ${want}`, "reconciler");
             }
         }
+        // ★ 2026-09-19（弊端 M1）：todo/triage 泳道发散告警——头 in_progress 但卡停 todo/triage
+        //   （无回写、非对账目标）；卡静止超 30 分钟写 daemon_log 告警，避免无声失同步
+        for (const p of pairs) {
+            const st2 = headStatus(p.content);
+            if (st2 !== "in_progress" || (p.card_status !== "todo" && p.card_status !== "triage"))
+                continue;
+            const lagMin2 = p.card_updated ? (Date.now() - Date.parse(p.card_updated)) / 60000 : null;
+            if (lagMin2 == null || lagMin2 <= 30)
+                continue;
+            out.divergenceAlerts++;
+            db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run("reconcile", "diverge", p.memory_id, `任务 #${p.memory_id} 头=in_progress 但卡 #${p.card_id} 停留 ${p.card_status} 泳道 ${Math.round(lagMin2)} 分钟（todo/triage 非对账目标）：需 task_release / task_block，或把卡移回 ready`, "reconciler");
+        }
         const orphans = db
             .prepare(`SELECT m.id, m.content FROM memories m
                 WHERE m.type=? AND m.status IN (?,?)
@@ -70,7 +92,9 @@ export function reconcileTasksAndCards(db) {
             //   不在 running 泳道，且要等下一轮对账（5 分钟后）才被自我修正为 running。
             //   正解：复用文件顶部已定义的单一映射 EXPECT_CARD_OF（pending→ready / in_progress→running / blocked→blocked）。
             const cardStatus = EXPECT_CARD_OF[st] ?? st;
-            const title = String(o.content ?? "").slice(0, 120) || `任务 #${o.id}`;
+            // ★ 2026-09-19（弊端 L7）：卡标题剥掉 [task]/[assignee]/[status]/[depends] 头标记，只留纯任务描述
+            const titleSrc = String(o.content ?? "").split("\n")[0].replace(/^\[task\]\[assignee:[^\]]*\]\[status:[^\]]*\]\s*(?:\[depends:[^\]]*\]\s*)?/, "").trim();
+            const title = titleSrc.slice(0, 120) || `任务 #${o.id}`;
             const info = db
                 .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES (?,?,?,?,?,?,?,?,?)`)
                 .run("default", "task", title, "对账补建（C-5）", cardStatus, "memory", o.id, 3, headAssignee(o.content));

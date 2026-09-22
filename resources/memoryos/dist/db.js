@@ -591,6 +591,9 @@ export function openDb(dbPath) {
         // ★ 一致性⑦（2026-09-19）：租约到期「贴条」标记 —— 到期不自动抢回（防误杀在岗认领者 + 防与任务头
         //   对账震荡），贴条超 24h 无人理（无 heartbeat/收口）才放回池子。NULL=未贴条。
         ["lease_notice_at", "TEXT"],
+        // ★ 2026-09-20：卡片主题（归档中心按主题分组用）。NULL=未分类；解析优先级见
+        //   dashboard-reg-cards.js 的 topicOfCardRow（topic 列 > meta.topic > 标题 [topic:xxx] > 未分类）。
+        ["topic", "TEXT"],
     ];
     if (cardCols.length) {
         for (const [name, def] of addCards) {
@@ -932,13 +935,15 @@ export function backupDb(db, dbPath, opts = {}) {
                 fs.unlinkSync(path.join(dir, f));
                 removed.push(f);
             }
-            catch {
-                /* 删除失败不阻断备份主流程 */
+            catch (e) {
+                /* 删除失败不阻断备份主流程，但必须留痕（B2：备份链路失败不允许静默） */
+                console.error(`[backup] 旧备份删除失败（${f}）: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
     }
-    catch {
-        /* 目录列举失败不影响已完成的备份 */
+    catch (e) {
+        /* 目录列举失败不影响已完成的备份，留痕供排查 */
+        console.error(`[backup] 备份目录列举失败（滚动清理跳过，${dir}）: ${e instanceof Error ? e.message : String(e)}`);
     }
     const sizeMB = (fs.statSync(target).size / 1024 / 1024).toFixed(1);
     return {

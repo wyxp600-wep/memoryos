@@ -36,6 +36,9 @@ export function registerCards(app, ctx) {
     /* ★ 实时看板：卡片事件总线。所有变更都经过 writeCardEvent → 推给 /api/cards/stream 的 SSE 订阅者。
      *  订阅者是 SSE 写函数，写失败（连接已断）即摘除。心跳防断连由 SSE 路由侧负责。 */
     const cardSubs = new Set();
+    // ★ 修 #13（2026-09-19）：auto 模式卡向量缓存（key=卡id+标题+正文前600字）—— 原每次请求全量重嵌，
+    //   把嵌入 API 打成 O(n)/请求；未变更的卡直接复用上次向量。超 2000 条整体清空防膨胀（宁重嵌不涨内存）。
+    const cardVecCache = new Map();
     function pushCardEvt(evt) {
         const payload = `event: card\ndata: ${JSON.stringify(evt)}\n\n`;
         for (const sub of [...cardSubs]) {
@@ -53,10 +56,17 @@ export function registerCards(app, ctx) {
         evtWatermark = Number(db.prepare(`SELECT COALESCE(MAX(id),0) m FROM card_events`).get()?.m ?? 0);
         evtPoller = setInterval(() => {
             try {
-                const rows = db.prepare(`SELECT id, card_id, actor, action, from_status, to_status FROM card_events WHERE id > ? ORDER BY id LIMIT 100`).all(evtWatermark);
-                for (const r of rows) {
-                    evtWatermark = Math.max(evtWatermark, Number(r.id));
-                    pushCardEvt({ type: r.action, cardId: Number(r.card_id), from: r.from_status ?? null, to: r.to_status ?? null, actor: r.actor, ts: Date.now() });
+                // ★ 2026-09-19（弊端 L2）：补流排空（500 条/批 × 最多 5 批/拍）——原单批 100 条，事件速率 >50/s 时水位永久落后
+                for (let i = 0; i < 5; i++) {
+                    const rows = db.prepare(`SELECT id, card_id, actor, action, from_status, to_status FROM card_events WHERE id > ? ORDER BY id LIMIT 500`).all(evtWatermark);
+                    if (!rows.length)
+                        break;
+                    for (const r of rows) {
+                        evtWatermark = Math.max(evtWatermark, Number(r.id));
+                        pushCardEvt({ type: r.action, cardId: Number(r.card_id), from: r.from_status ?? null, to: r.to_status ?? null, actor: r.actor, ts: Date.now() });
+                    }
+                    if (rows.length < 500)
+                        break;
                 }
             }
             catch { /* 单轮失败下轮重试 */ }
@@ -90,10 +100,24 @@ export function registerCards(app, ctx) {
             return {};
         }
     }
+    /* ★ 修 #9（2026-09-19）：事务内事件先入队、COMMIT 后再推 —— 原 pushCardEvt 在 BEGIN IMMEDIATE
+     *  事务（dispatch / archive / apply-plan）里同步直推，一旦 ROLLBACK 前端已收到实际没发生的假事件。
+     *  txBegin/txCommit/txRollback 是本模块事务的统一入口；不经过它们的事务不写卡片事件，互不影响。 */
+    let txEvtQueue = null;
+    function txBegin() { db.exec("BEGIN IMMEDIATE"); txEvtQueue = []; }
+    function txCommit() {
+        db.exec("COMMIT");
+        const q = txEvtQueue;
+        txEvtQueue = null;
+        for (const e of q) { try { pushCardEvt(e); } catch { /* 订阅者写失败由 pushCardEvt 自行摘除 */ } }
+    }
+    function txRollback() { db.exec("ROLLBACK"); txEvtQueue = null; }
     function writeCardEvent(cardId, actor, action, fromStatus, toStatus, detail) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail)
        VALUES (?,?,?,?,?,?)`).run(cardId, actor, action, fromStatus ?? null, toStatus ?? null, detail ?? null);
-        try { pushCardEvt({ type: action, cardId: Number(cardId), from: fromStatus ?? null, to: toStatus ?? null, actor, ts: Date.now() }); } catch { /* 推送失败不影响落库 */ }
+        const evt = { type: action, cardId: Number(cardId), from: fromStatus ?? null, to: toStatus ?? null, actor, ts: Date.now() };
+        if (txEvtQueue) { txEvtQueue.push(evt); return; }
+        try { pushCardEvt(evt); } catch { /* 推送失败不影响落库 */ }
     }
     /** ★ 2026-09-15：卡片状态 → 关联 task 记忆状态头回写（task_assign 建的卡 ref_kind='memory'，dispatch 关联）。
      *  卡片流转会同步 memories 里对应 type='task' 的内容头 [status:]，保持「地图卡 ↔ MCP 任务」双向一致。
@@ -101,8 +125,10 @@ export function registerCards(app, ctx) {
      *  version、不同步 FTS/2-gram：① MCP 侧 CAS（WHERE version=?）感知不到本回写，认领会把看板改动覆盖回去
      *  （丢失更新）；② 检索索引脏读（原 128-129 行注释自认的既有坑）。现 CAS 写入一次完成 version+1 + 索引同步；
      *  版本漂移（MCP 侧刚改过头）→ 让位不硬写：卡向头对齐是 C-5 投影口径，30s 任务桥 / 5min 对账兜底，
-     *  盲目硬写会与 MCP 打架（后写覆盖前写）。 */
-    function syncCardToTask(cardId) {
+     *  盲目硬写会与 MCP 打架（后写覆盖前写）。
+     *  ★ 修 #10（2026-09-19）：opts.assignee 传入时同步回写头的 [assignee:] 段（看板认领用）——
+     *  原来只写 status，看板认领后头里 assignee 恒 ?，后续凭据归属/心跳权限判断全失准。 */
+    function syncCardToTask(cardId, opts = {}) {
         try {
             // 定位关联 task 记忆：优先 ref_kind='memory'，其次 card_memory dispatch 关联
             const card = readCard(cardId);
@@ -118,6 +144,7 @@ export function registerCards(app, ctx) {
             const toSt = CARD_TO_TASK[card.status];
             if (!toSt)
                 return;
+            const newAssignee = opts.assignee === undefined ? null : String(opts.assignee ?? "");
             for (let attempt = 0; attempt < 2; attempt++) {
                 const mem = db.prepare(`SELECT id, content, version FROM memories WHERE id=? AND type='task' AND status IN ('active','trial')`).get(memRow.id);
                 if (!mem)
@@ -125,9 +152,16 @@ export function registerCards(app, ctx) {
                 const st = mem.content.match(/\[status:([^\]]+)\]/);
                 if (!st)
                     return;
-                if (st[1] === toSt)
+                const curAssignee = mem.content.match(/\[assignee:([^\]]*)\]/)?.[1];
+                if (st[1] === toSt && (newAssignee === null || curAssignee === newAssignee))
                     return; // 头已是目标态（含他人刚对齐），无事可做
-                const newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
+                let newContent = mem.content.replace(`[status:${st[1]}]`, `[status:${toSt}]`);
+                if (newAssignee !== null) {
+                    if (/\[assignee:[^\]]*\]/.test(newContent))
+                        newContent = newContent.replace(/\[assignee:[^\]]*\]/, `[assignee:${newAssignee}]`);
+                    else
+                        newContent = newContent.replace(`[status:${toSt}]`, `[assignee:${newAssignee}][status:${toSt}]`); // 头缺 assignee 段（legacy）→ 补进 status 前
+                }
                 const ok = updateMemory(db, mem.id, { content: newContent, expectedVersion: mem.version }); // ★ 正门 CAS
                 if (ok)
                     return; // version+1 + FTS/2-gram 同步已随写入完成
@@ -244,7 +278,7 @@ export function registerCards(app, ctx) {
             }
             catch { /* meta 非 JSON 跳过 */ }
         }
-        db.exec("BEGIN IMMEDIATE");
+        txBegin(); // ★ 修 #9：事务内事件入队，COMMIT 后统一推 SSE
         try {
             for (const t of plan.tasks) {
                 const tid = String(t.id ?? t.task_id ?? "");
@@ -259,27 +293,28 @@ export function registerCards(app, ctx) {
                 const exist = byKey.get(key);
                 if (!exist) {
                     const ins = db.prepare(`INSERT INTO cards(board, kind, title, body, status, priority, meta) VALUES ('default','task',?,?,'triage',?,?)`).run(title, body, priority, JSON.stringify({ plan_id: planId, task_id: tid }));
-                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,'dispatcher','apply_plan',NULL,'triage',?)`).run(Number(ins.lastInsertRowid), `计划 ${planId} 建卡`);
+                    // ★ 修 #14：原直插 card_events 绕过 SSE —— 统一走 writeCardEvent（事务内自动入队）
+                    writeCardEvent(Number(ins.lastInsertRowid), "dispatcher", "apply_plan", null, "triage", `计划 ${planId} 建卡`);
                     created++;
                     continue;
                 }
                 if (covered.includes(exist.status)) {
                     db.prepare(`UPDATE cards SET title=?, body=?, priority=?, updated_at=? WHERE id=?`).run(title, body, priority, now, exist.id);
-                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,'dispatcher','apply_plan',?,?,'计划更新原位覆盖')`).run(exist.id, exist.status, exist.status);
+                    writeCardEvent(exist.id, "dispatcher", "apply_plan", exist.status, exist.status, "计划更新原位覆盖");
                     overwritten++;
                 }
                 else {
                     // 进行中/已完成：不覆盖，评论 + stale_plan
                     db.prepare(`UPDATE cards SET meta=?, updated_at=? WHERE id=?`).run(JSON.stringify({ ...JSON.parse(rows.find((r) => r.id === exist.id)?.meta ?? "{}"), plan_id: planId, task_id: tid, stale_plan: true }), now, exist.id);
-                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,'dispatcher','plan_changed',?,?,'计划已变更，卡片保留当前状态')`).run(exist.id, exist.status, exist.status);
+                    writeCardEvent(exist.id, "dispatcher", "plan_changed", exist.status, exist.status, "计划已变更，卡片保留当前状态");
                     db.prepare(`INSERT INTO card_comments(card_id, author, body, created_at) VALUES (?,'dispatcher','计划已变更（同源计划重应用），当前状态保留；如需执行新计划请重置状态。',?)`).run(exist.id, now);
                     staleMarked++;
                 }
             }
-            db.exec("COMMIT");
+            txCommit();
         }
         catch (e) {
-            db.exec("ROLLBACK");
+            txRollback();
             throw e;
         }
         logDaemon(db, { task: "cards", op: "apply-plan", operator: "human:dashboard", detail: `计划 ${planId}：建 ${created} / 覆盖 ${overwritten} / stale ${staleMarked} / 跳过 ${skipped}` });
@@ -343,9 +378,13 @@ export function registerCards(app, ctx) {
                 continue;
             // 防重放：已有 from_prospective 卡则不重复建
             if (autoCard) {
+                // ★ 修 #6（2026-09-19）：原 meta LIKE '%"from_prospective":5%' 是子串匹配，
+                //   `"from_prospective":55` 也命中 → #55 存在则 #5 永远建不出卡。改 json_extract 精确比对；
+                //   json_valid 守卫防历史脏 meta 让 json_extract 抛 malformed JSON。
                 const dup = db
-                    .prepare(`SELECT id FROM cards WHERE kind='task' AND meta LIKE ? LIMIT 1`)
-                    .get(`%"from_prospective":${r.id}%`);
+                    .prepare(`SELECT id FROM cards WHERE kind='task'
+                   AND json_extract(CASE WHEN json_valid(meta) THEN meta END, '$.from_prospective') = ? LIMIT 1`)
+                    .get(r.id);
                 if (!dup) {
                     const ins = db
                         .prepare(`INSERT INTO cards(board,kind,title,status,meta) VALUES ('default','task',?,'triage',?)`)
@@ -417,9 +456,11 @@ export function registerCards(app, ctx) {
         const buckets = {};
         for (const s of CARD_STATES)
             buckets[s] = [];
-        for (const c of list)
-            if (buckets[c.status])
-                buckets[c.status].push(c);
+        for (const c of list) {
+            // ★ 修 #16（2026-09-19）：非法/历史状态卡不再静默丢出桶（原 total 与 buckets 求和可能不一致）
+            //   —— 未知状态原样保留为动态键，total 恒等于各桶长度之和。
+            (buckets[c.status] ??= []).push(c);
+        }
         return { total: list.length, buckets, lanes: [...new Set(list.map((c) => c.lane).filter(Boolean))] };
     });
     /** ★ 实时看板 SSE：卡片任何变更（经 writeCardEvent 中心点）即时推给前端；25s 心跳防断连。
@@ -457,6 +498,11 @@ export function registerCards(app, ctx) {
            VALUES (?,?,?,?,?,?,?,?)`)
             .run(String(b.board ?? "default").trim() || "default", kind, title, String(b.body ?? "").trim() || null, status, String(b.assignee ?? "").trim() || null, Math.max(0, Math.floor(Number(b.priority ?? 0) || 0)), b.meta ? JSON.stringify(b.meta) : null);
         const id = Number(ins.lastInsertRowid);
+        if (status === "running") {
+            // ★ 2026-09-19（弊端 M2）：手工创建的 running 卡默认发放租约——否则租约回收器看不见它（僵尸泳道）
+            const lock = randomBytes(12).toString("hex");
+            db.prepare(`UPDATE cards SET claim_lock=?, lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',' +10 minutes'), heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(lock, id);
+        }
         writeCardEvent(id, "human:dashboard", "create", null, status, title.slice(0, 80));
         return { ok: true, id, status, kind };
     });
@@ -504,7 +550,10 @@ export function registerCards(app, ctx) {
             const m = db.prepare(`SELECT id, content FROM memories WHERE id=? AND status IN ('active','trial')`).get(mid);
             if (!m)
                 continue;
-            const st = String(m.content ?? "").match(/^\[task\]\[assignee:[^\]]*\]\[status:([a-z_]+)\]/)?.[1] ?? "";
+            // ★ 修 #11（2026-09-19）：原正则要求头部严格 [task][assignee:..][status:..] 三段序 —— 头部段序
+            //   不同/带 deps 段/legacy 缺段就解析失败 → 误判非开放任务照删出孤儿。改 split 松解析（同 reconcile 口径）。
+            const content = String(m.content ?? "");
+            const st = content.startsWith("[task]") ? (content.split("[status:")[1]?.split("]")[0]?.trim() ?? "") : "";
             if (["pending", "in_progress", "blocked"].includes(st))
                 return reply.code(409).send({ ok: false, error: `卡片 #${c.id} 绑定着未闭环任务 #${mid}（status=${st}）：请先 task_release / task_verify / task_supersede 或在记忆侧归档该任务，再删卡；直接删除会产生孤儿任务。` });
         }
@@ -528,7 +577,7 @@ export function registerCards(app, ctx) {
         if (Number(info.changes) === 0)
             return reply.code(409).send({ ok: false, error: "认领失败：卡片不在 ready 或已被认领" });
         writeCardEvent(id, actor, "claim", "ready", "running", `CAS 认领（lock=${lock.slice(0, 8)}…）`);
-        syncCardToTask(id); // ★ 认领 → 关联 task 回写 in_progress
+        syncCardToTask(id, { assignee: actor }); // ★ 认领 → 关联 task 回写 in_progress + assignee（修 #10）
         return { ok: true, id, assignee: actor, lock };
     });
     // —— 状态流转（H3 ②：WHERE status=expected_from 前置校验 + 白名单）——
@@ -546,20 +595,32 @@ export function registerCards(app, ctx) {
         if (!CARD_TRANSITIONS[c.status]?.includes(to)) {
             return reply.code(409).send({ ok: false, error: `非法迁移 ${c.status} → ${to}` });
         }
+        // ★ 修 #7（2026-09-19）：M2 验收门 —— 卡带验收标准（meta.acceptance 非空）时不允许经 /status
+        //   直达 done，必须走 /api/cards/:id/accept 显式验收。原 /accept 注释声明了该契约但 /status
+        //   不检查，agent 可一步绕过验收。
+        if (to === "done") {
+            const acc = readCardMeta(c).acceptance;
+            const hasAcc = acc != null && !(Array.isArray(acc) && acc.length === 0);
+            if (hasAcc)
+                return reply.code(409).send({ ok: false, error: "卡带验收标准（meta.acceptance），须经 /api/cards/:id/accept 验收后才能 done" });
+        }
         if (c.status === "running" && c.assignee && c.assignee !== "unassigned" && !actor.startsWith("human") && actor !== c.assignee) {
             return reply.code(403).send({ ok: false, error: "非认领者无权流转" });
         }
-        const where = expectedFrom ? ` AND status=?` : "";
-        const params = expectedFrom ? [expectedFrom] : [];
+        // ★ 修 #8（2026-09-19）：迁移白名单/权限检查都基于先读的 c.status，原 UPDATE 仅在显式传
+        //   expectedFrom 时才带状态守卫 → 读改之间被并发改写时，校验过的迁移会被无条件覆盖（TOCTOU）。
+        //   现恒以「读到的状态」（或显式 expectedFrom）作 WHERE 守卫，白名单校验与落笔原子化。
+        const guardFrom = expectedFrom ?? c.status;
         const info = db
-            .prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?${where}`)
-            .run(to, id, ...params);
+            .prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status=?`)
+            .run(to, id, guardFrom);
         if (Number(info.changes) === 0) {
-            return reply.code(409).send({ ok: false, error: `状态前置不符（期望 ${expectedFrom}），可能已被其他操作改写` });
+            return reply.code(409).send({ ok: false, error: `状态前置不符（期望 ${guardFrom}），可能已被其他操作改写` });
         }
         writeCardEvent(id, actor, "status_changed", c.status, to);
         if (to === "done")
-            db.prepare(`UPDATE cards SET claim_lock=NULL WHERE id=?`).run(id);
+            // ★ 2026-09-19（弊端 L4）：三清对齐 MCP 侧（锁 + 租约窗 + 贴条）——原仅清 claim_lock 残留过期租约
+            db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(id);
         if (to === "failed")
             db.prepare(`UPDATE cards SET failure_count=failure_count+1 WHERE id=?`).run(id);
         syncCardToTask(id); // ★ 2026-09-15：卡片状态回写关联 task 记忆状态头
@@ -647,12 +708,17 @@ export function registerCards(app, ctx) {
         // blocks → 反向 depends（M3）
         const finalKind = kind === "blocks" ? "depends" : kind;
         if (finalKind === "depends") {
-            if (dependsPathExists(dst, id))
-                return reply.code(409).send({ ok: false, error: "成环：dst 已依赖本卡" });
-            const dir = finalKind === "depends" ? [id, dst] : [dst, id];
+            // ★ 修 #1（2026-09-19）：原 dir 三元判的是 finalKind（恒为 'depends'）→ blocks 也存成
+            //   「id 依赖 dst」，方向整个反了。正确语义：depends = id 依赖 dst（src=id）；blocks =
+            //   id 阻塞 dst ⇔ dst 依赖 id（src=dst）。成环检测跟着方向走：加边 X→Y 前查 Y 是否已可达 X。
+            const forward = kind !== "blocks"; // true=存 src=id → dst
+            const cycle = forward ? dependsPathExists(dst, id) : dependsPathExists(id, dst);
+            if (cycle)
+                return reply.code(409).send({ ok: false, error: kind === "blocks" ? "成环：本卡已（传递）依赖 dst，无法再阻塞它" : "成环：dst 已依赖本卡" });
+            const dir = forward ? [id, dst] : [dst, id];
             db.prepare(`INSERT OR IGNORE INTO links(vault_root,src_kind,src_id,dst_kind,dst_id,kind)
            VALUES (NULL,'card',?,'card',?,'depends')`).run(dir[0], dir[1]);
-            writeCardEvent(id, "human:dashboard", "link", null, null, `depends → #${dst}`);
+            writeCardEvent(id, "human:dashboard", "link", null, null, kind === "blocks" ? `blocks → #${dst}（存为 depends：#${dst} → #${id}）` : `depends → #${dst}`);
         }
         else {
             db.prepare(`INSERT OR IGNORE INTO links(vault_root,src_kind,src_id,dst_kind,dst_id,kind)
@@ -688,15 +754,23 @@ export function registerCards(app, ctx) {
         db.prepare(`DELETE FROM card_memory WHERE card_id=? AND memory_id=?`).run(id, memoryId);
         return { ok: true };
     });
-    // —— 心跳续租（R6-4：不写 events）——
+    // —— 心跳续租（R6-4：常规续窗不写 events）——
     app.post("/api/cards/:id/heartbeat", async (req, reply) => {
         const id = Number(req.params.id);
         const actor = String(req.body?.as ?? "").trim();
+        // ★ 修 #2（2026-09-19）：续期同时撕 lease_notice_at（与 MCP task_heartbeat 同口径）。
+        //   原来看板心跳只续窗不清贴条，而 reaper 按「贴条+24h」放回且不看 heartbeat_at ——
+        //   漏一次心跳被贴条后，活跃认领者的卡也会被强制收回。撕条是状态变更，写一条事件留痕
+        //   （R6-4 的"心跳静默"口径仅指常规续窗，不含贴条撕除）。
+        const had = db.prepare(`SELECT lease_notice_at FROM cards WHERE id=? AND assignee=?`).get(id, actor);
+                // ★ 2026-09-19（弊端 M3）：心跳续租仅限 running 态卡——done/blocked 卡不再被静默续租
         const info = db
-            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=datetime('now','+10 minutes') WHERE id=? AND assignee=?`)
+            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL WHERE id=? AND assignee=? AND status='running'`)
             .run(id, actor);
         if (Number(info.changes) === 0)
-            return reply.code(409).send({ ok: false, error: "心跳失败：非认领者或无此卡" });
+            return reply.code(409).send({ ok: false, error: "心跳失败：非认领者 / 无此卡 / 卡片不在 running 态" });
+        if (had?.lease_notice_at)
+            writeCardEvent(id, actor, "lease_notice_cleared", "running", "running", "看板心跳续期，撕除租约过期贴条");
         return { ok: true, id };
     });
     // —— M6 卡片 → 记忆（sector 映射表）——
@@ -772,7 +846,8 @@ export function registerCards(app, ctx) {
             }
             // R1-5：剥离约定头
             const title = t.content.replace(/^\[task\]\[[^\]]*\]*\[[^\]]*\]\[[^\]]*\]\s*/g, "").split("\n")[0].slice(0, 120) || `task #${t.id}`;
-            ins.run(title, t.id, JSON.stringify({ legacy: true }), t.created_at);
+            const r = ins.run(title, t.id, JSON.stringify({ legacy: true }), t.created_at);
+            writeCardEvent(Number(r.lastInsertRowid), "human:dashboard", "create", null, "todo", `历史任务导入 #${t.id}`); // ★ 修 #14：导入卡此前零事件
             created++;
         }
         return { ok: true, scanned: tasks.length, created, skipped };
@@ -818,8 +893,26 @@ export function registerCards(app, ctx) {
                 // 任务卡文本 = 标题 + 正文（截 600 字，够表达语义；卡无向量）
                 const cardText = new Map();
                 tasks.forEach((n) => cardText.set(n.id, `${n.title}\n${String(n.body ?? "").slice(0, 600)}`.trim()));
-                const textList = tasks.map((n) => cardText.get(n.id) ?? "");
-                const cardVecs = await embedder.embedTexts(textList); // 每卡 1 vec，顺序对应 tasks
+                // ★ 修 #13：先查缓存，只重嵌缺失/已变更的卡（顺序与 tasks 对齐）
+                const keyList = tasks.map((n) => `${n.id}:${cardText.get(n.id) ?? ""}`);
+                const cardVecs = new Array(tasks.length);
+                const needIdx = [];
+                keyList.forEach((k, i) => {
+                    const hit = cardVecCache.get(k);
+                    if (hit)
+                        cardVecs[i] = hit;
+                    else
+                        needIdx.push(i);
+                });
+                if (needIdx.length) {
+                    const fresh = await embedder.embedTexts(needIdx.map((i) => cardText.get(tasks[i].id) ?? ""));
+                    needIdx.forEach((i, j) => {
+                        cardVecs[i] = fresh[j];
+                        if (cardVecCache.size > 2000)
+                            cardVecCache.clear();
+                        cardVecCache.set(keyList[i], fresh[j]);
+                    });
+                }
                 if (cardVecs[0] && cardVecs[0].length) {
                     const vecByCard = new Map();
                     tasks.forEach((n, i) => vecByCard.set(n.id, cardVecs[i]));
@@ -889,9 +982,11 @@ export function registerCards(app, ctx) {
         // 序列化统一转字符串（数字卡片 id 与 "mem-N" 字符串 id 均可；前端 Number() 容错数字）
         const serializable = (v) => String(v);
         // ★ 2026-09-15（看板 58→25 根治）：状态语义归一。给每个节点补 bucket：
-        //   active（ready/todo/running=真实未完成）/ done / terminal（archived/cancelled/failed=已终结）
+        //   active（todo/triage/ready/running/blocked/failed=未完成且需要关注）/ done / terminal（archived/cancelled=已终结）
         //   aux 子卡无任务状态 → bucket=null。前端未完成计数只取 bucket==='active'，终结态不再混入。
-        const TERMINAL = new Set(["archived", "cancelled", "failed"]);
+        //   ★ 修 #15（2026-09-19）：failed 移出终结桶 —— 迁移白名单允许 failed→todo/blocked 恢复，
+        //   归 terminal 会让未完成计数漏掉待恢复的失败卡。
+        const TERMINAL = new Set(["archived", "cancelled"]);
         const nodesWithBucket = nodes.map((n) => {
             const kind = String(n.kind ?? "");
             const bucket = kind.startsWith("aux_") || kind === "aux" ? null
@@ -977,22 +1072,64 @@ export function registerCards(app, ctx) {
         const done = db.prepare(`SELECT id FROM cards WHERE status='done' AND COALESCE(updated_at, created_at) < ?`).all(cutoff);
         const upd = db.prepare(`UPDATE cards SET status='archived', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='done'`);
         let archived = 0;
-        db.exec("BEGIN IMMEDIATE");
+        txBegin(); // ★ 修 #9：事务内事件入队
         try {
             for (const c of done) {
                 const info = upd.run(c.id);
                 if (Number(info.changes)) {
                     writeCardEvent(c.id, "human:dashboard", "archive", "done", "archived", `手工归档（阈值 ${days} 天）`);
+                    syncCardToTask(c.id); // ★ 修 #12（2026-09-19）：归档同步回写任务头 done→archived（CARD_TO_TASK.archived 此前无人走到）
                     archived++;
                 }
             }
-            db.exec("COMMIT");
+            txCommit();
         }
         catch (e) {
-            db.exec("ROLLBACK");
+            txRollback();
             throw e;
         }
         return { ok: true, run: { archived, cutoffDays: days }, mode: String(readConfig(db, "cards.archive_mode", "auto")) };
+    });
+    /** ★ 2026-09-20：卡片主题解析（归档分组用，只读）。
+     *  优先级：cards.topic 列 > meta.topic > 标题内 [topic:xxx] > '未分类'。
+     *  注：cardRowOf 不返回 topic（避免改动 /api/cards 等既有响应体），故此处直接读原始行。 */
+    function topicOfCardRow(r) {
+        const t = String(r.topic ?? "").trim();
+        if (t)
+            return t;
+        try {
+            const m = r.meta ? JSON.parse(r.meta) : {};
+            if (m && typeof m.topic === "string" && m.topic.trim())
+                return m.topic.trim();
+        }
+        catch { /* meta 非 JSON：忽略，落到标题解析 */ }
+        const mt = /\[topic:([^\]]+)\]/.exec(String(r.title || ""));
+        return mt ? mt[1].trim() : "未分类";
+    }
+    /** ★ 2026-09-20：归档中心 —— 归档卡片按主题分组（只读）。
+     *  分组按卡片数降序、同数量按主题名（zh）排序；组内按归档时间倒序；first/last 给组时间范围。 */
+    app.get("/api/cards/archive/grouped", async (req) => {
+        const by = String(req.query.by ?? "topic").trim() || "topic";
+        const rows = db
+            .prepare(`SELECT id, kind, title, topic, meta, created_at, updated_at FROM cards WHERE status='archived' ORDER BY COALESCE(updated_at, created_at) DESC`)
+            .all();
+        const map = new Map();
+        for (const r of rows) {
+            const topic = topicOfCardRow(r);
+            if (!map.has(topic))
+                map.set(topic, []);
+            map.get(topic).push({ id: Number(r.id), title: r.title, kind: r.kind, topic, at: r.updated_at || r.created_at });
+        }
+        const groups = [...map.entries()]
+            .map(([topic, cards]) => ({
+            topic,
+            count: cards.length,
+            first: cards[cards.length - 1]?.at ?? null,
+            last: cards[0]?.at ?? null,
+            cards,
+        }))
+            .sort((a, b) => b.count - a.count || String(a.topic).localeCompare(String(b.topic), "zh"));
+        return { ok: true, by, total: rows.length, groups };
     });
     // 卡片 ↔ MCP 任务：把卡片状态/标题回写到绑定的 task 记忆头（ref_kind='memory' 且 ref_id 有效）。
     // 幂等：状态已一致 → {noop:true}；否则重写 content 头 → {from,to,memory_id}。返回结构见前端 pushMcpBtn。
@@ -1004,24 +1141,34 @@ export function registerCards(app, ctx) {
         if (c.ref_kind !== "memory" || !c.ref_id)
             return reply.code(400).send({ ok: false, error: "卡片未绑定 MCP 任务" });
         const memoryId = Number(c.ref_id);
-        const m = db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(memoryId);
-        if (!m)
-            return reply.code(404).send({ ok: false, error: "绑定任务记忆不存在" });
-        // 卡片状态 → task 状态（迁移矩阵；★ E-0：review→in_progress / failed→blocked，与 syncCardToTask 同口径）
-        const TASK_MAP = { triage: "pending", todo: "pending", ready: "pending", running: "in_progress", review: "in_progress", done: "done", failed: "blocked", blocked: "blocked", cancelled: "cancelled" };
-        const toStatus = TASK_MAP[c.status] ?? c.status;
+        // ★ 修 #4（2026-09-19）三处：
+        //   ① 映射改用权威对照表 CARD_TO_TASK —— 原内联 TASK_MAP 是一致性③漏网的第 5 份副本；
+        //     表内仅 triage/todo 无映射，两者的任务态即 pending。
+        //   ② 原裸 `UPDATE memories SET content=?, status='active'` 不递增 version、不同步 FTS/2-gram
+        //     （一致性②同款坑，MCP 侧 CAS 感知不到本写），改走 updateMemory 正门 CAS（2 次重试，
+        //     持续漂移让位交对账，同 syncCardToTask 口径）。
+        //   ③ 无条件置 status='active' 会复活已 cancelled/merged 的任务记忆 —— 改为非 active/trial
+        //     直接 409 拒推，不再触碰记忆 status 列。
+        const toStatus = CARD_TO_TASK[c.status] ?? "pending";
         const toAssignee = c.assignee ?? "";
-        // 解析现有 content 头
-        const am = m.content.match(/\[assignee:([^\]]*)\]/);
-        const sm = m.content.match(/\[status:([^\]]*)\]/);
-        const curStatus = sm ? sm[1] : null;
-        const curAssignee = am ? am[1] : "";
-        // 归一旧头状态方便比对
-        const normFrom = curStatus ? (TASK_NORMALIZE[curStatus] ?? curStatus) : null;
-        const noop = normFrom === toStatus && curAssignee === toAssignee;
-        if (!noop) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const m = db.prepare(`SELECT id, content, version, status FROM memories WHERE id=?`).get(memoryId);
+            if (!m)
+                return reply.code(404).send({ ok: false, error: "绑定任务记忆不存在" });
+            if (!["active", "trial"].includes(String(m.status)))
+                return reply.code(409).send({ ok: false, error: `任务记忆 #${memoryId} 已终结（status=${m.status}），不允许推送` });
+            // 解析现有 content 头
+            const am = m.content.match(/\[assignee:([^\]]*)\]/);
+            const sm = m.content.match(/\[status:([^\]]*)\]/);
+            const curStatus = sm ? sm[1] : null;
+            const curAssignee = am ? am[1] : "";
+            // 归一旧头状态方便比对
+            const normFrom = curStatus ? (TASK_NORMALIZE[curStatus] ?? curStatus) : null;
+            const noop = normFrom === toStatus && curAssignee === toAssignee;
+            if (noop)
+                return { ok: true, noop, from: curStatus ?? null, to: toStatus, memory_id: memoryId };
             const head = `[task][assignee:${toAssignee}][status:${toStatus}]`;
-            // ★ 修正（2026-09-14 实证）：一次replace误二次replace导致头重复追加。
+            // ★（2026-09-14 实证）一次replace误二次replace导致头重复追加：
             //   若已有完整头 → 原位替换；否则整体前置新头（保留原正文/依赖段）。
             let newContent;
             if (/^\[task\]\[assignee:[^\]]*\]\[status:[^\]]*\]/.test(m.content)) {
@@ -1030,9 +1177,15 @@ export function registerCards(app, ctx) {
             else {
                 newContent = `${head} ${m.content}`;
             }
-            db.prepare(`UPDATE memories SET content=?, status=? WHERE id=?`).run(newContent, "active", memoryId);
+            const ok = updateMemory(db, memoryId, { content: newContent, expectedVersion: m.version }); // ★ 正门 CAS
+            if (ok) {
+                writeCardEvent(id, "human:dashboard", "push_to_task", null, null, `卡 #${id} → 任务头 ${normFrom ?? "?"} → ${toStatus}`);
+                return { ok: true, noop: false, from: curStatus ?? null, to: toStatus, memory_id: memoryId };
+            }
+            // 版本漂移：重读再试（第二次仍漂移 = MCP 侧正在改写 → 让位）
         }
-        return { ok: true, noop, from: curStatus ?? null, to: toStatus, memory_id: memoryId };
+        console.error(`[push-to-task] 卡片 #${id} → 任务 #${memoryId} 头回写让位：版本持续漂移（MCP 侧正在改写），交由对账对齐`);
+        return reply.code(409).send({ ok: false, error: "任务头版本持续漂移（MCP 侧正在改写），已让位；请稍后重试或等对账对齐" });
     });
     // —— 卡片上下文（★ 2026-09-14 v2：给智能体消费的完整语义上下文）——
     // 返回本卡详情 + 手动绑定的记忆全文 + 语义最相似记忆全文 + 关联卡片标题。
@@ -1094,7 +1247,7 @@ export function registerCards(app, ctx) {
             return restricted(reply, "cardDispatch");
         const out = { leased_back: 0, promoted: [], blocked: [], auto_refined: [], prospective_cards: [] };
         const now = new Date().toISOString();
-        db.exec("BEGIN IMMEDIATE");
+        txBegin(); // ★ 修 #9：事务内事件入队
         try {
             // ① 租约贴条（⑦/H3 演进）：过期不再自动抢回 —— 打 lease_notice_at 标记、卡保持 running（与任务头一致零震荡）；
             //    认领者 heartbeat 续期/收口即撕条；超期放回由 reapExpiredLeases 阶段二统一处理（头 CAS 回 pending）。
@@ -1110,9 +1263,12 @@ export function registerCards(app, ctx) {
                 out.leased_back++;
             }
             // ② triage 超时（M1）：>24h 未动 → todo
+            // ★ 2026-09-19（弊端 L5）：created_at 混 JS ISO（T/Z）与 SQLite 空格格式——裸比较同日条目判偏；
+            //   归一为 T 格式后与 JS 侧截止时间比较（租约「同日恒真」同类修复）
+            const staleCutoff = new Date(Date.now() - 86400000).toISOString();
             const stale = db
-                .prepare(`SELECT id FROM cards WHERE status='triage' AND created_at < datetime('now','-24 hours')`)
-                .all();
+                .prepare(`SELECT id FROM cards WHERE status='triage' AND replace(created_at,' ','T') < ?`)
+                .all(staleCutoff);
             for (const s of stale) {
                 db.prepare(`UPDATE cards SET status='todo', updated_at=? WHERE id=?`).run(now, s.id);
                 writeCardEvent(s.id, "dispatcher", "auto_refine", "triage", "todo", "24h 未动自动提升");
@@ -1143,7 +1299,8 @@ export function registerCards(app, ctx) {
                     .all();
                 const created = [];
                 for (const r of rows) {
-                    const dup = db.prepare(`SELECT id FROM cards WHERE meta LIKE ? LIMIT 1`).get(`%"from_prospective":${r.id}%`);
+                    // ★ 修 #6：同 /api/prospective/due —— LIKE 子串误伤改 json_extract 精确比对
+                    const dup = db.prepare(`SELECT id FROM cards WHERE json_extract(CASE WHEN json_valid(meta) THEN meta END, '$.from_prospective') = ? LIMIT 1`).get(r.id);
                     if (dup)
                         continue;
                     const ins = db
@@ -1156,10 +1313,10 @@ export function registerCards(app, ctx) {
                 return created;
             })();
             out.prospective_cards = dueRes;
-            db.exec("COMMIT");
+            txCommit();
         }
         catch (e) {
-            db.exec("ROLLBACK");
+            txRollback();
             throw e;
         }
         return { ok: true, ...out };
