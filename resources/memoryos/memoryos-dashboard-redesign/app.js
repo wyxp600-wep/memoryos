@@ -1,4 +1,4 @@
-﻿// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）
+// MemoryOS Dashboard — 真实 API 驱动（替代 mock 数据）
 // 同源 fetch /api/*；后端无能力处降级展示。依赖全局 echarts。
 //
 // 【安全标注 · 供静态扫描】本文件是纯浏览器端脚本（index.html <script src="./app.js"> 加载）。
@@ -2590,7 +2590,9 @@
       $('#planJsonInput').addEventListener('input', () => { if ($('#planJsonInput').value.trim()) $('#planFileSelect').value = ''; });
       pm.addEventListener('click', e => { if (e.target === pm) closePlanModal(); });
     }
-    loadTasks();
+    // ★ 2026-09-20：初始化不再加载旧任务视图 —— loadTasks() 会把含 done 的七态列表渲染进 #tasksBoard
+    //   （地图已是唯一任务入口，容器默认 display:none，此调用属无用请求 + 已完成任务重复展示的隐患）。
+    //   showTaskView('legacy') 分支仍会按需 loadTasks()。
     initSystemPlans();
     /* ★ P6：卡片看板视图（/api/cards，与旧 /api/tasks 任务视图并存 Tab） */
     const tabCards = $('#tabCards'), tabMap = $('#tabMap'), tabLegacy = $('#tabLegacy');
@@ -3776,7 +3778,10 @@
     const data = await fetch('/api/cards').then(r => r.json()).catch(() => ({ total: 0, _err: true }));
     const buckets = data.buckets || {};
     if (data._err) toast('看板加载失败：无法连接内核服务');
+    // ★ 2026-09-20：已完成列默认隐藏（与任务地图共用「显示已完成」开关）；隐藏时给可点开的提示条
+    const hiddenDone = _taskMapState.showDone ? 0 : (buckets.done || []).length;
     const html = CARD_STATES_UI.map(([st, label, color]) => {
+      if (st === 'done' && !_taskMapState.showDone) return '';
       const items = buckets[st] || [];
       return `<div data-col="${st}" style="display:flex;flex-direction:column;background:rgba(255,255,255,0.03);border:1px solid rgba(0,0,0,0.07);border-radius:12px;padding:10px 12px;min-width:348px;max-height:calc(100vh - 230px);overflow-y:auto;overflow-x:hidden">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -3795,7 +3800,10 @@
           </div>`).join('')}</div>` : '<div style="text-align:center;color:var(--text-muted);font-size:11px;padding:14px 0">—</div>'}
       </div>`;
     }).join('');
-    board.innerHTML = `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;min-height:180px">${html}</div>`;
+    const doneHint = hiddenDone ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;color:var(--text-muted)"><span>已完成 ${hiddenDone} 张已隐藏</span><button class="btn-ghost" data-show-done style="padding:3px 10px;font-size:11px">显示已完成</button></div>` : '';
+    board.innerHTML = `${doneHint}<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;min-height:180px">${html}</div>`;
+    const showDoneBtn = board.querySelector('[data-show-done]');
+    if (showDoneBtn) showDoneBtn.onclick = () => { _taskMapSetShowDone(true); renderCards(); };
     const items = $$('#cardsBoard [data-card-id]');
     items.forEach(el => {
       el.onclick = () => {
@@ -3872,6 +3880,7 @@
     positions: new Map(),
     auto: (() => { try { return (localStorage.getItem('memoryos-map-auto') ?? '1') !== '0'; } catch { return true; } })(), // ★ 2026-09-14 自动关联开关（?auto=0/1）
     showArchived: (() => { try { return localStorage.getItem('memoryos-map-archived') === '1'; } catch { return false; } })(), // ★ 2026-09-18 归档任务默认隐藏（工具栏「查看归档」切换）
+    showDone: (() => { try { return localStorage.getItem('memoryos-map-done') === '1'; } catch { return false; } })(), // ★ 2026-09-20 已完成任务默认隐藏（工具栏「显示已完成」切换；与卡片看板共用）
     scale: 1,
     x: 0,
     y: 0,
@@ -4448,14 +4457,17 @@
     }
     // ★ 2026-09-18：归档任务默认隐藏 —— 隐藏时剔掉 status='archived' 主卡、挂到它们的连线、
     //   以及失去宿主的 aux_ 动态子卡。chips 计数仍用全量（「已归档」chip 计数即隐藏提示，点击自动揭开）
+    // ★ 2026-09-20：已完成（done）同样默认隐藏，与归档共用同一剔除逻辑（各自独立开关，互不影响）
     const viewNodes = data.nodes || [], viewLinks = data.links || [];
     let keptNodes = viewNodes, keptLinks = viewLinks;
-    if (!_taskMapState.showArchived) {
+    if (!_taskMapState.showArchived || !_taskMapState.showDone) {
       const gone = new Set();
       viewNodes.forEach(n => {
         const nk = String(n.kind);
         if (nk === 'aux' || nk.startsWith('aux_')) return; // aux 子卡跟随宿主，单独处理
-        if (String(n.status) === 'archived') gone.add(String(n.id));
+        const st = String(n.status);
+        if (!_taskMapState.showArchived && st === 'archived') gone.add(String(n.id));
+        else if (!_taskMapState.showDone && st === 'done') gone.add(String(n.id));
       });
       if (gone.size) {
         keptLinks = viewLinks.filter(l => !gone.has(String(l.src_id)) && !gone.has(String(l.dst_id)));
@@ -4489,6 +4501,8 @@
         _taskMapFilter = chip;
         // 点「已归档」过滤需先让归档数据可见（默认隐藏时自动揭开，与工具栏按钮同步）
         if (chip === 'terminal' && !_taskMapState.showArchived) _taskMapSetShowArchived(true);
+        // ★ 2026-09-20：点「已完成」过滤同理需先揭开 done（否则过滤后空图）
+        if (chip === 'done' && !_taskMapState.showDone) _taskMapSetShowDone(true);
         renderTaskMap();
       });
     }
@@ -4514,6 +4528,49 @@
     _taskMapState.showArchived = on;
     try { localStorage.setItem('memoryos-map-archived', on ? '1' : '0'); } catch { /* ignore */ }
     refreshArchiveViewBtn($('#taskMapArchiveViewBtn'));
+  }
+  // ★ 2026-09-20：「显示已完成」按钮态（默认隐藏已完成=高亮提示可点开；已显示=ghost）
+  function refreshDoneViewBtn(btn) {
+    if (!btn) return;
+    btn.className = _taskMapState.showDone ? 'btn-ghost' : 'btn-primary';
+    btn.textContent = _taskMapState.showDone ? '隐藏已完成' : '✓ 显示已完成';
+    btn.title = _taskMapState.showDone ? '已完成任务已显示在地图中；点击隐藏已完成任务' : '已完成任务默认隐藏；点击在地图中显示已完成任务';
+  }
+  function _taskMapSetShowDone(on) {
+    _taskMapState.showDone = on;
+    try { localStorage.setItem('memoryos-map-done', on ? '1' : '0'); } catch { /* ignore */ }
+    refreshDoneViewBtn($('#taskMapDoneViewBtn'));
+  }
+  /* ★ 2026-09-20：归档中心 —— 归档卡片按主题分组呈现（只读）。
+     数据源 GET /api/cards/archive/grouped?by=topic；组头显示主题+数量+时间范围，点行进卡片详情。
+     与地图「📦 查看归档」并存：后者在地图中显示归档节点，本面板做分组检索。 */
+  async function openArchiveCenter() {
+    const j = await fetch('/api/cards/archive/grouped?by=topic').then(r => r.json()).catch(() => null);
+    if (!j || !j.ok) { toast('归档数据读取失败'); return; }
+    if (!j.total) { _cockpitModal('归档中心', '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">暂无归档任务</div>'); return; }
+    const fmt = t => (t ? String(t).slice(0, 10) : '—');
+    const body = j.groups.map(g => `
+      <div style="margin-bottom:10px;border:1px solid var(--border-glass);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,0.04)">
+          <span style="font-size:12px;font-weight:600;color:var(--text-primary)">${esc(g.topic)}</span>
+          <span class="mono" style="font-size:11px;color:var(--text-muted)">${g.count} 张</span>
+          <span class="mono" style="font-size:10px;color:var(--text-muted);margin-left:auto">${fmt(g.last)} ~ ${fmt(g.first)}</span>
+        </div>
+        ${g.cards.map(c => `
+          <div data-arch-card="${c.id}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid var(--border-glass);cursor:pointer;font-size:12px">
+            <span class="mono" style="font-size:10px;color:var(--text-muted)">#${c.id}</span>
+            <span style="color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || '')}</span>
+            <span style="font-size:10px;color:var(--text-muted)">${esc(c.kind || '')}</span>
+            <span class="mono" style="font-size:10px;color:var(--text-muted)">${fmt(c.at)}</span>
+          </div>`).join('')}
+      </div>`).join('');
+    _cockpitModal(`归档中心 · 按主题分组（${j.total} 张 / ${j.groups.length} 组）`, body, (el) => {
+      el.querySelectorAll('[data-arch-card]').forEach(row => row.onclick = () => {
+        const m = document.querySelector('.cockpit-modal');
+        if (m) m.remove();
+        openCardDetail(Number(row.dataset.archCard));
+      });
+    });
   }
 
   function bindTaskMapControls() {
@@ -4577,6 +4634,17 @@
       renderTaskMap({ fit: false });
     };
     refreshArchiveViewBtn(archViewBtn);
+    // ★ 2026-09-20：「显示已完成」切换 —— 已完成任务默认隐藏，点击在地图中显示/隐藏（持久化 localStorage）
+    const doneViewBtn = $('#taskMapDoneViewBtn');
+    if (doneViewBtn) doneViewBtn.onclick = () => {
+      _taskMapSetShowDone(!_taskMapState.showDone);
+      toast(_taskMapState.showDone ? '已显示已完成任务' : '已隐藏已完成任务（「已完成」chip 点击仍可临时查看）');
+      renderTaskMap({ fit: false });
+    };
+    refreshDoneViewBtn(doneViewBtn);
+    // ★ 2026-09-20：归档中心（按主题分组查看归档任务）
+    const archCenterBtn = $('#taskMapArchiveCenterBtn');
+    if (archCenterBtn) archCenterBtn.onclick = () => openArchiveCenter();
     const fitBtn = $('#taskMapFitBtn');
     if (fitBtn) fitBtn.onclick = fitTaskMap;
     const zoomOut = $('#taskMapZoomOutBtn');
@@ -4933,6 +5001,26 @@
     return wrap;
   }
 
+  /* ★ 2026-09-20：结论/过程切分（输出契约见 agent-core.js buildSystemPrompt）。
+     模型按 <结论>…</结论><过程>…</过程> 输出；解析不到标记时整段视为结论（兜底，绝不丢内容）。 */
+  function _agentSplitAnswer(text) {
+    const s = String(text ?? '');
+    if (!/<结论>|<过程>/.test(s)) return { conclusion: s, process: '' };
+    const mc = /<结论>([\s\S]*?)<\/结论>/.exec(s);
+    const mp = /<过程>([\s\S]*?)<\/过程>/.exec(s);
+    const process = mp ? mp[1].trim() : '';
+    const conclusion = mc ? mc[1].trim() : s.replace(/<过程>[\s\S]*?<\/过程>/g, '').replace(/<\/?结论>/g, '').trim();
+    return { conclusion, process };
+  }
+  /* ★ 2026-09-20：把过程段追加为「执行过程」区的一张思考卡 —— 过程不再占用聊天区 */
+  function _agentAppendProcessCard(process, title) {
+    if (!process) return;
+    const wrap = $('#agentRunLive');
+    if (wrap) wrap.style.display = 'block';
+    _agentRunLiveSteps.push({ stepId: 'proc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), type: 'thinking', content: process, state: 'ok', tool: title || '思考' });
+    _agentRunLiveRender();
+  }
+
   /* ★ 执行中心内联时间线（agent 页一体化）：发送即 SSE 实时渲染，点步骤展开终端/diff/产物。
      数据源：POST /api/agent/runs（立即回 runId）+ SSE /stream；步骤详情复用 /api/agent/runs/:id。 */
   let _agentRunLiveEs = null, _agentRunLivePoll = null, _agentRunLiveId = null, _agentRunLiveSteps = [], _agentRunLiveTimer = null, _agentRunLiveSeconds = 0;
@@ -5108,6 +5196,36 @@
     if (ba) ba.onclick = () => _agentRunLiveDetail(stepId, false, true);
   }
 
+  /* ★ 2026-09-20：发送按钮双态 —— 运行中变「⏹ 停止」，点击只中止当前 run（不再 disabled 空等） */
+  let _agentCurrentRunId = null;
+  function _agentSetSendBtn(sending) {
+    const btn = $('#agentSendBtn');
+    if (!btn) return;
+    if (sending) {
+      btn.textContent = '⏹ 停止';
+      btn.disabled = false;
+      btn.dataset.sending = '1';
+      btn.classList.add('agent-stop-btn');
+    } else {
+      btn.textContent = '发送';
+      btn.disabled = false;
+      delete btn.dataset.sending;
+      btn.classList.remove('agent-stop-btn');
+    }
+  }
+  /* ★ 2026-09-20：只中止当前 run —— 既有 _agentCockpitAbort 会中止全部 running run，不适合发送按钮 */
+  async function _agentAbortCurrent() {
+    const id = _agentCurrentRunId;
+    if (!id) { toast('没有运行中的任务', 2500); return; }
+    try {
+      const r = await fetch(`/api/agent/runs/${encodeURIComponent(id)}/abort`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: '发送按钮手动停止' }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) toast('停止请求失败：' + (j.error || ('HTTP ' + r.status)), 3200);
+      else toast('已请求停止当前生成（LLM 轮次中断，进行中工具调用会跑完）', 3600);
+    } catch (e) { toast('停止请求失败：' + (e.message || e), 3200); }
+    _agentRunLiveStop();
+  }
+
   async function agentSend() {
     if (agentBusy) return;
     const input = $('#agentInput'), chat = $('#agentChat');
@@ -5121,8 +5239,7 @@
     const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程实时展开在下方时间线（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
     chat.appendChild(pending);
     chat.scrollTop = chat.scrollHeight;
-    const sendBtn = $('#agentSendBtn');
-    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '运行中…'; }
+    _agentSetSendBtn(true);
     const allowWrites = !!($('#agentAllowWrites') || {}).checked;
     // 内联执行过程清空待新 run
     _agentRunLiveStop();
@@ -5139,9 +5256,10 @@
         chat.appendChild(agentBubble('assistant', `<span style="color:var(--warning)">⚠ ${esc(j.error || ('HTTP ' + res.status))}</span>`));
         setRunStatus('请求失败', 'error');
         agentBusy = false;
-        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
+        _agentSetSendBtn(false);
         return;
       }
+      _agentCurrentRunId = j.runId;
       _agentRunLiveStart(j.runId);
       // ★ 驾驶舱「并行数」排队：超出并发上限的 run 先排队，空位腾出后自动启动（SSE 已挂上，启动即出事件）
       if (j.status === 'queued') {
@@ -5158,13 +5276,18 @@
         tick();
       });
       pending.remove();
-      // 终态：拉答案补进聊天
+      // 终态：拉答案 → 结论进聊天气泡、过程进「执行过程」区（★ 2026-09-20）
       const fin = await fetch('/api/agent/runs/' + encodeURIComponent(j.runId)).then(r => r.json()).catch(() => null);
-      const answer = (fin && fin.ok && fin.answer) || '（无内容）';
+      const raw = (fin && fin.ok && fin.answer) || '';
+      const aborted = !!fin && fin.status === 'aborted';
+      const sp = _agentSplitAnswer(raw);
+      _agentAppendProcessCard(sp.process, '思考');
+      // ★ 2026-09-20：停止生成后不再显示误导性的「（无内容）」
+      const answer = aborted && !raw.trim() ? '已停止生成' : (sp.conclusion || '（无内容）');
       const deniedNote = fin && fin.status === 'failed' ? `<div style="margin-top:6px;font-size:12px;color:var(--danger)">⚠ 运行失败：${esc(fin.error || '')}</div>` : '';
       chat.appendChild(agentBubble('assistant', esc(answer) + deniedNote));
       AGENT_HISTORY.push({ role: 'user', content: text }, { role: 'assistant', content: answer });
-      setRunStatus('已完成', 'done');
+      setRunStatus(aborted ? '已停止' : '已完成', aborted ? 'aborted' : 'done');
       if (AGENT_HISTORY.length > 16) AGENT_HISTORY.splice(0, AGENT_HISTORY.length - 16);
       // 会话条计数刷新（后端 startRun 已自动把本轮追加进 agent_sessions）
       if (_agentSessionKey) { _agentSessions.forEach(x => { if (x.session_key === _agentSessionKey) x.msg_count = (x.msg_count || 0) + 2; }); _agentSessionChips(); }
@@ -5175,7 +5298,8 @@
       setRunStatus('运行失败', 'error');
     } finally {
       agentBusy = false;
-      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
+      _agentSetSendBtn(false);
+      _agentCurrentRunId = null;
       chat.scrollTop = chat.scrollHeight;
     }
   }
@@ -5201,16 +5325,15 @@
     if (agentInited) return;
     agentInited = true;
     const input = $('#agentInput'), btn = $('#agentSendBtn'), clear = $('#agentClearBtn');
-    if (btn) btn.onclick = agentSend;
+    // ★ 2026-09-20：发送按钮双态 —— 运行中点击=停止当前生成，空闲=发送
+    if (btn) btn.onclick = () => { if (btn.dataset.sending === '1') _agentAbortCurrent(); else agentSend(); };
     if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); } });
     if (clear) clear.onclick = () => {
       AGENT_HISTORY.length = 0;
       if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
       hideRunStatus();
     };
-    // 运行状态条按钮
-    const runStop = $('#agentRunStopBtn');
-    if (runStop) runStop.onclick = () => _cockpitDispatch({ dataset: { act: '_agentCockpitAbort' } });
+    // 运行状态条按钮（★ 2026-09-20：停止生成已上移到发送按钮，#agentRunStopBtn 已移除）
     const runCopy = $('#agentRunCopyBtn');
     if (runCopy) runCopy.onclick = () => _cockpitDispatch({ dataset: { act: '_agentCockpitCopy' } });
     const runExport = $('#agentRunExportBtn');
@@ -5226,13 +5349,11 @@
     { domain: '① 会话输入', open: true, btns: [
       { label: '＋ 新建会话', kind: 'real', act: '_agentSessionNew' },
       { label: '📜 历史运行', kind: 'real', act: '_agentFnHistory' },
-      { label: '⏹ 停止生成', kind: 'real', act: '_agentCockpitAbort' },
       { label: '📋 复制回复', kind: 'real', act: '_agentCockpitCopy' },
       { label: '⬇ 导出对话', kind: 'real', act: '_agentCockpitExportChat' },
     ]},
     { domain: '② 任务目标', open: true, btns: [
       { label: '🎯 领任务做', kind: 'real', act: '_agentFnQuick', arg: 'task' },
-      { label: '📋 任务看板', kind: 'real', act: '_agentCockpitNav', arg: 'tasks' },
       { label: '✅ 验收', kind: 'real', act: '_agentCockpitCard', arg: 'accept', hint: '需先在看板选中卡片' },
       { label: '↩ 打回', kind: 'real', act: '_agentCockpitCard', arg: 'refine', hint: '需先在看板选中卡片' },
       { label: '📦 归档', kind: 'real', act: '_agentCockpitCard', arg: 'archive', hint: '需先在看板选中卡片' },
@@ -5250,35 +5371,28 @@
     { domain: '④ 工具权限', btns: [
       { label: '工具面', kind: 'real', act: '_agentCockpitToolFace' },
       { label: '重启 MCP', kind: 'real', act: '_agentCockpitMcpRestart' },
-      { label: '密钥管理', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
       { label: '执行工具开关', kind: 'real', act: '_agentCockpitExecToggle', hint: '开/关 file_read/file_write/exec_run（重 spawn MCP）' },
       { label: '浏览器控制', kind: 'stub', why: '未启用：browser_* 工具域（YAGNI 不做）' },
     ]},
     { domain: '⑤ 审批安全', btns: [
-      { label: '✋ 拒绝', kind: 'real', act: '_agentCockpitDeny', hint: '拒绝当前被门禁拦截的写操作' },
       { label: '⏹ 紧急停止', kind: 'real', act: '_agentCockpitAbort' },
       { label: '查审计', kind: 'real', act: '_agentCockpitAudit' },
       { label: '撤销凭据', kind: 'real', act: '_agentCockpitCreds' },
       { label: '本次允许', kind: 'stub', why: '审批三键 501 占位（writeGate 升级单独立项）' },
     ]},
     { domain: '⑥ 记忆上下文', btns: [
-      { label: '查记忆', kind: 'real', act: '_agentCockpitNav', arg: 'all' },
       { label: '🧠 沉淀记忆', kind: 'real', act: '_agentFnQuick', arg: 'mem' },
-      { label: '删除记忆', kind: 'real', act: '_agentCockpitNav', arg: 'zombies' },
       { label: '压缩会话', kind: 'real', act: '_agentCockpitCompact' },
       { label: '导出记忆', kind: 'real', act: '_agentCockpitExportMem' },
-      { label: '重建索引', kind: 'real', act: '_agentCockpitReindex' },
       { label: '上下文摘要', kind: 'real', act: '_agentCockpitSummarize', hint: 'LLM 有损压缩早期对话（保留最近 6 条原文）' },
     ]},
     { domain: '⑦ 模型成本', btns: [
-      { label: '选模型', kind: 'real', act: '_agentCockpitNav', arg: 'settings' },
       { label: '测试连接', kind: 'real', act: '_agentCockpitTestLlm' },
       { label: 'Token 用量', kind: 'real', act: '_agentCockpitTokenUsage' },
       { label: '预算上限', kind: 'real', act: '_agentCockpitBudget', hint: '设单 run 累计 token 上限，超即中止' },
       { label: '缓存', kind: 'real', act: '_agentCockpitCache', hint: 'LLM 响应缓存开关（同历史轮次省真实推理）' },
     ]},
     { domain: '⑧ 多智能体', btns: [
-      { label: '扫描 agent', kind: 'real', act: '_agentCockpitNav', arg: 'connect' },
       { label: '接入向导', kind: 'real', act: '_agentCockpitConnectGuide' },
       { label: 'Agent 清单', kind: 'real', act: '_agentCockpitAgents' },
       { label: '子智能体', kind: 'stub', why: '架构不支持：单 agent 内核，无 spawn/并行控制' },
@@ -5286,7 +5400,6 @@
       { label: '终止子 agent', kind: 'stub', why: '架构不支持：单 agent 内核' },
     ]},
     { domain: '⑨ 可观测调试', btns: [
-      { label: '执行流', kind: 'real', act: '_agentCockpitNav', arg: 'runs' },
       { label: '回放任务', kind: 'real', act: '_agentFnHistory' },
       { label: '性能面板', kind: 'real', act: '_agentCockpitHealth' },
       { label: '自进化', kind: 'real', act: '_agentCockpitEvolution' },
@@ -5296,7 +5409,6 @@
     { domain: '⑩ 治理合规', btns: [
       { label: '审计日志', kind: 'real', act: '_agentCockpitAudit' },
       { label: '合规检查', kind: 'real', act: '_agentCockpitHealth' },
-      { label: '问责链', kind: 'real', act: '_agentCockpitNav', arg: 'tasks' },
       { label: '审计导出', kind: 'real', act: '_agentCockpitExportAudit' },
       { label: '数据驻留', kind: 'stub', why: '未启用：数据驻留策略' },
       { label: '事件手册', kind: 'real', act: '_agentCockpitRunbook', hint: '查看事件处置 runbook + 近期真实事件' },
@@ -5596,37 +5708,44 @@
     document.addEventListener('keydown', onKey);
     if (afterRender) afterRender(wrap.firstElementChild);
   }
-  /* agent 页常驻功能按钮的 handler */
+  /* agent 页常驻功能按钮的 handler
+     ★ 2026-09-20：执行记录/步骤时间线统一渲染到「执行过程」区（#agentRunLive），不再写入聊天区
+     —— 聊天区只承载对话与结论，执行过程与对话解耦。 */
   async function _agentFnHistory() {
     const j = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
     const runs = (j.runs || []).slice(0, 10);
-    const chat = $('#agentChat');
+    const wrap = $('#agentRunLive'), tl = $('#agentRunLiveTimeline'), meta = $('#agentRunLiveMeta');
+    if (!wrap || !tl) return;
+    wrap.style.display = 'block';
+    _agentRunLiveStop();
+    _agentRunLiveSteps = [];
     if (!runs.length) {
-      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">还没有执行记录。发一条指令即可在此看到过程，或点「执行中心」看全量。</div>'; }
+      if (meta) meta.textContent = '';
+      tl.innerHTML = '<div class="run-card-empty">还没有执行记录。发一条指令即可在此看到过程。</div>';
       return;
     }
-    let html = '<div style="font-size:12px;margin-bottom:6px">最近 ' + runs.length + ' 次 agent 执行（点某次看步骤时间线）</div>';
-    for (const r of runs) {
+    if (meta) meta.textContent = '历史运行 ' + runs.length + ' 次（点某次看步骤时间线）';
+    tl.innerHTML = runs.map(r => {
       const dot = r.status === 'running' ? '🟢' : r.status === 'done' ? '✅' : '⚠️';
-      html += `<div class="session-chip" data-hrun="${esc(r.runId)}" style="cursor:pointer;margin:3px 0;width:100%;justify-content:space-between">
+      return `<div class="session-chip" data-hrun="${esc(r.runId)}" style="cursor:pointer;margin:3px 0;width:100%;justify-content:space-between">
         <span>${dot} ${esc(r.title || r.runId)} · ${esc(r.status)} · ${r.stepIndex} 步</span>
         <span style="opacity:.6">${((r.finishedAt - r.startedAt) / 1000).toFixed(1)}s</span></div>`;
-    }
-    const box = document.createElement('div');
-    box.innerHTML = html;
-    if (chat) { chat.innerHTML = ''; box.querySelectorAll('[data-hrun]').forEach(el => el.onclick = () => _agentFnOpenRun(el.dataset.hrun)); chat.appendChild(box); }
+    }).join('');
+    tl.querySelectorAll('[data-hrun]').forEach(el => el.onclick = () => _agentFnOpenRun(el.dataset.hrun));
   }
   async function _agentFnOpenRun(runId) {
     const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
-    const chat = $('#agentChat');
-    if (!j || !j.ok || !chat) return;
-    let html = '<div style="font-size:12px;margin-bottom:8px">执行记录 ' + esc(j.title || runId) + ' · ' + esc(j.status) + '</div>';
-    for (const s of (j.steps || [])) {
-      const ico = s.state === 'ok' ? '✓' : s.state === 'error' ? '✗' : '◌';
-      html += `<div style="font-size:12px;margin:4px 0;line-height:1.7"><span class="tl-node ${s.state === 'ok' ? 'ok' : s.state === 'error' ? 'error' : 'pending'}" style="display:inline-flex;margin-right:6px">${ico}</span><span class="mono" style="color:var(--accent-cyan)">${esc(s.tool)}</span> <span class="text-muted">${esc(s.argsPreview || '')}</span>${s.preview ? '<br><span style="opacity:.7;font-size:11px">' + esc(s.preview) + '</span>' : ''}</div>`;
-    }
-    html += '<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(65,187,200,0.08);font-size:12px;line-height:1.7">' + esc(j.answer || '（无答案）') + '</div>';
-    chat.innerHTML = html;
+    const wrap = $('#agentRunLive'), meta = $('#agentRunLiveMeta');
+    if (!j || !j.ok || !wrap) return;
+    wrap.style.display = 'block';
+    _agentRunLiveStop();
+    _agentRunLiveId = runId;
+    // 复用执行过程时间线渲染器（与实时 SSE 同一套卡片），结论作为末张卡片一并落此区
+    _agentRunLiveSteps = (j.steps || []).map(s => ({ ...s }));
+    const sp = _agentSplitAnswer(j.answer || '');
+    if (sp.conclusion) _agentRunLiveSteps.push({ stepId: 'ans-' + runId, type: 'thinking', content: sp.conclusion, state: 'ok', tool: '结论' });
+    if (meta) meta.textContent = (j.title ? j.title + ' · ' : '') + j.status + ' · ' + (j.toolCalls || 0) + ' 工具';
+    _agentRunLiveRender();
   }
   function _agentFnQuick(kind) {
     // 快捷指令：填入输入框并直接发送（复用 agentSend → /api/agent/runs + SSE 内联时间线）
@@ -5667,10 +5786,16 @@
       if (!s.messages || !s.messages.length) {
         chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（空会话）</div>';
       } else {
-        for (const m of s.messages) chat.appendChild(agentBubble(m.role === 'assistant' ? 'assistant' : 'user', esc(m.content)));
+        // ★ 2026-09-20：回放同样按结论/过程切分 —— 聊天气泡只放结论，过程段不回放（可到执行过程区/执行中心查看）
+        for (const m of s.messages) {
+          if (m.role === 'assistant') chat.appendChild(agentBubble('assistant', esc(_agentSplitAnswer(m.content).conclusion)));
+          else chat.appendChild(agentBubble('user', esc(m.content)));
+        }
       }
       AGENT_HISTORY.length = 0;
-      for (const m of (s.messages || []).slice(-8)) AGENT_HISTORY.push({ role: m.role, content: m.content });
+      for (const m of (s.messages || []).slice(-8)) {
+        AGENT_HISTORY.push({ role: m.role, content: m.role === 'assistant' ? _agentSplitAnswer(m.content).conclusion : m.content });
+      }
       chat.scrollTop = chat.scrollHeight;
       _agentSessionChips();
     }).catch(() => { /* 会话读取失败不阻断 */ });
@@ -5777,13 +5902,16 @@
     }
   }
 
-  // ===== V1重构：更多功能面板（5组分类，复用COCKPIT数据） =====
+  // ===== V1重构：更多功能面板（★ 2026-09-20 整合为 6 组，复用 COCKPIT 数据）=====
+  //   导航类项（任务看板/查记忆/删除记忆/执行流/扫描 agent/问责链）已移除：这些在主导航与 agent 边栏均有入口，
+  //   面板只保留「本会话可直接操作」的项；假入口（密钥管理/选模型/拒绝/重建索引）已删（D4）。
   const MORE_GROUPS = {
-    session: { label: '会话与任务', domains: ['① 会话输入', '② 任务目标'] },
-    permission: { label: '权限与安全', domains: ['③ 自主权模式', '④ 工具权限', '⑤ 审批安全'] },
-    memory: { label: '记忆与上下文', domains: ['⑥ 记忆上下文'] },
-    model: { label: '模型与连接', domains: ['⑦ 模型成本', '⑧ 多智能体'] },
-    debug: { label: '调试与治理', domains: ['⑨ 可观测调试', '⑩ 治理合规'] },
+    session: { label: '当前会话', domains: ['① 会话输入'] },
+    task: { label: '任务', domains: ['② 任务目标'] },
+    memory: { label: '记忆', domains: ['⑥ 记忆上下文'] },
+    permission: { label: '权限', domains: ['③ 自主权模式', '④ 工具权限', '⑤ 审批安全'] },
+    model: { label: '模型', domains: ['⑦ 模型成本', '⑧ 多智能体'] },
+    debug: { label: '调试', domains: ['⑨ 可观测调试', '⑩ 治理合规'] },
   };
   function renderMorePanel(groupKey) {
     const grid = $('#agentMoreGrid');
@@ -5812,6 +5940,13 @@
         }
         grid.appendChild(btn);
       }
+    }
+    // ★ 2026-09-20：计数动态化（原 index.html 硬编码「共 47 项功能」与实际条目不符）
+    const cnt = $('#agentMoreCount');
+    if (cnt) {
+      const total = COCKPIT.reduce((s, d) => s + d.btns.length, 0);
+      const real = COCKPIT.reduce((s, d) => s + d.btns.filter(b => b.kind !== 'stub').length, 0);
+      cnt.textContent = showStub ? `共 ${total} 项（可操作 ${real}）` : `可操作 ${real} 项 · 未启用 ${total - real} 项`;
     }
   }
   function initAgentMorePanel() {

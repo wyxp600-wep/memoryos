@@ -278,7 +278,9 @@ export async function importVault(db, embedder, opts) {
             logUsage(db, { memory_id: row.id, event: "write", reader_agent: agent, writer_agent: agent, project });
             stats.added++;
         }
-        catch {
+        catch (e) {
+            // 单条笔记失败不阻断整库导入，但必须留痕（导入是批量写，静默会掩盖系统性故障）
+            console.error(`[obsidian] 导入笔记失败（${p.file}）: ${e instanceof Error ? e.message : String(e)}`);
             stats.failed++;
         }
     }
@@ -516,7 +518,8 @@ export function exportMemories(db, opts = {}) {
             fs.writeFileSync(file, `${frontmatter(r)}\n\n${r.content}\n`, "utf8");
             stats.written++;
         }
-        catch {
+        catch (e) {
+            console.error(`[obsidian] 导出写文件失败（${file}）: ${e instanceof Error ? e.message : String(e)}`);
             stats.failed++;
         }
     }

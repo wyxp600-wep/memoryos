@@ -377,7 +377,10 @@ export function registerKnowledge(app, ctx) {
             if (fs.existsSync(filePath))
                 fs.renameSync(filePath, path.join(trashDir, path.basename(filePath)));
         }
-        catch { /* 文件不存在忽略 */ }
+        catch (e) {
+            // 注：existsSync 已排除「文件不存在」，此处命中即真实 IO 错误（权限/占用），必须留痕
+            console.error(`[notes] 软删移入 .trash 失败（${filePath}）: ${e instanceof Error ? e.message : String(e)}`);
+        }
         demoteNoteLinks(db, id);
         db.prepare(`DELETE FROM notes WHERE id=?`).run(id);
         db.prepare(`DELETE FROM links WHERE src_kind='note' AND src_id=?`).run(id);
@@ -915,6 +918,7 @@ export function registerKnowledge(app, ctx) {
             fs.writeFileSync(target, beforeText, "utf8");
         }
         catch (e) {
+            console.error(`[rollback] 步骤写回失败（${target}）: ${e instanceof Error ? e.message : String(e)}`);
             return reply.code(500).send({ ok: false, error: "写回失败：" + (e instanceof Error ? e.message : String(e)) });
         }
         logExecAudit(db, {

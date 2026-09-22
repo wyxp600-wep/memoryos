@@ -154,6 +154,7 @@ export function saveCustomSpecs(specs) {
         return { ok: true, path: p, backupPath };
     }
     catch (e) {
+        console.error(`[sources] sources.json 保存失败（${p}）: ${e instanceof Error ? e.message : String(e)}`);
         return { ok: false, error: e instanceof Error ? e.message : String(e), path: p, backupPath };
     }
 }

@@ -3330,6 +3330,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   }
   .agent-chat-input textarea:focus { border-color: var(--accent-cyan); }
   .agent-chat-input .btn-primary { height: 42px; min-width: 80px; }
+  /* ★ 2026-09-20：发送按钮运行中双态为「停止」—— 红色描边，点击中止当前 run */
+  .agent-chat-input .btn-primary.agent-stop-btn { background: rgba(239,68,68,0.14); color: #ef4444; border: 1px solid rgba(239,68,68,0.45); }
+  [data-theme="dark"] .agent-chat-input .btn-primary.agent-stop-btn { background: rgba(239,68,68,0.2); color: #fca5a5; }
 
   /* ===== 更多功能面板 ===== */
   .more-panel {
@@ -4558,7 +4561,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
               <span class="run-status-text" id="agentRunStatusText">准备中…</span>
             </div>
             <div class="run-status-actions">
-              <button class="btn-ghost run-stop-btn" id="agentRunStopBtn" style="padding:4px 10px;font-size:11px;color:#ef4444;border-color:rgba(239,68,68,0.3)">⏹ 停止生成</button>
               <button class="btn-ghost" id="agentRunCopyBtn" style="padding:4px 10px;font-size:11px">📋 复制回复</button>
               <button class="btn-ghost" id="agentRunExportBtn" style="padding:4px 10px;font-size:11px">⬇ 导出对话</button>
             </div>
@@ -4594,16 +4596,17 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <!-- 更多功能弹出面板 -->
       <div class="more-panel" id="agentMorePanel">
         <div class="more-panel-tabs" id="agentMoreTabs">
-          <div class="more-panel-tab active" data-group="session">会话与任务</div>
-          <div class="more-panel-tab" data-group="permission">权限与安全</div>
-          <div class="more-panel-tab" data-group="memory">记忆与上下文</div>
-          <div class="more-panel-tab" data-group="model">模型与连接</div>
-          <div class="more-panel-tab" data-group="debug">调试与治理</div>
+          <div class="more-panel-tab active" data-group="session">当前会话</div>
+          <div class="more-panel-tab" data-group="task">任务</div>
+          <div class="more-panel-tab" data-group="memory">记忆</div>
+          <div class="more-panel-tab" data-group="permission">权限</div>
+          <div class="more-panel-tab" data-group="model">模型</div>
+          <div class="more-panel-tab" data-group="debug">调试</div>
         </div>
         <div class="more-panel-grid" id="agentMoreGrid"></div>
         <div class="more-panel-footer">
           <label><input type="checkbox" id="agentShowStub"> 显示未启用功能</label>
-          <span style="font-size:10px;color:var(--text-muted)">共 47 项功能</span>
+          <span style="font-size:10px;color:var(--text-muted)" id="agentMoreCount">—</span>
         </div>
       </div>
     </section>
@@ -4763,7 +4766,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="task-map-actions">
               <button class="btn-ghost" id="taskMapAutoBtn" title="自动连线并补充关联记忆子卡（语义相似；仅展示不落库）">自动关联</button>
               <button class="btn-ghost" id="taskMapLayoutBtn" title="重新计算节点位置">自动排布</button>
+              <button class="btn-ghost" id="taskMapDoneViewBtn" title="已完成任务默认隐藏；点击在地图中显示已完成任务">✓ 显示已完成</button>
               <button class="btn-ghost" id="taskMapArchiveViewBtn" title="归档任务默认隐藏；点击在地图中显示归档任务">📦 查看归档</button>
+              <button class="btn-ghost" id="taskMapArchiveCenterBtn" title="按主题分组查看归档任务">📂 归档中心</button>
               <button class="btn-ghost" id="taskMapZoomOutBtn" aria-label="缩小" title="缩小">−</button>
               <button class="btn-ghost" id="taskMapZoomLabel" title="重置缩放">100%</button>
               <button class="btn-ghost" id="taskMapZoomInBtn" aria-label="放大" title="放大">＋</button>
@@ -4780,7 +4785,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         </div>
       </div>
       <!-- 旧任务视图（/api/tasks 七态，兼容保留） -->
-      <div id="tasksBoard" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+      <!-- 旧任务视图（/api/tasks 七态，含 done 列）：自 2026-09-13 起任务地图为唯一入口，本容器默认隐藏
+           —— 避免与地图重复展示已完成任务；showTaskView('legacy') 需要时仍会恢复为 grid -->
+      <div id="tasksBoard" style="display:none;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
     </section>
   </main>
 </div>

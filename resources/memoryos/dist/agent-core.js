@@ -46,6 +46,9 @@ export function buildSystemPrompt(agentName, extra = "") {
         `4. 发现记忆已过时/有误 → memory_feedback 标记；落地方案实际采用了某条记忆 → memory_cite 声明。`,
         `5. 任务队列：task_next 查可做集（含依赖拓扑与优先级）；task_claim 领取（pending→in_progress）；完成实质工作后 task_done 附结论；发现跨链路重复任务用 task_supersede 归档到主任务。`,
         `回答风格：结论先行；引用记忆时带 [#记忆ID]；无工具结果支撑的内容明确标注「（推测）」。`,
+        // ★ 2026-09-20：输出契约 —— 前端按 <结论>/<过程> 切分：结论进对话气泡，过程进「执行过程」区。
+        //   无过程段可省略；标记外不写正文（解析不到标记时前端按整段结论兜底，不会丢内容）。
+        `输出格式约定（必须遵守）：最终答复先写 <结论>…</结论>（面向用户的完整回答，含表格/清单等）；若此前有推理、判断依据或中间过程，写在其后的 <过程>…</过程> 段内。无过程时可省略 <过程> 段。`,
         `节制原则：拿到足够工具结果后立即用文本给出最终答案，不要为调工具而调工具；同一工具同参数不要重复调用。`,
         extra,
     ].filter(Boolean).join("\n");
@@ -148,10 +151,12 @@ export async function callLlm(cfg, messages, tools, signal, cacheOn = false) {
 
 /* ── LLM 重试 / 流式 / 注入（★ DSH 参考）──────────────────────────
  * DSH packages/core/agent-loop：瞬时错误可 retry、末轮流式、steer/inject 边界注入。
- * 本处落地三项的 MemoryOS 有界版，全部 opt-in（默认行为不变）：
- *  - isTransientLlmError / withLlmRetry：瞬时错误（网络/5xx/限流）退避重试，确定性错误立即失败。
- *  - callLlmStream：OpenAI 兼容 SSE 流式，累积 content + tool_calls delta，onDelta 推增量。
- *  - drainInjections：由 runAgent 在轮边界调用（路由层提供），吸收运行中注入的用户消息（steer-lite）。 */
+ * ★ 2026-09-19 事实校准（原注释宣称「本处落地三项」与代码不符）：
+ *  - isTransientLlmError / withLlmRetry：✅ 已落地（本文件下方）——瞬时错误（网络/5xx/限流）退避重试，确定性错误立即失败。
+ *  - callLlmStream：❌ 不在本文件——实现在 dist/agent-stream.js（独立 opt-in 模块，尚未接线到
+ *    runAgent/agent-runs；OpenAI 兼容 SSE 流式，返回契约与 callLlm 一致 { msg, usage }，可与 withLlmRetry 互换）。
+ *  - drainInjections：❌ 未实现——仅为计划项（runAgent 轮边界吸收运行中注入的用户消息，steer-lite），
+ *    全仓无任何实现。接线时请同步更新本注释。 */
 const TRANSIENT_LLM_RE = /(ECONNREFUSED|ECONNRESET|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|EPIPE|ECONNABORTED|socket hang up|fetch failed|LLM HTTP 5\d\d|LLM HTTP 429|overloaded|rate.?limit|too many requests|timed? ?out)/i;
 /** 瞬时错误（网络/5xx/429/限流/超时）判定——可重试；4xx 确定性错误（401/404/400）立即失败 */
 export function isTransientLlmError(e) {
