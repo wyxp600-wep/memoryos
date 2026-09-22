@@ -546,7 +546,7 @@
       const checked = selectedIds.has(m.id) ? 'checked' : '';
       const selCls = selectedIds.has(m.id) ? ' selected' : '';
       return `<tr data-id="${m.id}" class="row-${esc(m.type)}${selCls}">
-       <td><input type="checkbox" class="row-checkbox" data-id="${m.id}" ${checked}></td>
+       <td><input type="checkbox" class="row-checkbox" data-id="${m.id}" aria-label="选择记忆 #${m.id}" ${checked}></td>
        <td class="mono text-muted">${String(start + i + 1).padStart(2, '0')}</td>
        <td class="memory-content">${renderMemoryLinks(m.content)}</td><td><span class="sdot" style="background:${SECTOR_COLOR_P6[m.sector] || '#64748b'}" title="${esc(m.sector || '')}"></span><span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span></td>
        <td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td>
@@ -1115,6 +1115,9 @@
     const [t, s] = PAGE_TITLES[route] || [route, ''];
     // $('#pageTitle').innerHTML = t + ' <span>' + s + '</span>';
     document.title = t + ' - MemoryOS';
+    // ★ P2-⑤ a11y：全局唯一 h1 同步当前页名（屏幕阅读器按标题导航才有意义）
+    const _a11yH1 = document.getElementById('a11yPageH1');
+    if (_a11yH1) _a11yH1.textContent = t + ' - MemoryOS';
     location.hash = route;
     if (route === 'trend') window.EChartsLoaded.when(drawTrendCharts);
     if (route === 'top') window.EChartsLoaded.when(drawTopScatter);

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "at": "2026-09-22T10:25:54.155Z",
+    "at": "2026-09-22T10:36:45.878Z",
     "dashPort": 8787,
     "node": "v24.18.1",
     "chrome": "default"
@@ -18,8 +18,8 @@
     },
     {
       "name": "P0-2 可聚焦但无可访问名 = 0",
-      "ok": false,
-      "extra": "1 个；例：[{\"role\":\"checkbox\",\"tag\":\"computedString\"}]"
+      "ok": true,
+      "extra": "0 个；例：[]"
     },
     {
       "name": "P1-1 有 landmark（main+nav）",
@@ -28,18 +28,18 @@
     },
     {
       "name": "P1-1 有标题层级（≥1 个 h1）",
-      "ok": false,
-      "extra": "heading 总数=0 h1=0"
+      "ok": true,
+      "extra": "heading 总数=1 h1=1"
     },
     {
       "name": "P1-2 有 aria-live 播报区",
-      "ok": false,
-      "extra": "aria-live/status/alert/log=0"
+      "ok": true,
+      "extra": "aria-live/status/alert/log=3"
     },
     {
       "name": "P1-3 表单控件均有标签",
-      "ok": false,
-      "extra": "9 个；例：[{\"tag\":\"input\",\"type\":\"text\",\"id\":\"globalSearch\",\"ph\":\"语义检索记忆…\"},{\"tag\":\"input\",\"type\":\"text\",\"id\":\"agentSessionSearch\",\"ph\":\"搜索会话…\"},{\"tag\":\"textarea\",\"type\":\"textarea\",\"id\":\"agentInput\",\"ph\":\"给 agent 下指令（Enter 发送，Shift+Enter 换行）\"},{\"tag\":\"input\",\"type\":\"checkbox\",\"id\":\"selectAllCb\",\"ph\":\"\"}]"
+      "ok": true,
+      "extra": "0 个；例：[]"
     },
     {
       "name": "P1-4 导航当前项有 aria-current",
@@ -47,14 +47,9 @@
       "extra": "active=1 缺 aria-current=0"
     },
     {
-      "name": "P2-1 折叠/切换件有 aria-expanded",
-      "ok": false,
-      "extra": "缺=2"
-    },
-    {
       "name": "P2-2 prefers-reduced-motion 生效",
-      "ok": false,
-      "extra": "模拟 reduce 后仍有动效元素=2348 例：div.logo-icon t=0s a=4s"
+      "ok": true,
+      "extra": "模拟 reduce 后仍有动效元素=0 例："
     },
     {
       "name": "CDP 0 未捕获异常",
@@ -65,76 +60,48 @@
   "perRoute": [
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "agentSessionSearch",
-          "ph": "搜索会话…"
-        },
-        {
-          "tag": "textarea",
-          "type": "textarea",
-          "id": "agentInput",
-          "ph": "给 agent 下指令（Enter 发送，Shift+Enter 换行）"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-agent",
       "route": "(initial)",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "agentSessionSearch",
-          "ph": "搜索会话…"
-        },
-        {
-          "tag": "textarea",
-          "type": "textarea",
-          "id": "agentInput",
-          "ph": "给 agent 下指令（Enter 发送，Shift+Enter 换行）"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-agent",
       "route": "agent",
       "focusableNoName": []
@@ -842,1063 +809,48 @@
           "text": "100 [task][assignee:?][status:"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "selectAllCb",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        },
-        {
-          "tag": "input",
-          "type": "checkbox",
-          "id": "",
-          "ph": ""
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-all",
       "route": "all",
-      "focusableNoName": [
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        },
-        {
-          "role": "checkbox",
-          "tag": "computedString"
-        }
-      ]
+      "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-tasks",
       "route": "tasks",
       "focusableNoName": []
@@ -1920,76 +872,61 @@
           "text": "知识库"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "obsidianVaultInput",
-          "ph": "例如 C:\\Users\\WYX\\Desktop\\知识库\\知识库"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "obsidianProjectInput",
-          "ph": "global（推荐，所有 Agent 可检索）"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "notesRailSearch",
-          "ph": "筛选标题 / 路径…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-obsidian",
       "route": "obsidian",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-graph",
       "route": "graph",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "div",
+          "cls": "run-card",
+          "route": "",
+          "text": "只调用一次 task_next(project=\"globa"
+        },
         {
           "kind": "dataRow",
           "tag": "div",
@@ -2026,156 +963,144 @@
           "text": "8063c9a1 0✕"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-runs",
       "route": "runs",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-connect",
       "route": "connect",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-governance",
       "route": "governance",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-trend",
       "route": "trend",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-cross",
       "route": "cross",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-audit",
       "route": "audit",
       "focusableNoName": []
@@ -2323,104 +1248,96 @@
           "text": "10 - 改前说明改哪些文件、改什么、为什么；改后说明如何验"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-top",
       "route": "top",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-zombies",
       "route": "zombies",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-arbitrate",
       "route": "arbitrate",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-ingest",
       "route": "ingest",
       "focusableNoName": []
@@ -5165,58 +4082,48 @@
           "text": "391 构建前清理：先删除目标目录（桌面或临时路径）下同名打"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        },
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "projDirInput",
-          "ph": "或手动输入项目绝对路径，如 C:\\Users\\WYX\\Desktop\\wimoor-erp"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-rules",
       "route": "rules",
       "focusableNoName": []
     },
     {
       "clickableNotFocusable": [],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-skills",
       "route": "skills",
       "focusableNoName": []
@@ -5504,26 +4411,24 @@
           "text": "连接"
         }
       ],
-      "unlabeledControls": [
-        {
-          "tag": "input",
-          "type": "text",
-          "id": "globalSearch",
-          "ph": "语义检索记忆…"
-        }
-      ],
+      "unlabeledControls": [],
       "navActiveNoCurrent": 0,
       "navActiveTotal": 1,
-      "collapsibleNoExpanded": 2,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
       "landmarks": {
         "main": 2,
         "nav": 1
       },
       "headings": {
-        "total": 0,
-        "h1": 0
+        "total": 1,
+        "h1": 1
       },
-      "ariaLive": 0,
+      "ariaLive": 3,
       "visiblePage": "page-summary",
       "route": "summary",
       "focusableNoName": []

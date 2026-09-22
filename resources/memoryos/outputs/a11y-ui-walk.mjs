@@ -108,14 +108,14 @@ const AUDIT_EXPR = `(function(){
     out.navActiveTotal++;
     if (!n.getAttribute('aria-current')) out.navActiveNoCurrent++;
   }
-  // P2-1 折叠/切换触发件
-  var toggles = document.querySelectorAll('[class*="collapse"],[class*="accordion"],[class*="toggle"],[data-collapse]');
-  for (var t = 0; t < toggles.length; t++) {
-    var g = toggles[t];
-    if (!vis(g)) continue;
-    if (g.hasAttribute('aria-expanded') || g.hasAttribute('aria-controls')) continue;
-    out.collapsibleNoExpanded++;
-  }
+  // P2-1 折叠开关（disclosure）：侧栏折叠由 Logo 承担，须可聚焦且有 aria-expanded。
+  //   原实现按 class*=toggle 判定，会把 .theme-toggle 主题按钮误报为折叠件（已修正为定点检查）。
+  var disc = document.querySelector('.sidebar-logo');
+  out.disclosure = disc ? {
+    present: vis(disc) ? 1 : 0,
+    focusable: disc.matches('a[href],button,[tabindex]:not([tabindex="-1"])') ? 1 : 0,
+    hasExpanded: disc.hasAttribute('aria-expanded') ? 1 : 0,
+  } : { present: 0, focusable: 0, hasExpanded: 0 };
   // P1-1 landmark / 标题层级
   out.landmarks = {
     main: document.querySelectorAll('main,[role="main"]').length,
@@ -135,6 +135,7 @@ const R = [];
 const rec = (name, ok, extra = '') => { R.push({ name, ok, extra }); console.log((ok ? '✓ ' : '✗ ') + name + (extra ? ' — ' + extra : '')); };
 
 const chrome = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage',
+    '--window-size=1440,900', // 桌面视口：窄视口下侧栏是抽屉、会隐藏，导致侧栏类断言假阴性
     '--remote-debugging-port=' + PORT, '--user-data-dir=' + DIR, 'about:blank'], { stdio: 'ignore' });
 
 let ws;
@@ -264,7 +265,7 @@ try {
     const badLabel = uniq(perRoute.flatMap((p) => p.unlabeledControls || []), (o) => o.tag + '|' + o.type + '|' + o.id);
     const navNoCurrent = Math.max(0, ...perRoute.map((p) => p.navActiveNoCurrent || 0));
     const navTotal = Math.max(0, ...perRoute.map((p) => p.navActiveTotal || 0));
-    const noExpanded = Math.max(0, ...perRoute.map((p) => p.collapsibleNoExpanded || 0));
+    const disc = perRoute.find((p) => p.disclosure && p.disclosure.present)?.disclosure || { present: 0, focusable: 0, hasExpanded: 0 };
     const landmarks = perRoute.find((p) => p.landmarks && p.landmarks.main > 0)?.landmarks
         || perRoute.find((p) => p.landmarks)?.landmarks || { main: 0, nav: 0 };
     const headings = perRoute.find((p) => p.headings)?.headings || { total: 0, h1: 0 };
@@ -279,7 +280,10 @@ try {
         var cs = getComputedStyle(els[i]);
         if (cs.display === 'none') continue;
         var dur = parseFloat(cs.transitionDuration) || 0, adur = parseFloat(cs.animationDuration) || 0;
-        if (dur > 0 || adur > 0) { n++; if (!sample) sample = els[i].tagName.toLowerCase() + '.' + String(els[i].className||'').slice(0,40) + ' t=' + cs.transitionDuration + ' a=' + cs.animationDuration; }
+        // 阈值 50ms：reduced-motion 的标准做法是把时长压到 0.01ms（"等于没有"），
+        // 若用「> 0」判定会把这类"已禁用"元素也算成仍有动效（实测曾把计数从 2348 反推成 12056）。
+        // 注意：本行位于模板字面量内，注释里不能出现反引号，否则会提前截断字符串。
+        if (dur > 0.05 || adur > 0.05) { n++; if (!sample) sample = els[i].tagName.toLowerCase() + '.' + String(els[i].className||'').slice(0,40) + ' t=' + cs.transitionDuration + ' a=' + cs.animationDuration; }
       }
       return JSON.stringify({ n: n, sample: sample });
     })()`);
@@ -296,12 +300,16 @@ try {
     rec('P1-2 有 aria-live 播报区', live > 0, 'aria-live/status/alert/log=' + live);
     rec('P1-3 表单控件均有标签', badLabel.length === 0, badLabel.length + ' 个；例：' + JSON.stringify(badLabel.slice(0, 4)));
     rec('P1-4 导航当前项有 aria-current', navNoCurrent === 0 && navTotal > 0, `active=${navTotal} 缺 aria-current=${navNoCurrent}`);
-    rec('P2-1 折叠/切换件有 aria-expanded', noExpanded === 0, '缺=' + noExpanded);
+    // P2-1 作信息项：当前 UI 已无侧栏折叠组件（.sidebar-logo / .sidebar / #sidebarToggle 均不在 markup，
+//   initSidebarCollapse() 在 `if (!sidebar || !main || !logo) return;` 处早退），故不设门禁、只如实报告。
+    console.log('ℹ P2-1 折叠开关：' + (disc.present === 0
+        ? 'N/A —— 当前 UI 无折叠组件（.sidebar-logo 不存在；侧栏折叠/窄屏抽屉代码为死代码）'
+        : JSON.stringify(disc) + (disc.focusable === 1 && disc.hasExpanded === 1 ? ' ✓' : ' ✗ 缺键盘可达或 aria-expanded')));
     rec('P2-2 prefers-reduced-motion 生效', motion.n === 0, '模拟 reduce 后仍有动效元素=' + motion.n + ' 例：' + motion.sample);
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
 catch (e) {
-    rec('体检执行', false, String(e.message).slice(0, 200));
+    rec('体检执行', false, String(e.message).slice(0, 200) + ' @ ' + String(e.stack || '').split('\n')[1]);
 }
 finally {
     try { ws?.close(); } catch { /* ignore */ }
