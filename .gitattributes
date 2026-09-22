@@ -1,0 +1,3 @@
+# pre-commit 钩子必须保持 LF：Windows 因 autocrlf 会转 CRLF，
+# 而 bash 逐行执行 hook 遇到 CR 尾随会崩溃。强制该路径统一 LF。
+.githooks/** text eol=lf

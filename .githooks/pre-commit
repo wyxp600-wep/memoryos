@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# MemoryOS — pre-commit 门禁钩子（CI 本地化，P2 首项；A/C 分区维护）
+#
+# 为何存在：门禁（npm test / lint / shell.test）已全绿但"无人自动触发"——仓库为纯本地
+# 未托管远端，GitHub Actions 等 CI 无处挂载。本钩子在每次 git commit 前自动重跑门禁，
+# 实现"承诺守恒验证"的本地通道。SKIP 项放行（exit 0），仅门禁全 FAIL 时阻塞提交；
+# 如需绕过：git commit --no-verify。
+#
+# 启用（仓库级，写 .git/config，不入版本库，需在每台克隆机器上执行一次）：
+#   git config core.hooksPath .githooks
+# 校验是否生效：
+#   git config core.hooksPath   # 应输出 .githooks
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+echo "=== MemoryOS pre-commit gate ==="
+echo "[1/3] npm test (smoke all)"
+cd "$ROOT/resources/memoryos"
+npm test
+
+echo "[2/3] npm run lint (full-syntax)"
+npm run lint
+
+echo "[3/3] node --test tests/shell.test.js"
+cd "$ROOT"
+node --test tests/shell.test.js
+
+echo "=== MemoryOS pre-commit gate: ALL PASS ==="

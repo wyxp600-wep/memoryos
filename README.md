@@ -133,6 +133,7 @@ node dist/server.js --list-tools      # 打印实际注册清单后退出（不�
 - **分区归属**：多 AI / 多会话并行时，改文件前先读 [CLAIM.md](CLAIM.md)，确认目标文件在本会话分区内；越界需先报备并登记。
 - **短提交**：每次改动立即 commit，信息含「为什么」；不把多主题堆进一个提交。
 - **验收门禁只认脚本**：自述「已通过」必须能被 `npm test` / `lint` / `lint:sql` / `lint:silent` / `snapshot:check` 复现。
+- **pre-commit 门禁（CI 本地化）**：仓库有 `.githooks/pre-commit`，在每次 commit 前自动重跑 `npm test` + `npm run lint` + `tests/shell.test.js`，全 FAIL 才阻塞、SKIP 放行。启用（仓库级，每台克隆机器执行一次）：`git config core.hooksPath .githooks`；绕过：`git commit --no-verify`。
 - **仓库卫生**：不新增 `*.bak-*` 命名（已由 git 取代）；临时脚本用完归档到 `archive/`，不要留在根目录。
 - **密钥**：`.env`、API Key、Token、签名私钥一律不入库。签名私钥存仓库外 `~/Desktop/_memoryos-signing-keys/`（可用 `MEMORYOS_SIGN_KEY_DIR` 覆盖）。
 
