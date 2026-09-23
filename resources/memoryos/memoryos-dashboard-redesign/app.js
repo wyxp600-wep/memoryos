@@ -5105,7 +5105,9 @@
       snap.style.display = 'block';
       chat.insertBefore(snap, live);
     }
-    chat.insertBefore(live, pending.nextSibling);   // 挂到本轮 pending 气泡之后（user → 过程 → answer）
+    // ★ 换序贴 pi：挂到占位气泡【之前】（运行中 user → 过程 → 占位；终态占位移除后 user → 过程 → 答案）
+    chat.insertBefore(live, pending);
+    chat.scrollTop = chat.scrollHeight;
     live.dataset.migrated = '1';
     live.style.display = 'block';
   }
@@ -5153,17 +5155,15 @@
     // 启动计时器
     _agentRunLiveSeconds = 0;
     const timerEl = $('#agentRunLiveTimer');
-    const warnEl = $('#agentRunLiveWarn');
-    if (warnEl) warnEl.style.display = 'none';
     if (_agentRunLiveTimer) clearInterval(_agentRunLiveTimer);
     _agentRunLiveTimer = setInterval(() => {
       _agentRunLiveSeconds++;
       if (timerEl) timerEl.textContent = _agentRunLiveSeconds + 's';
       // ★ 秒表：有进行中步骤时每秒重渲（run-card-state 实时 ++.s）
       if (_agentRunLiveSteps.some(s => s.state === 'pending' && s.t0)) _agentRunLiveRender();
-      // 30秒无步骤显示提示
-      if (_agentRunLiveSeconds >= 30 && !_agentRunLiveSteps.length && warnEl) {
-        warnEl.style.display = 'block';
+      // ★ 批次⑤b：30秒无步骤的警示并入 meta 行（去分节感，不再弹独立橙条）
+      if (_agentRunLiveSeconds >= 30 && !_agentRunLiveSteps.length && meta) {
+        meta.textContent = '⏳ 执行较长（模型慢或多轮工具）· 可点 ↻ 刷新或到执行中心查看';
       }
     }, 1000);
     const on = (type, d) => {
@@ -5376,7 +5376,7 @@
     if (chat.dataset.empty === '1') { _agentRunLiveDetach(); chat.innerHTML = ''; chat.dataset.empty = '0'; }
     if (input) input.value = '';
     chat.appendChild(agentBubble('user', esc(text)));
-    const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程内联展开在本条消息下方（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
+    const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程在上方实时展开（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
     chat.appendChild(pending);
     chat.scrollTop = chat.scrollHeight;
     _agentSetSendBtn(true);
