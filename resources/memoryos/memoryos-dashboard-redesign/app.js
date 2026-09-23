@@ -5385,6 +5385,18 @@
     _agentRunLiveStop();
     _agentRunLiveSteps = [];
     try {
+      // ★ 批次⑥（2026-09-23）：无会话自动开会话 —— 后端仅带 sessionKey 才落库（agent_sessions），
+      //   不先建会话消息会静默丢失（重启即没）。建失败不阻断发送（该轮不落库）。
+      if (!_agentSessionKey) {
+        try {
+          const s = await fetch('/api/agent/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json());
+          if (s && s.ok && s.sessionKey) {
+            _agentSessionKey = s.sessionKey;
+            _agentSessions.unshift({ session_key: s.sessionKey, title: '新会话', msg_count: 0 });
+            _agentSessionChips();
+          }
+        } catch { /* 建会话失败不阻断发送 */ }
+      }
       // 走 /api/agent/runs（立即 202 回 runId），过程由 SSE 实时推
       const res = await fetch('/api/agent/runs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -5971,6 +5983,12 @@
     fetch('/api/agent/sessions').then(r => r.json()).then(s => {
       _agentSessions = (s.sessions || []).map(x => ({ session_key: x.session_key, title: x.title, msg_count: x.msg_count || 0 }));
       _agentSessionChips();
+      // ★ 批次⑥（2026-09-23）：刷新/重启后自动恢复最近有消息的会话（不选则聊天区空白，看似消息丢失；
+      //   列表按 updated_at DESC，取第一条有消息的；全空则保留欢迎态）
+      if (!_agentSessionKey) {
+        const last = _agentSessions.find(x => (x.msg_count || 0) > 0);
+        if (last) _agentSessionSelect(last.session_key);
+      }
     }).catch(() => {});
   }
   // ===== 运行状态条控制 =====
