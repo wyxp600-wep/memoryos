@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 /** 探测 CLI 版本字符串，失败返回 null */
 function probeCli(cmd) {
     try {
@@ -284,6 +285,116 @@ function discoverAIIdeAgents(home) {
     }
     return found;
 }
+/* ========== ★ 批次⑦B（2026-09-23）：通用 MCP 载体指纹发现 ==========
+ * 原流程三层全硬编码（CLI 清单 / 桌面 relExe / 关键词正则），清单外新 agent 永远扫不出。
+ * 新流程：清单保留为已实证快路径；通用层不比名字、改比「MCP 载体文件」指纹——
+ * 任何 agent 只要在配置目录落了 MCP 载体（config.toml [mcp_servers] / mcp.json /
+ * .claude.json / config.json 的 mcpServers|mcp.servers 等）即判为 AI agent 候选；
+ * 载体内容命中 memoryos|memoryhub → connected。纯只读探测，不写不执行。 */
+const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json")];
+const MCP_FINGERPRINT = /\[mcp_servers|mcpServers|mcp\.servers|"mcp"\s*:|memoryos|memoryhub/i;
+const MEMORY_HIT = /memoryos|memoryhub/i;
+/** 通配载体探测：给任意配置目录，返回首个 MCP 载体 {file, connected} 或 null（不按 id 硬编码） */
+export function probeCarrier(dir) {
+    if (!dir)
+        return null;
+    const test = (f) => {
+        try {
+            if (!fs.existsSync(f) || !fs.statSync(f).isFile())
+                return null;
+            const txt = fs.readFileSync(f, "utf8").slice(0, 262144);
+            if (!MCP_FINGERPRINT.test(txt))
+                return null;
+            return { file: f, connected: MEMORY_HIT.test(txt) };
+        }
+        catch {
+            return null;
+        }
+    };
+    for (const rel of CARRIER_FILES) {
+        const hit = test(path.join(dir, rel));
+        if (hit)
+            return hit;
+    }
+    // connectors/<name>/mcp.json（WorkBuddy 系载体，深度 1）
+    try {
+        const base = path.join(dir, "connectors");
+        if (fs.existsSync(base)) {
+            for (const d of fs.readdirSync(base)) {
+                const hit = test(path.join(base, d, "mcp.json"));
+                if (hit)
+                    return hit;
+            }
+        }
+    }
+    catch { /* 目录不可读跳过 */ }
+    return null;
+}
+/** 清单外 agent 通用发现：home 点目录 + Programs 安装目录（含 目录名→点目录 slug 映射） */
+export function discoverCarrierAgents(home = os.homedir()) {
+    const found = [];
+    const seen = new Set();
+    const consider = (dir) => {
+        try {
+            const resolved = path.resolve(dir);
+            if (seen.has(resolved) || !fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory())
+                return;
+            seen.add(resolved);
+            const hit = probeCarrier(resolved);
+            if (!hit)
+                return;
+            const base = path.basename(resolved);
+            const id = (base.startsWith(".") ? base.slice(1) : base).toLowerCase().replace(/[^a-z0-9-]/g, "") || "unknown";
+            found.push({ id, name: base.replace(/^\./, ""), type: "MCP 载体发现", version: null, connected: hit.connected, path: hit.file, configFile: hit.file, evidence: `MCP 载体指纹：${path.basename(hit.file)}` });
+        }
+        catch { /* 单点失败跳过 */ }
+    };
+    // ① home 点目录（agent 配置惯例 ~/.<id>）
+    try {
+        for (const e of fs.readdirSync(home, { withFileTypes: true })) {
+            if (e.isDirectory() && e.name.startsWith("."))
+                consider(path.join(home, e.name));
+        }
+    }
+    catch { /* 忽略 */ }
+    // ② Programs 安装目录本体 + slug 映射点目录（"New Agent" → ~/.newagent）
+    const prog = path.join(home, "AppData", "Local", "Programs");
+    try {
+        for (const e of fs.readdirSync(prog, { withFileTypes: true })) {
+            if (!e.isDirectory())
+                continue;
+            consider(path.join(prog, e.name));
+            const nospace = e.name.toLowerCase().replace(/\s+/g, "");
+            for (const slug of new Set([e.name.toLowerCase(), nospace, nospace.replace(/[^a-z0-9]/g, "")])) {
+                if (slug)
+                    consider(path.join(home, "." + slug));
+            }
+        }
+    }
+    catch { /* 忽略 */ }
+    return found;
+}
+/* ========== ★ 批次⑦B：手动登记清单（%APPDATA%\MemoryOS\agents.custom.json）==========
+ * 扫描兜底：指纹也认不出的新 agent 由用户手动登记（名称 + 可选配置目录/安装路径），
+ * 每次扫描合并进结果；填了 configDir 则 probeCarrier 通判 connected。 */
+function customAgentsPath() {
+    const base = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(base, "MemoryOS", "agents.custom.json");
+}
+export function loadCustomAgents() {
+    try {
+        const arr = JSON.parse(fs.readFileSync(customAgentsPath(), "utf8"));
+        return Array.isArray(arr) ? arr.filter((x) => x && typeof x.name === "string" && x.name.trim()) : [];
+    }
+    catch {
+        return [];
+    }
+}
+export function saveCustomAgents(list) {
+    const f = customAgentsPath();
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(list, null, 2), "utf8");
+}
 /** 扫描本机已装的 agent（存在才返回） */
 export function scanAgents() {
     const agents = [];
@@ -313,6 +424,35 @@ export function scanAgents() {
         if (!agents.some(a => a.id === d.id))
             agents.push(d);
     }
+    // ★ 批次⑦B：通用 MCP 载体指纹发现合并（清单 id 已覆盖的天然跳过：~/.codex→codex、~/.zcode→zcode…）
+    for (const d of discoverCarrierAgents()) {
+        if (!agents.some(a => a.id === d.id))
+            agents.push(d);
+    }
+    // ★ 批次⑦B：手动登记合并（指纹也认不出的新 agent 兜底；configDir 在则通判 connected）
+    for (const c of loadCustomAgents()) {
+        const slug = String(c.id || c.name).toLowerCase().replace(/[^a-z0-9-]/g, "");
+        // 非 ASCII 名（如中文）slug 为空 → 用名字哈希出稳定 id，避免多条撞成同一 id 被当重复跳过
+        let id = slug;
+        if (!id) {
+            let h = 5381;
+            for (const ch of String(c.name)) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+            id = "custom-" + h.toString(36);
+        }
+        if (agents.some(a => a.id === id))
+            continue;
+        const hit = c.configDir ? probeCarrier(c.configDir) : null;
+        agents.push({
+            id,
+            name: c.name,
+            type: "手动登记",
+            version: null,
+            connected: !!(hit && hit.connected),
+            path: c.path || (hit ? hit.file : (c.configDir || "")),
+            configFile: hit ? hit.file : null,
+            evidence: hit ? `MCP 载体指纹：${path.basename(hit.file)}` : "手动登记（未探测到载体）",
+        });
+    }
     const connected = agents.filter(a => a.connected).length;
     return { agents, total: agents.length, connected };
 }
@@ -323,9 +463,11 @@ export function scanAgents() {
  * 设计目标：工具连接页「操作」列渲染接入动作，而非空窗。
  */
 /** memoryhub server.js 绝对路径（复制即用，勿用相对路径——用户从客户端根目录粘贴会失效）
- * 优先级：env MEMORYOS_SERVER（桌面版/便携包注入安装后真实路径）> 开发默认路径 */
+ * 优先级：env MEMORYOS_SERVER（桌面版/便携包注入安装后真实路径）
+ * > ★ 批次⑦（2026-09-23）按本模块位置动态推导（scan.js 与 server.js 同在 dist/）——
+ *   原硬编码旧目录 "Desktop/aiagent记忆与规则/..." 项目搬迁后指向不存在路径，接入片段照抄即连错 */
 const MEMORYOS_SERVER = process.env.MEMORYOS_SERVER?.trim() ||
-    "C:/Users/WYX/Desktop/aiagent记忆与规则/memoryos/dist/server.js";
+    fileURLToPath(new URL("server.js", import.meta.url)).split(path.sep).join("/");
 /** memoryhub MCP server 配置片段（各载体语法） */
 const MEMORYOS_MCP_SERVERS = {
     codex: `[[mcp_servers]]

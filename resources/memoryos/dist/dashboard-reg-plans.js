@@ -3,7 +3,7 @@
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
 import { logUsage, logDaemon, writeMemory, queryByType } from "./db.js";
 import { aiViews, aiVisible } from "./format.js";
-import { scanAgents, connectGuideFor, applyConnectWrite } from "./scan.js";
+import { scanAgents, connectGuideFor, applyConnectWrite, loadCustomAgents, saveCustomAgents } from "./scan.js";
 import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
 import os from "node:os";
@@ -327,6 +327,47 @@ export function registerPlans(app, ctx) {
         }));
         const connected = agents.filter((a) => a.connected).length;
         return { agents, total: agents.length, connected };
+    });
+    /* ★ 批次⑦B（2026-09-23）：手动登记清单外的新智能体（扫描兜底）。
+     * 落盘 %APPDATA%\MemoryOS\agents.custom.json，每次 /api/scan-agents 合并；
+     * 只写本机注册表，不碰任务/采集/卡片（非 RESTRICTED 收敛类）。 */
+    app.post("/api/scan-agents/custom", async (req, reply) => {
+        const name = String(req.body?.name ?? "").trim();
+        if (!name)
+            return reply.code(400).send({ ok: false, error: "name 不能为空" });
+        const entry = {
+            name: name.slice(0, 80),
+            path: String(req.body?.path ?? "").trim().slice(0, 500) || null,
+            configDir: String(req.body?.configDir ?? "").trim().slice(0, 500) || null,
+            addedAt: new Date().toISOString(),
+        };
+        try {
+            const list = loadCustomAgents();
+            if (list.some((x) => x.name === entry.name))
+                return reply.code(409).send({ ok: false, error: `「${entry.name}」已登记过` });
+            list.push(entry);
+            saveCustomAgents(list);
+            return { ok: true, entry, total: list.length };
+        }
+        catch (e) {
+            return reply.code(500).send({ ok: false, error: String(e?.message ?? e) });
+        }
+    });
+    app.delete("/api/scan-agents/custom", async (req, reply) => {
+        const name = String(req.body?.name ?? "").trim();
+        if (!name)
+            return reply.code(400).send({ ok: false, error: "name 不能为空" });
+        try {
+            const list = loadCustomAgents();
+            const next = list.filter((x) => x.name !== name);
+            if (next.length === list.length)
+                return reply.code(404).send({ ok: false, error: `未登记「${name}」` });
+            saveCustomAgents(next);
+            return { ok: true, remaining: next.length };
+        }
+        catch (e) {
+            return reply.code(500).send({ ok: false, error: String(e?.message ?? e) });
+        }
     });
     // —— A2A 协议层：Agent Card 端点（互操作层「智能体对等协作」的自描述卡片）。
     //   返回本 MemoryOS 服务自身 + 各已连接 agent 的能力卡片（能力=其工具面），

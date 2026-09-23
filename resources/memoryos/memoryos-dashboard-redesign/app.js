@@ -1319,6 +1319,19 @@
         : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">未发现任何 MCP 载体文件</td></tr>';
     }
     $('#scanBtn').onclick = () => runScan(true);
+    // ★ 批次⑦B：手动登记清单外新 agent —— 名称必填，配置目录/安装路径可选；登记成功自动重扫
+    $('#manualRegBtn').onclick = async () => {
+      const name = (prompt('新智能体名称（扫描清单外的 AI Agent）：') || '').trim();
+      if (!name) return;
+      const configDir = (prompt('配置目录（可选，例 C:\\Users\\x\\.newagent —— 填了才能自动判定「已连接」，回车跳过）：') || '').trim();
+      const exePath = (prompt('安装路径/可执行文件（可选，回车跳过）：') || '').trim();
+      const r = await fetch('/api/scan-agents/custom', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, configDir, path: exePath }),
+      }).then(x => x.json()).catch(e => ({ error: e.message }));
+      if (r.ok) { toast('已登记「' + name + '」，正在重扫…', 2400); runScan(true); }
+      else toast(r.error || '登记失败', 3000);
+    };
     let autoRan = false;
     function runScan(manual) {
       if (!manual && autoRan) return; // 自动扫描只跑一次；手动每次可再扫
@@ -1474,11 +1487,21 @@
        <td><span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span></td>
        <td class="mono" style="font-size:12px">${Number(m.confidence || 0).toFixed(2)}</td>
        <td class="mono text-secondary" style="font-size:12px">${fmtDate(m.created_at)}</td>
-       <td><div style="display:flex;gap:6px"><button class="btn-ghost rule-edit" data-rid="${m.id}" style="padding:4px 10px;font-size:12px">编辑</button><button class="btn-ghost rule-del" data-rid="${m.id}" style="padding:4px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.3)">删除</button></div></td></tr>`).join('')
+       <td><div style="display:flex;gap:6px"><button class="btn-ghost rule-inject" data-rid="${m.id}" title="${m.inject ? '已强制注入：除内置 8 条门禁外，本条也常驻所有智能体约束文件（点击取消）' : '点击强制注入：本条常驻所有智能体约束文件（自动同步）'}" style="padding:4px 10px;font-size:12px;${m.inject ? 'color:var(--success);border-color:rgba(16,185,129,0.35)' : ''}">${m.inject ? '注入✓' : '注入'}</button><button class="btn-ghost rule-edit" data-rid="${m.id}" style="padding:4px 10px;font-size:12px">编辑</button><button class="btn-ghost rule-del" data-rid="${m.id}" style="padding:4px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.3)">删除</button></div></td></tr>`).join('')
       : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📏</div><div class="empty-title">暂无规则</div><div class="empty-desc">还没有创建 AI Agent 协同约束规则，点击右上角"新建规则"开始</div></div></td></tr>';
     $$('#ruleTableBody tr[data-id]').forEach(tr => tr.onclick = () => openDetail(Number(tr.dataset.id), ruleRows));
     $$('#ruleTableBody .rule-edit').forEach(b => b.onclick = e => { e.stopPropagation(); openEdit(Number(b.dataset.rid), 'rule'); });
     $$('#ruleTableBody .rule-del').forEach(b => b.onclick = e => { e.stopPropagation(); delRule(Number(b.dataset.rid)); });
+    // ★ 批次⑦X2：强制注入开关 —— PUT inject，后端成功后自动刷新全部智能体注入段
+    $$('#ruleTableBody .rule-inject').forEach(b => b.onclick = async e => {
+      e.stopPropagation();
+      const id = Number(b.dataset.rid);
+      const row = ruleRows.find(x => x.id === id);
+      const next = row && row.inject ? 0 : 1;
+      const r = await fetch('/api/memory/' + id, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ inject: next }) }).then(x => x.json()).catch(e2 => ({ error: e2.message }));
+      if (r.ok) { toast(next ? '已开启强制注入，注入段已自动刷新到所有智能体' : '已取消强制注入，注入段已自动刷新'); loadRules(); }
+      else toast(r.error || '设置失败');
+    });
   }
   async function delRule(id) {
     if (!confirm('确认删除规则 #' + id + ' ？（软删除，可审计回溯）')) return;

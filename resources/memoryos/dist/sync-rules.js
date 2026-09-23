@@ -122,8 +122,11 @@ function writeSegment(file, seg) {
  *  全量模式(SYNC_ALL_RULES=1)：旧行为，返回 active + conf≥MIN_CONF 的全部规则。
  */
 function pickRules(db) {
-    if (USE_GATE)
-        return GATE_RULES;
+    if (USE_GATE) {
+        // ★ 批次⑦X2（2026-09-23）：门禁层 = 内置 8 条 + 规则页打了「注入」开关的 active 规则（用户显式选择才注入，token 可控）
+        const flagged = queryByType(db, "rule", { status: "active" }).filter((r) => r.inject);
+        return [...GATE_RULES, ...flagged.map((r) => ({ content: r.content, agent: r.agent || "human:dashboard" }))];
+    }
     const all = queryByType(db, "rule", { status: "active" });
     return all.filter((r) => (r.confidence ?? 0) >= MIN_CONF);
 }
@@ -137,8 +140,11 @@ function countActiveRules(db) {
  */
 function countSkipped(db, rules) {
     const active = countActiveRules(db);
-    if (USE_GATE)
-        return active;
+    if (USE_GATE) {
+        // ★ 批次⑦X2：门禁模式下已注入 = 内置门禁 + 开关勾选的规则，跳过数 = active − 勾选数
+        const flagged = Math.max(0, rules.length - GATE_RULES.length);
+        return Math.max(0, active - flagged);
+    }
     return Math.max(0, active - rules.length);
 }
 export function syncRules(db, opts = {}) {
@@ -176,7 +182,8 @@ if (isMain) {
     // GATE_PREVIEW=1: 只生成注入段打印统计(token/条数)，不写任何目标文件；用于验证门禁瘦身收益
     if (process.env.GATE_PREVIEW === "1") {
         // 门禁模式不查库（直接返回 GATE_RULES）；全量模式才需要打开 DB
-        const rules = USE_GATE ? GATE_RULES : pickRules(openDb(DB_PATH));
+        // 门禁模式也走 pickRules：与生产 syncRules 同一取数口径（内置门禁 + 规则页 inject=1 的规则）
+        const rules = pickRules(openDb(DB_PATH));
         const seg = buildSegment(rules);
         const body = seg.replace(/<!--[\s\S]*?-->/g, "").replace(/[#\-\n─]/g, "");
         const tok = Math.round(body.length * 0.75);

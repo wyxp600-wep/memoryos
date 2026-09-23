@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { vecToBuf, bufToVec, cosine } from "./embed.js";
-const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent";
+const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent, inject";
 function joinPrefix(s) {
     return s ? `[${s.replace(/"/g, '""')}]` : "";
 }
@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS memories (
   -- ★ P1-2.4：正文被编辑后置 1，表示 embedding 已与正文语义脱节，待 daemon 重算。
   -- 为什么需要它：编辑不重算向量时，语义检索会命中「与正文不符」的记忆 —— 比搜不到更糟。
   embedding_stale INTEGER NOT NULL DEFAULT 0,
+  sensitivity   TEXT NOT NULL DEFAULT 'normal',
+  -- ★ 批次⑦X2（2026-09-23）：规则强制注入开关 —— 1=除 8 条内置门禁外还注入本条（规则页可切换，变更后自动同步注入段）
+  inject  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
@@ -575,6 +578,8 @@ export function openDb(dbPath) {
         ["epoch", "TEXT"],
         ["idempotency_key", "TEXT"],
         ["causal_parent", "INTEGER"],
+        // ★ 批次⑦X2（2026-09-23）：规则强制注入开关（gate 模式下 inject=1 的 active 规则进注入段）
+        ["inject", "INTEGER NOT NULL DEFAULT 0"],
     ];
     for (const [name, def] of add) {
         if (!cols.includes(name))
@@ -991,6 +996,8 @@ export function rowOf(r) {
         epoch: r.epoch ?? null,
         idempotency_key: r.idempotency_key ?? null,
         causal_parent: r.causal_parent == null ? null : Number(r.causal_parent),
+        // ★ 批次⑦X2：规则强制注入开关（老库未迁移读到 undefined → 安全默认 0）
+        inject: Number(r.inject ?? 0),
     };
 }
 /**

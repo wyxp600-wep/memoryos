@@ -3,8 +3,23 @@
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
 import { logUsage, logDaemon, writeMemory, updateMemory, queryByType, rejectMemory, SECTOR_KEYS } from "./db.js";
 import { reembedStale } from "./daemon.js";
+import { syncRules } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
 import { TASK_HEAD_RE_STATES, TASK_HEAD_RE, TASK_NORMALIZE, TASK_DEP_RE, TASK_BUCKETS } from "./dashboard-task-util.js";
+/** ★ 批次⑦X2（2026-09-23）：规则增删改后自动刷新注入段（幂等替换，5 个目标文件，毫秒级）。
+ *  失败绝不阻断业务请求 —— 记审计留痕，下次规则变更或手动同步再自愈。 */
+function autoSyncRules(db, reason) {
+    try {
+        syncRules(db);
+        logDaemon(db, { task: "sync-rules", op: "auto-resync", operator: "system:auto", detail: `规则变更自动同步（${reason}）` });
+    }
+    catch (e) {
+        try {
+            logDaemon(db, { task: "sync-rules", op: "auto-resync-failed", operator: "system:auto", detail: String(e?.message ?? e) });
+        }
+        catch { /* 审计失败也不阻断 */ }
+    }
+}
 export function registerMemory(app, ctx) {
     const { db, restricted, RESTRICTED, clampLimit, ALLOWED_TYPES } = ctx;
     app.post("/api/memory", async (req, reply) => {
@@ -29,6 +44,8 @@ export function registerMemory(app, ctx) {
         const row = writeMemory(db, { content, type, agent: "human:dashboard", agent_fpath: null, project, embedding, confidence: 0.8, sector, sensitivity });
         logUsage(db, { memory_id: row.id, event: "write", reader_agent: "human:dashboard", writer_agent: "human:dashboard", project: row.project });
         logDaemon(db, { task: "manual-write", op: "write", memory_id: row.id, operator: "human:dashboard", detail: `Dashboard 手动新建记忆（${type}）${embedding ? "（已嵌入）" : "（未嵌入）"}` });
+        if (type === "rule")
+            autoSyncRules(db, `新建规则 #${row.id}`); // ★ 批次⑦X2：新建规则即自动注入刷新
         return { ok: true, id: row.id };
     });
     // —— 编辑记忆：content/type 更新，同步 FTS（embedding 保持原值，v0.3 约定） ——
@@ -51,7 +68,16 @@ export function registerMemory(app, ctx) {
         }
         if (!row)
             return reply.code(404).send({ ok: false, error: "记忆不存在" });
+        // ★ 批次⑦X2：inject 开关写入（规则强制注入）——只动本列，不碰 FTS/向量
+        const injectChanged = req.body?.inject !== undefined;
+        if (injectChanged) {
+            const inj = req.body.inject ? 1 : 0;
+            db.prepare(`UPDATE memories SET inject=? WHERE id=?`).run(inj, row.id);
+        }
         logDaemon(db, { task: "manual-edit", op: "edit", memory_id: row.id, operator: "human:dashboard", detail: "Dashboard 手动编辑记忆" });
+        // ★ 批次⑦X2：规则内容/类型/注入开关变更 → 自动刷新注入段
+        if (row.type === "rule" || type !== undefined || injectChanged)
+            autoSyncRules(db, `编辑 #${row.id}${injectChanged ? `（inject=${req.body.inject ? 1 : 0}）` : ""}`);
         return { ok: true, id: row.id };
     });
     /* ★ 一致性⑥（2026-09-19）：OpenAI 兼容 /v1/embeddings 共享嵌入端点 —— 内核侧常驻真向量嵌入
@@ -99,9 +125,12 @@ export function registerMemory(app, ctx) {
         const id = Number(req.params.id);
         if (!Number.isFinite(id) || id <= 0)
             return reply.code(400).send({ ok: false, error: "id 非法" });
-        if (!(db.prepare(`SELECT id FROM memories WHERE id=?`).get(id)))
+        const old = db.prepare(`SELECT id, type FROM memories WHERE id=?`).get(id);
+        if (!old)
             return reply.code(404).send({ ok: false, error: "记忆不存在" });
         rejectMemory(db, id, "human:dashboard");
+        if (old.type === "rule")
+            autoSyncRules(db, `删除规则 #${id}`); // ★ 批次⑦X2：删规则即从注入段移除
         return { ok: true, id };
     });
     // —— 规则列表：type='rule'，默认只列 active（删除即消失，审计留痕另查） ——
@@ -119,6 +148,7 @@ export function registerMemory(app, ctx) {
             eff: r.eff_confidence ?? r.confidence,
             hits: r.hit_count,
             created_at: r.created_at,
+            inject: r.inject ? 1 : 0,   // ★ 批次⑦X2：强制注入开关（规则页展示）
         }));
         return { total: rows.length, rows };
     });

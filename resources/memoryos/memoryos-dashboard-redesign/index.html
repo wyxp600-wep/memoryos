@@ -3983,10 +3983,13 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <div class="glass-card mb-24">
         <div class="card-header">
           <div class="card-title"><span class="dot"></span>扫描本机 AI Agent</div>
-          <button class="btn-primary" id="scanBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            开始扫描
-          </button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-ghost" id="manualRegBtn" style="padding:7px 13px;font-size:12px" title="扫描清单外的新智能体：手动登记名称 + 配置目录，登记后自动重扫">＋ 手动登记</button>
+            <button class="btn-primary" id="scanBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              开始扫描
+            </button>
+          </div>
         </div>
         <div class="mcp-summary" id="mcpSummary">
           <span class="mcp-sum-item">当前库 <span class="mono" id="mcpDbPath">—</span></span>
