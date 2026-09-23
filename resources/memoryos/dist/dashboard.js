@@ -27,6 +27,7 @@ import { computeStatus, syncSkills, detectSkillTargets } from "./skill-sync.js";
 import { createMcpClient, resolveLlm, runAgent, buildSystemPrompt } from "./agent-core.js";
 import { protectSecret, unprotectSecret, forgetSecret } from "./secret-store.js";
 import { probeEndpoint, normalizeLlmEndpoint, llmConf } from "./llm.js";
+import { maybeRunRuleReflection } from "./rule-reflection.js"; // ★ 批次⑧：每日规则反思生产线（与 daemon 双钩子，认领门禁防双跑）
 import { SECTORS, SECTOR_KEYS } from "./db.js";
 import { registerCore } from "./dashboard-reg-core.js";
 import { registerMemory } from "./dashboard-reg-memory.js";
@@ -295,5 +296,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const port = Number(process.env.MEMORY_PORT ?? DEFAULT_PORT);
     app
         .listen({ host, port })
-        .then(() => console.log(`MemoryOS Dashboard: http://${host}:${port}/  （访问令牌不在 URL/日志中打印；令牌见 ${tokenFile}）`));
+        .then(() => {
+        console.log(`MemoryOS Dashboard: http://${host}:${port}/  （访问令牌不在 URL/日志中打印；令牌见 ${tokenFile}）`);
+        // ★ 批次⑧：规则反思生产线 —— 启动即水位初始化（LLM-free），此后每小时窗口检查；
+        //   常驻 daemon 进程另有同款钩子，config 当日认领门禁保证只跑一次；失败仅记日志。
+        maybeRunRuleReflection(db).catch((e) => console.error(`[reflect] 启动检查失败: ${e instanceof Error ? e.message : String(e)}`));
+        setInterval(() => maybeRunRuleReflection(db).catch((e) => console.error(`[reflect] 运行失败: ${e instanceof Error ? e.message : String(e)}`)), 60 * 60 * 1000);
+    });
 }

@@ -13,6 +13,7 @@
 import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory, updateMemory } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
 import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
+import { maybeRunRuleReflection } from "./rule-reflection.js"; // ★ 批次⑧：每日规则反思生产线（钩子在 run() 治理链内）
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 export const DEFAULT_HYGIENE_CONFIG = {
@@ -802,6 +803,16 @@ if (mainFile === "daemon.js") {
             }
             catch (e) {
                 console.error(`[reembed] 失败（不阻断治理）: ${e instanceof Error ? e.message : String(e)}`);
+            }
+            // ★ 批次⑧（2026-09-23）：每日规则反思生产线（≥21:00 水位检查 + 当日认领；
+            //   与 dashboard 进程钩子互斥靠 config 认领门禁，异常只记日志不阻断治理）
+            try {
+                const rf = await maybeRunRuleReflection(db);
+                if (rf.produced)
+                    console.log(`[reflect] 产规则 ${rf.produced}/${rf.candidates} 条，注入段已刷新`);
+            }
+            catch (e) {
+                console.error(`[reflect] 失败（不阻断治理）: ${e instanceof Error ? e.message : String(e)}`);
             }
             // ★ P1-1.1 每日备份（VACUUM INTO）。daemon 每小时一轮，但备份以「当日文件已存在」
             //   判据幂等跳过，故实际每日一份。WAL 模式下直接 copy .db 会得到损坏备份，

@@ -121,11 +121,19 @@ function writeSegment(file, seg) {
  *  门禁模式(默认)：只返回内置 8 条门禁（其余留库做 JIT 检索）。
  *  全量模式(SYNC_ALL_RULES=1)：旧行为，返回 active + conf≥MIN_CONF 的全部规则。
  */
+/** ★ 批次⑦X2 + 批次⑧：门禁模式下注入段的「开关规则」选取 —— 按创建时间取最新 N 条。
+ *  封顶动机：批次⑧ 每日反思产的规则自动 inject=1，不封顶会把注入段无限撑大，回退 v0.4 token 减负不变式。
+ *  env RULE_INJECT_CAP 覆盖，默认 20（8 门禁 + ≤20 条开关规则 ≈ 段长有界）。 */
+const INJECT_CAP = Math.max(1, Number(process.env.RULE_INJECT_CAP ?? 20) || 20);
+function pickFlagged(db) {
+    const flagged = queryByType(db, "rule", { status: "active" }).filter((r) => r.inject);
+    flagged.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)); // 新在前
+    return flagged.slice(0, INJECT_CAP);
+}
 function pickRules(db) {
     if (USE_GATE) {
-        // ★ 批次⑦X2（2026-09-23）：门禁层 = 内置 8 条 + 规则页打了「注入」开关的 active 规则（用户显式选择才注入，token 可控）
-        const flagged = queryByType(db, "rule", { status: "active" }).filter((r) => r.inject);
-        return [...GATE_RULES, ...flagged.map((r) => ({ content: r.content, agent: r.agent || "human:dashboard" }))];
+        // 门禁层 = 内置 8 条 + 打了「注入」开关的 active 规则（规则页手动勾选 + 批次⑧ 自动生产线，token 可控）
+        return [...GATE_RULES, ...pickFlagged(db).map((r) => ({ content: r.content, agent: r.agent || "human:dashboard" }))];
     }
     const all = queryByType(db, "rule", { status: "active" });
     return all.filter((r) => (r.confidence ?? 0) >= MIN_CONF);
