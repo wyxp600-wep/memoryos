@@ -5017,7 +5017,8 @@
     const conclusion = mc ? mc[1].trim() : s.replace(/<过程>[\s\S]*?<\/过程>/g, '').replace(/<\/?结论>/g, '').trim();
     return { conclusion, process };
   }
-  /* ★ 2026-09-20：把过程段追加为「执行过程」区的一张思考卡 —— 过程不再占用聊天区 */
+  /* ★ 2026-09-20：过程段追加为「执行过程」思考卡；★ 批次⑤（2026-09-23）：该块已内联进对话流
+     （#agentRunLive 挂入 #agentChat，question → process → answer），过程随消息滚动、逐轮留档 */
   function _agentAppendProcessCard(process, title) {
     if (!process) return;
     const wrap = $('#agentRunLive');
@@ -5074,6 +5075,7 @@
       if (b) b.textContent = '~' + Math.ceil(_agentStreamBuf.length / 4) + ' tok';
     }
     tl.scrollTop = tl.scrollHeight;
+    _agentChatFollow();   // ★ 批次⑤：过程块内联后由 chat 统一贴底跟随
     _agentRunLiveBadge();
   }
   /** 状态徽标：有进行中工具 → 工具运行中(n)；流式生成中 → 等待模型…（均无则不动 meta 既有文案） */
@@ -5083,6 +5085,48 @@
     const pending = _agentRunLiveSteps.filter(s => s.state === 'pending').length;
     if (pending > 0) meta.textContent = '⏳ 工具运行中(' + pending + ')';
     else if (_agentStreamBuf) meta.textContent = '✍ 等待模型…';
+  }
+  /* ★ 批次⑤（2026-09-23，方案1·过程内联，参照 pi renderer）：
+     发送后把 #agentRunLive 整块移进 #agentChat 的 pending 气泡之后（顺序 user → 过程 → 结论）；
+     下一轮发送时旧块原地克隆为静态快照（.run-snap：剥 id/onclick/按钮，历史不可交互、留驻原位），
+     实时块复用移交到本轮；会话切换/清空 chat.innerHTML='' 前必须 _agentRunLiveDetach 摘出保命。 */
+  function _agentRunLivePlace(chat, pending) {
+    const live = document.getElementById('agentRunLive');
+    if (!live || !chat || !pending) return;
+    if (live.dataset.migrated === '1' && live.parentElement === chat) {
+      // 旧轮次：原地冻结为只读快照留档（剥 id 防与实时块重号，剥 onclick 防克隆闭包句柄失效报错）
+      const snap = live.cloneNode(true);
+      snap.removeAttribute('id');
+      snap.removeAttribute('data-migrated');
+      snap.classList.add('run-snap');
+      snap.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+      snap.querySelectorAll('[onclick]').forEach(el => el.removeAttribute('onclick'));
+      snap.querySelectorAll('button').forEach(b => b.remove());   // 刷新/展开等操作按钮对快照无意义
+      snap.style.display = 'block';
+      chat.insertBefore(snap, live);
+    }
+    chat.insertBefore(live, pending.nextSibling);   // 挂到本轮 pending 气泡之后（user → 过程 → answer）
+    live.dataset.migrated = '1';
+    live.style.display = 'block';
+  }
+  /** 会话切换/清空（chat.innerHTML 全清）前摘出实时块挂回聊天区后原位，避免被一并销毁 */
+  function _agentRunLiveDetach() {
+    const live = document.getElementById('agentRunLive');
+    if (!live) return;
+    const parent = live.parentElement;
+    if (parent && parent.id === 'agentChat') {
+      parent.removeChild(live);
+      if (parent.nextSibling) parent.parentNode.insertBefore(live, parent.nextSibling);
+      else parent.parentNode.appendChild(live);
+    }
+    live.removeAttribute('data-migrated');
+    live.style.display = 'none';
+  }
+  /** 内联后 chat 统一滚动：接近底部才跟随贴底（上翻历史时不打断） */
+  function _agentChatFollow() {
+    const chat = $('#agentChat');
+    if (!chat) return;
+    if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 160) chat.scrollTop = chat.scrollHeight;
   }
   function _agentRunLiveStart(runId) {
     _agentRunLiveId = runId;
@@ -5246,6 +5290,7 @@
     _agentStreamRender();   // 打字机卡片挂尾（无缓冲则 no-op）
     // 自动滚动到底部
     tl.scrollTop = tl.scrollHeight;
+    _agentChatFollow();   // ★ 批次⑤：过程块内联后由 chat 统一贴底跟随
   }
   async function _agentRunLiveDetail(stepId, focusDiff, focusArtifact) {
     // 拉该 run 全量（含 diff 字段），定位该步骤渲染详情
@@ -5328,10 +5373,10 @@
     if (!text || !chat) return;
     agentBusy = true;
     showRunStatus('正在思考…');
-    if (chat.dataset.empty === '1') { chat.innerHTML = ''; chat.dataset.empty = '0'; }
+    if (chat.dataset.empty === '1') { _agentRunLiveDetach(); chat.innerHTML = ''; chat.dataset.empty = '0'; }
     if (input) input.value = '';
     chat.appendChild(agentBubble('user', esc(text)));
-    const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程实时展开在下方时间线（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
+    const pending = agentBubble('assistant', '<span class="text-muted">agent 运行中…执行过程内联展开在本条消息下方（本地模型首轮较慢，多轮工具调用可能 1~2 分钟）</span>');
     chat.appendChild(pending);
     chat.scrollTop = chat.scrollHeight;
     _agentSetSendBtn(true);
@@ -5355,6 +5400,7 @@
         return;
       }
       _agentCurrentRunId = j.runId;
+      _agentRunLivePlace(chat, pending);   // ★ 批次⑤：过程块内联挂到 pending 之后（user → 过程 → 结论）
       _agentRunLiveStart(j.runId);
       // ★ 驾驶舱「并行数」排队：超出并发上限的 run 先排队，空位腾出后自动启动（SSE 已挂上，启动即出事件）
       if (j.status === 'queued') {
@@ -5371,7 +5417,7 @@
         tick();
       });
       pending.remove();
-      // 终态：拉答案 → 结论进聊天气泡、过程进「执行过程」区（★ 2026-09-20）
+      // 终态：拉答案 → 过程段进内联过程块（结论气泡上方）、结论进聊天气泡（★ 批次⑤ 2026-09-23 内联）
       const fin = await fetch('/api/agent/runs/' + encodeURIComponent(j.runId)).then(r => r.json()).catch(() => null);
       const raw = (fin && fin.ok && fin.answer) || '';
       const aborted = !!fin && fin.status === 'aborted';
@@ -5425,7 +5471,7 @@
     if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); } });
     if (clear) clear.onclick = () => {
       AGENT_HISTORY.length = 0;
-      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
+      if (chat) { _agentRunLiveDetach(); chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">对话已清空（记忆库与任务不受影响）</div>'; chat.dataset.empty = '1'; }
       hideRunStatus();
     };
     // 运行状态条按钮（★ 2026-09-20：停止生成已上移到发送按钮，#agentRunStopBtn 已移除）
@@ -5876,12 +5922,13 @@
     fetch('/api/agent/sessions/' + encodeURIComponent(key)).then(r => r.json()).then(s => {
       const chat = $('#agentChat');
       if (!chat) return;
+      _agentRunLiveDetach();   // ★ 批次⑤：清空前摘出实时过程块，防 innerHTML 连带销毁
       chat.innerHTML = '';
       chat.dataset.empty = '0';
       if (!s.messages || !s.messages.length) {
         chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（空会话）</div>';
       } else {
-        // ★ 2026-09-20：回放同样按结论/过程切分 —— 聊天气泡只放结论，过程段不回放（可到执行过程区/执行中心查看）
+        // ★ 2026-09-20：回放同样按结论/过程切分 —— 聊天气泡只放结论，过程段不回放（★ 批次⑤：内联过程块仅当轮可见，历史完整过程到执行中心查看）
         for (const m of s.messages) {
           if (m.role === 'assistant') chat.appendChild(agentBubble('assistant', esc(_agentSplitAnswer(m.content).conclusion)));
           else chat.appendChild(agentBubble('user', esc(m.content)));
@@ -5902,7 +5949,7 @@
         _agentSessionKey = s.sessionKey;
         _agentSessions.unshift({ session_key: s.sessionKey, title: '新会话', msg_count: 0 });
         const chat = $('#agentChat');
-        if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">新会话（输入指令开始）</div>'; chat.dataset.empty = '1'; }
+        if (chat) { _agentRunLiveDetach(); chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">新会话（输入指令开始）</div>'; chat.dataset.empty = '1'; }
         AGENT_HISTORY.length = 0;
         _agentSessionChips();
       }).catch(() => { /* 受限模式 403 静默 */ });
@@ -5913,7 +5960,7 @@
       _agentSessions = _agentSessions.filter(x => x.session_key !== key);
       if (_agentSessionKey === key) _agentSessionKey = null;
       const chat = $('#agentChat');
-      if (chat) { chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（会话已删除）</div>'; chat.dataset.empty = '1'; }
+      if (chat) { _agentRunLiveDetach(); chat.innerHTML = '<div class="text-muted" style="font-size:13px;padding:18px;text-align:center">（会话已删除）</div>'; chat.dataset.empty = '1'; }
       AGENT_HISTORY.length = 0;
       _agentSessionChips();
     }).catch(() => {});
@@ -5934,11 +5981,12 @@
     if (bar) bar.style.display = 'flex';
     if (dot) { dot.className = 'run-dot'; }
     if (txt) txt.textContent = text || '运行中…';
-    // 自动展开执行过程
+    // 自动展开执行过程（★ 批次⑤：只操作已内联进对话流的实时块；首轮由 _agentRunLivePlace 挂载，
+    //   避免 runId 返回前把模板块闪现在聊天区外）
     const live = $('#agentRunLive');
-    if (live) live.style.display = 'block';
+    if (live && live.dataset.migrated === '1') live.style.display = 'block';
     const tl = $('#agentRunLiveTimeline');
-    if (tl && !tl.innerHTML.trim()) tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">agent 运行中，工具调用实时追加…</li>';
+    if (live && live.dataset.migrated === '1' && tl && !tl.innerHTML.trim()) tl.innerHTML = '<li class="text-muted" style="font-size:11px;padding:6px">agent 运行中，工具调用实时追加…</li>';
   }
   function hideRunStatus() {
     const bar = $('#agentRunStatus');

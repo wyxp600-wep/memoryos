@@ -2872,6 +2872,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     border: 1px solid var(--border-glass); border-radius: 10px;
     padding: 10px 12px; background: var(--bg-card);
     animation: cardSlideIn .25s ease-out;
+    cursor: pointer; transition: border-color .15s, box-shadow .15s;
   }
   @keyframes cardSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .run-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -2906,6 +2907,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .run-card-empty { text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
   .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
   .run-card-thinking::before { content: '💭 '; }
+
+  /* ★ 批次⑤（2026-09-23）：执行过程内联进对话流 —— 历史轮次原地冻结为只读快照（无点击、无按钮） */
+  .run-snap .run-card { cursor: default; }
+  .run-snap .run-card:hover { border-color: var(--border-glass); }
+  .run-snap .run-card button { display: none; }
 
   /* ===== 流式打字机（★ 批次①/④ 2026-09-23，pi renderer .stream-caret 模式） ===== */
   .run-card.streaming { border-color: color-mix(in srgb, var(--accent-cyan, #22d3ee) 45%, transparent); }
@@ -3067,7 +3073,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   ::selection { background: rgba(34,211,238,0.25); }
 
   /* ===== 执行中心（#/runs）：运行卡 / 时间线 / 终端 / diff / 会话条 ===== */
-  .run-card { flex: 0 0 220px; max-width: 260px; padding: 10px 12px; border-radius: 10px;
+  /* ★ 批次⑤：窄卡规则 scoped 到 #runBoard，避免泄漏把 agent 时间线卡片压成 260px 窄卡 */
+  #runBoard .run-card { flex: 0 0 220px; max-width: 260px; }
+  .run-card { padding: 10px 12px; border-radius: 10px;
     background: var(--bg-card); border: 1px solid var(--border-glass); cursor: pointer;
     transition: border-color .15s, box-shadow .15s; }
   .run-card:hover { border-color: var(--accent-cyan); }
@@ -3329,6 +3337,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     border: 1px solid var(--border-glass); border-radius: 10px;
     padding: 10px 12px; background: var(--bg-card);
     animation: cardSlideIn .25s ease-out;
+    cursor: pointer; transition: border-color .15s, box-shadow .15s;
   }
   @keyframes cardSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .run-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -3363,6 +3372,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .run-card-empty { text-align: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
   .run-card-thinking { color: var(--text-secondary); font-style: italic; line-height: 1.7; }
   .run-card-thinking::before { content: '💭 '; }
+
+  /* ★ 批次⑤（2026-09-23）：执行过程内联进对话流 —— 历史轮次原地冻结为只读快照（无点击、无按钮） */
+  .run-snap .run-card { cursor: default; }
+  .run-snap .run-card:hover { border-color: var(--border-glass); }
+  .run-snap .run-card button { display: none; }
 
   /* ===== 流式打字机（★ 批次①/④ 2026-09-23，执行中心页同款） ===== */
   .run-card.streaming { border-color: color-mix(in srgb, var(--accent-cyan, #22d3ee) 45%, transparent); }
@@ -4509,10 +4523,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="text-muted" style="font-size:13px;padding:18px;text-align:center;line-height:2">
               内置 agent 与 MCP 客户端（Codex / Claude / TRAE）共用同一套工具与记忆库。<br>
               试着问：<span class="mono">当前项目最该先记住的一件事是什么？</span> · <span class="mono">有没有可做的任务？</span> · <span class="mono">备份策略是怎么定的？</span>
-              <br><span style="font-size:11px;opacity:.7">发送后执行过程（工具调用 / 产物 / diff）实时展开，点任意步骤可看详情。</span>
+              <br><span style="font-size:11px;opacity:.7">发送后执行过程（工具调用 / 产物 / diff）内联展开在对话流中，点任意步骤可看详情。</span>
             </div>
           </div>
-          <!-- 执行过程实时时间线 -->
+          <!-- 执行过程实时时间线（★ 批次⑤：模板初始位在聊天区外，发送时由 _agentRunLivePlace 整块挂进上方 #agentChat，
+               顺序为 问题 → 过程 → 结论；清空会话前由 _agentRunLiveDetach 摘出保命） -->
           <div id="agentRunLive" style="display:none;border-top:1px dashed var(--border-glass);padding-top:10px">
             <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
               <span class="text-muted" style="font-size:11px;font-weight:600">执行过程（实时）</span>
@@ -4524,7 +4539,8 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div id="agentRunLiveWarn" style="display:none;margin-bottom:8px;padding:6px 10px;border-radius:6px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);font-size:11px;color:#f59e0b">
               ⏳ 执行时间较长，可能是模型响应慢或多轮工具调用。可点「刷新」手动拉取最新状态，或到「执行中心」查看详情。
             </div>
-            <div id="agentRunLiveTimeline" class="run-cards" role="log" aria-live="polite" aria-label="agent 执行过程" style="max-height:320px;overflow-y:auto"></div>
+            <!-- ★ 批次⑤：去掉行内 max-height/overflow 内滚，改由 #agentChat 统一滚动（内联后不嵌套滚动条） -->
+            <div id="agentRunLiveTimeline" class="run-cards" role="log" aria-live="polite" aria-label="agent 执行过程"></div>
           </div>
           <div class="agent-chat-input">
             <textarea id="agentInput" rows="2" aria-label="给 agent 下指令" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行）"></textarea>
