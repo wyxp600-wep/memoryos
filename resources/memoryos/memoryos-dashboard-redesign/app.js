@@ -1224,6 +1224,57 @@
     const t = $('#toast'); t.textContent = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2500);
   }
+  /* ★ 批次⑨（2026-09-24）：通用输入弹窗 —— Electron 壳的渲染进程不实现 window.prompt（点了无反应），
+     本 helper 以 Promise 语义等价替代（resolve(values) / 取消 resolve(null)）：
+     Enter 提交，Esc / ✕ / 点遮罩取消；required 项为空时阻止提交并提示。所有原 prompt 调用点统一走这里。 */
+  function askForm(opts) {
+    return new Promise((resolve) => {
+      const old = $('.ask-form-modal'); if (old) old.remove();
+      const fieldsHtml = (opts.fields || []).map((f) => `
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:10px 0 4px">${esc(f.label)}${f.required ? ' *' : ''}</label>
+        <input data-k="${esc(f.key)}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || '')}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none">`).join('');
+      const wrap = document.createElement('div');
+      wrap.className = 'ask-form-modal cockpit-modal';
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
+      wrap.innerHTML = `<div style="max-width:480px;width:92%;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,0.12));border-radius:14px;padding:18px 20px;box-shadow:0 18px 60px rgba(0,0,0,0.3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${esc(opts.title || '请输入')}</span>
+          <button data-x style="margin-left:auto;background:none;border:none;font-size:16px;color:var(--text-muted);cursor:pointer">✕</button>
+        </div>
+        <div data-fields style="font-size:12px">${fieldsHtml}</div>
+        <div data-msg style="display:none;font-size:12px;color:#ef4444;margin-top:8px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
+          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">${esc(opts.okText || '确定')}</button>
+        </div>
+      </div>`;
+      document.body.appendChild(wrap);
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; document.removeEventListener('keydown', onKey); wrap.remove(); resolve(v); };
+      const submit = () => {
+        const vals = {}; let firstBad = null;
+        for (const f of (opts.fields || [])) {
+          const el = wrap.querySelector(`input[data-k="${f.key}"]`);
+          const v = (el && el.value || '').trim();
+          if (f.required && !v) { firstBad = firstBad || el; continue; }
+          vals[f.key] = v;
+        }
+        if (firstBad) { const m = wrap.querySelector('[data-msg]'); m.style.display = 'block'; m.textContent = '必填项不能为空'; firstBad.focus(); return; }
+        finish(vals);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') finish(null);
+        else if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      };
+      document.addEventListener('keydown', onKey);
+      wrap.addEventListener('click', (e) => { if (e.target === wrap) finish(null); });
+      wrap.querySelector('[data-x]').onclick = () => finish(null);
+      wrap.querySelector('[data-cancel]').onclick = () => finish(null);
+      wrap.querySelector('[data-ok]').onclick = submit;
+      const first = wrap.querySelector('input[data-k]'); if (first) first.focus();
+    });
+  }
   // 图表自适应：统一 resize 所有已初始化的 ECharts 实例
   function resizeAllCharts() {
     if (!window.echarts) return;
@@ -1319,17 +1370,25 @@
         : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">未发现任何 MCP 载体文件</td></tr>';
     }
     $('#scanBtn').onclick = () => runScan(true);
-    // ★ 批次⑦B：手动登记清单外新 agent —— 名称必填，配置目录/安装路径可选；登记成功自动重扫
+    // ★ 批次⑦B：手动登记清单外新 agent —— ★ 批次⑨：prompt()→askForm（Electron 壳 prompt 全哑）
     $('#manualRegBtn').onclick = async () => {
-      const name = (prompt('新智能体名称（扫描清单外的 AI Agent）：') || '').trim();
+      const v = await askForm({
+        title: '手动登记新智能体（扫描清单外）',
+        fields: [
+          { key: 'name', label: '智能体名称', placeholder: '例 OpenCode', required: true },
+          { key: 'configDir', label: '配置目录（可选，例 C:\\Users\\x\\.newagent —— 填了才能自动判定「已连接」）', placeholder: '回车跳过' },
+          { key: 'path', label: '安装路径/可执行文件（可选）', placeholder: '回车跳过' },
+        ],
+        okText: '登记',
+      });
+      if (!v) return;
+      const name = (v.name || '').trim();
       if (!name) return;
-      const configDir = (prompt('配置目录（可选，例 C:\\Users\\x\\.newagent —— 填了才能自动判定「已连接」，回车跳过）：') || '').trim();
-      const exePath = (prompt('安装路径/可执行文件（可选，回车跳过）：') || '').trim();
       const r = await fetch('/api/scan-agents/custom', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, configDir, path: exePath }),
+        body: JSON.stringify({ name, configDir: (v.configDir || '').trim(), path: (v.path || '').trim() }),
       }).then(x => x.json()).catch(e => ({ error: e.message }));
-      if (r.ok) { toast('已登记「' + name + '」，正在重扫…', 2400); runScan(true); }
+      if (r.ok) { toast('已登记「' + name + '」，正在重扫…'); runScan(true); }
       else toast(r.error || '登记失败', 3000);
     };
     let autoRan = false;
@@ -1872,10 +1931,21 @@
     }
   }
   async function issueGovCred() {
-    const agent = prompt('为哪个 agent 签发凭据？', 'zcode');
+    // ★ 批次⑨：prompt()→askForm（Electron 壳 prompt 不实现）
+    const v = await askForm({
+      title: '签发治理凭据',
+      fields: [
+        { key: 'agent', label: '为哪个 agent 签发？', value: 'zcode', required: true },
+        { key: 'scope', label: '权限 scope（read/write/admin）', value: 'read' },
+        { key: 'ttl', label: '短生命周期小时数（0.1–24）', value: '1' },
+      ],
+      okText: '签发',
+    });
+    if (!v) return;
+    const agent = (v.agent || '').trim();
     if (!agent) return;
-    const scope = prompt('权限 scope（read/write/admin）', 'read') || 'read';
-    const ttl = Number(prompt('短生命周期小时数（0.1–24）', '1')) || 1;
+    const scope = (v.scope || '').trim() || 'read';
+    const ttl = Number(v.ttl) || 1;
     try {
       const r = await fetch('/api/agent-creds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'issue', agent, scope, ttl_hours: ttl }) }).then(x => x.json());
       if (!r.ok) { toast('签发失败：' + (r.error || '')); return; }
@@ -3561,9 +3631,11 @@
     const exportBtn = document.querySelector('.topbar-actions .btn-ghost');
     if (exportBtn && !exportBtn.dataset.bound) {
       exportBtn.dataset.bound = '1';
-      exportBtn.onclick = () => {
-        const format = prompt('导出格式：输入 md / json / csv（默认 md）', 'md');
-        if (format === null) return;
+      exportBtn.onclick = async () => {
+        // ★ 批次⑨：prompt()→askForm
+        const v = await askForm({ title: '导出格式', fields: [{ key: 'format', label: '输入 md / json / csv（默认 md）', value: 'md' }], okText: '导出' });
+        if (!v) return;
+        const format = v.format;
         const data = S.memories;
         let content = '', mime = 'text/plain', ext = 'txt';
         if (format === 'json') {
@@ -4437,7 +4509,10 @@
         } else if (act === 'aux') {
           const kind = item.dataset.aux;
           const label = AUX_LABEL[kind] || kind;
-          const t = prompt(`新建「${label}」辅助卡（挂在主任务 #${cardId} 上，供智能体读上下文）：`, `aux-${label} #${cardId}`);
+          // ★ 批次⑨：prompt()→askForm
+          const av = await askForm({ title: `新建「${label}」辅助卡`, fields: [{ key: 't', label: `挂在主任务 #${cardId} 上，供智能体读上下文`, value: `aux-${label} #${cardId}`, required: true }], okText: '创建' });
+          if (!av) return;
+          const t = (av.t || '').trim();
           if (!t) return;
           const cr = await fetch('/api/cards', { ...H, body: JSON.stringify({ title: t, kind: 'aux' }) }).then(x => x.json().catch(() => ({})));
           if (!cr.ok || !cr.id) { toast('辅助卡创建失败：' + (cr.error || '')); return; }
@@ -4886,7 +4961,10 @@
   }
 
   async function createCard() {
-    const title = prompt('新建卡片标题');
+    // ★ 批次⑨：prompt()→askForm
+    const v = await askForm({ title: '新建卡片', fields: [{ key: 'title', label: '卡片标题', required: true, placeholder: '例：梳理记忆检索链路' }], okText: '创建' });
+    if (!v) return;
+    const title = (v.title || '').trim();
     if (!title) return;
     const res = await fetch('/api/cards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, kind: 'task' }) });
     const j = await res.json().catch(() => ({}));
@@ -5729,8 +5807,11 @@
     _agentCockpitExportAudit: () => { window.open('/api/export/audit?limit=5000', '_blank'); },
     /* ── ★ 10 个原灰显按钮的真实后端 handler（每个命中真实端点；失败弹 toast 不造假成功） ── */
     _agentCockpitDecompose: async () => {
-      const goal = prompt('要拆解的目标（LLM 会拆成 3–7 条可派发子任务）：');
-      if (!goal || !goal.trim()) return;
+      // ★ 批次⑨：prompt()→askForm
+      const dv = await askForm({ title: '自动拆解目标', fields: [{ key: 'goal', label: '要拆解的目标（LLM 会拆成 3–7 条可派发子任务）', required: true }], okText: '拆解' });
+      if (!dv) return;
+      const goal = (dv.goal || '').trim();
+      if (!goal) return;
       toast('正在拆解…', 1800);
       const r = await fetch('/api/agent/plan/decompose', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ goal: goal.trim() }) }).then(x => x.json()).catch(() => ({}));
       if (!r.ok) { toast('拆解失败：' + (r.error || 'LLM 端点不可达'), 4200); return; }
@@ -5792,9 +5873,10 @@
     _agentCockpitBudget: async () => {
       const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
       const cur = (st.tuning || {}).tokenBudget || 0;
-      const v = prompt(`单次 run 的累计 token 上限（0=不设限；当前 ${cur || '未设'}）：`, String(cur || ''));
-      if (v === null) return;
-      const n = Math.floor(Number(v));
+      // ★ 批次⑨：prompt()→askForm
+      const v = await askForm({ title: 'run token 预算', fields: [{ key: 'n', label: `单次 run 的累计 token 上限（0=不设限；当前 ${cur || '未设'}）`, value: String(cur || '') }], okText: '设置' });
+      if (!v) return;
+      const n = Math.floor(Number(v.n));
       if (!Number.isFinite(n) || n < 0) { toast('须为非负整数', 2600); return; }
       const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ budgetTokens: n }) }).then(x => x.json()).catch(() => ({}));
       toast(r.ok ? (n ? `预算上限已设 ${n} token（超出即中止该 run）` : '预算上限已解除') : '设置失败：' + (r.error || ''), 4000);
@@ -5808,9 +5890,10 @@
     _agentCockpitParallelism: async () => {
       const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
       const t = st.tuning || {};
-      const v = prompt(`同时运行的 agent run 上限（1–8，超出自动排队；当前 ${t.maxConcurrent ?? 3}）：`, String(t.maxConcurrent ?? 3));
-      if (v === null) return;
-      const n = Math.floor(Number(v));
+      // ★ 批次⑨：prompt()→askForm
+      const v = await askForm({ title: '并行上限', fields: [{ key: 'n', label: `同时运行的 agent run 上限（1–8，超出自动排队；当前 ${t.maxConcurrent ?? 3}）`, value: String(t.maxConcurrent ?? 3) }], okText: '设置' });
+      if (!v) return;
+      const n = Math.floor(Number(v.n));
       if (!(n >= 1 && n <= 8)) { toast('须为 1–8 的整数', 2600); return; }
       const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ maxConcurrent: n }) }).then(x => x.json()).catch(() => ({}));
       toast(r.ok ? `并行数已设为 ${n}（当前 running ${t.running ?? 0} / queued ${t.queued ?? 0}）` : '设置失败：' + (r.error || ''), 4000);
@@ -5835,9 +5918,10 @@
     _agentCockpitLogLevel: async () => {
       const st = await fetch('/api/agent/status').then(r => r.json()).catch(() => ({}));
       const cur = (st.tuning && st.tuning.logLevelNow) || 'info';
-      const v = prompt(`内核 5xx 诊断日志级别（debug/info/warn/error；warn/error 静默诊断行；审计表不受影响。当前 ${cur}）：`, cur);
-      if (v === null) return;
-      const lv = String(v).trim().toLowerCase();
+      // ★ 批次⑨：prompt()→askForm
+      const v = await askForm({ title: '内核诊断日志级别', fields: [{ key: 'lv', label: `内核 5xx 诊断日志级别（debug/info/warn/error；warn/error 静默诊断行；审计表不受影响。当前 ${cur}）`, value: String(cur) }], okText: '切换' });
+      if (!v) return;
+      const lv = String(v.lv).trim().toLowerCase();
       if (!['debug', 'info', 'warn', 'error'].includes(lv)) { toast('须为 debug/info/warn/error', 3000); return; }
       const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ logLevel: lv }) }).then(x => x.json()).catch(() => ({}));
       toast(r.ok ? `日志级别已切到 ${lv}（即时生效，审计留痕不降级）` : '切换失败：' + (r.error || ''), 4000);

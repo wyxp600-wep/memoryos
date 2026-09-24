@@ -330,6 +330,25 @@ export function probeCarrier(dir) {
     catch { /* 目录不可读跳过 */ }
     return null;
 }
+/** ★ 批次⑨S2（2026-09-24）：名称启发式 —— 「装了但没配 MCP 载体」的 agent 也要列出（存在与连接分层）。
+ *  宽进口径：目录/点目录名命中即为「已安装·未连接」候选；connected 仍只由 probeCarrier 载体指纹判定。
+ *  短词（dsh/pi）加 \b 词边界，防 pip/spin 等误命中；其余按子串匹配。 */
+const AI_NAME_RE = /(code|agent|coding|assistant|copilot|claude|codex|cursor|windsurf|trae|zcode|qwen|glm|chatglm|deepseek|mimo|commandcode|continue|aider|gemini|\bdsh\b|\bpi\b)/i;
+/** 名称 → 规范 id：让「Microsoft VS Code / Trae CN / MiniMax Code / DSH Desktop…」归一到固定清单 id，
+ *  由 scanAgents 按 id 去重（不重复列出）；清单外新 agent（Command Code/OpenCode/MiMo…）拿到稳定唯一 id。 */
+const AI_NAME_ALIAS = [
+    [/visual\s*studio\s*code|vs\s*code/i, "vscode"],
+    [/deepseek|\bdsh\b/i, "dsh"],
+    [/trae[-\s]*cn/i, "traecode"],
+    [/trae[-\s]*solo/i, "traework"],
+    [/workbuddy\s*ai|workbuddyai/i, "workbuddy-ai"],
+    [/minimax/i, "minimax"],
+    [/codex/i, "codexpp"],
+    [/command\s*code/i, "commandcode"],
+    [/opencode/i, "opencode"],
+    [/xiaomi\s*mimo|\bmimo\b/i, "mimo"],
+    [/pi[\s-]*agent/i, "pi-agent"],
+];
 /** 清单外 agent 通用发现：home 点目录 + Programs 安装目录（含 目录名→点目录 slug 映射） */
 export function discoverCarrierAgents(home = os.homedir()) {
     const found = [];
@@ -340,12 +359,18 @@ export function discoverCarrierAgents(home = os.homedir()) {
             if (seen.has(resolved) || !fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory())
                 return;
             seen.add(resolved);
-            const hit = probeCarrier(resolved);
-            if (!hit)
-                return;
             const base = path.basename(resolved);
+            const hit = probeCarrier(resolved);
             const id = (base.startsWith(".") ? base.slice(1) : base).toLowerCase().replace(/[^a-z0-9-]/g, "") || "unknown";
-            found.push({ id, name: base.replace(/^\./, ""), type: "MCP 载体发现", version: null, connected: hit.connected, path: hit.file, configFile: hit.file, evidence: `MCP 载体指纹：${path.basename(hit.file)}` });
+            if (hit) {
+                found.push({ id, name: base.replace(/^\./, ""), type: "MCP 载体发现", version: null, connected: hit.connected, path: hit.file, configFile: hit.file, evidence: `MCP 载体指纹：${path.basename(hit.file)}` });
+                return;
+            }
+            // ★ 批次⑨S2：无载体但名称像 agent → 降级列出「已安装」（装了没配 MCP 也可见）
+            if (AI_NAME_RE.test(base)) {
+                const alias = AI_NAME_ALIAS.find(([re]) => re.test(base));
+                found.push({ id: alias ? alias[1] : id, name: base.replace(/^\./, ""), type: "已安装", version: null, connected: false, path: resolved, evidence: "目录存在（未检出 MemoryOS MCP 载体）" });
+            }
         }
         catch { /* 单点失败跳过 */ }
     };
