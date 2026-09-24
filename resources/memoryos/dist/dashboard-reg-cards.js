@@ -178,6 +178,25 @@ export function registerCards(app, ctx) {
     function asOf(req) {
         return String(req.query.as ?? "").trim() || "unassigned";
     }
+    /** ★ ①（2026-09-24）：agent 名写凭据校验（web 卡面 4 端点闭合 L1/L2 冒名闭环）。
+     *  规则：actor 非 kebab（human 前缀/unassigned/?/空等人类或缺省流量）→ null 直接放行，行为零变化；
+     *  kebab 名 → 查 agent_credentials 有效写凭据（owner 匹配 / 未吊销 / 未过期 / scope≠read）；
+     *  无效且 MEMORYOS_A1_ENFORCE=1（硬模式）→ 返回 403 错误串；软模式 → 放行（与 MCP 侧 A1 口径一致）。 */
+    const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+    function actorCredError(actor, credential) {
+        const a = String(actor ?? "").trim();
+        if (!AGENT_NAME_RE.test(a))
+            return null; // 非 kebab：human:dashboard / unassigned / "?" / 空 → 人类或异常流量，原语义不变
+        const credRows = credential
+            ? db.prepare(`SELECT agent, scope, expires_at, revoked_at FROM agent_credentials WHERE credential=?`).all(String(credential))
+            : [];
+        const credOk = credRows.some((r) => r.agent === a && !r.revoked_at && !(r.expires_at && r.expires_at <= new Date().toISOString()) && r.scope !== "read"); // 与 MCP isCredentialValid 口径一致
+        if (credOk)
+            return null;
+        if (process.env.MEMORYOS_A1_ENFORCE === "1")
+            return `A1 硬模式：agent「${a}」无有效写凭据（MEMORYOS_A1_ENFORCE=1），本操作拒绝；请携带有效 credential 参数或改用 task_* MCP 工具`;
+        return null; // 软模式：放行（与 MCP checkWriteCredential 同口径）
+    }
     /** 卡片全部 depends 入边是否 done（M3：只认 depends） */
     function cardDependsDone(cardId) {
         const deps = db
@@ -568,6 +587,9 @@ export function registerCards(app, ctx) {
     app.post("/api/cards/:id/claim", async (req, reply) => {
         const id = Number(req.params.id);
         const actor = asOf(req);
+        const credErr = actorCredError(actor, req.query.credential); // ★ ①：kebab agent 名需有效写凭据（硬模式 403）
+        if (credErr)
+            return reply.code(403).send({ ok: false, error: credErr });
         const lock = randomBytes(12).toString("hex");
         const info = db
             .prepare(`UPDATE cards SET status='running', assignee=?, claim_lock=?,
@@ -587,6 +609,9 @@ export function registerCards(app, ctx) {
         const to = String(b.status ?? "").trim();
         const expectedFrom = String(b.expected_from ?? "").trim() || undefined;
         const actor = String(b.as ?? "").trim() || asOf(req);
+        const credErr = actorCredError(actor, b.credential ?? req.query.credential); // ★ ①：kebab agent 名需有效写凭据（硬模式 403）
+        if (credErr)
+            return reply.code(403).send({ ok: false, error: credErr });
         if (!CARD_STATES.includes(to))
             return reply.code(400).send({ ok: false, error: `非法状态 ${to}` });
         const c = readCard(id);
@@ -630,6 +655,9 @@ export function registerCards(app, ctx) {
     app.post("/api/cards/:id/accept", async (req, reply) => {
         const id = Number(req.params.id);
         const actor = String(req.body?.as ?? "").trim() || "human:dashboard";
+        const credErr = actorCredError(actor, req.body?.credential ?? req.query?.credential); // ★ ①：kebab agent 名需有效写凭据（硬模式 403）
+        if (credErr)
+            return reply.code(403).send({ ok: false, error: credErr });
         const c = readCard(id);
         if (!c)
             return reply.code(404).send({ ok: false, error: "卡片不存在" });
@@ -758,6 +786,9 @@ export function registerCards(app, ctx) {
     app.post("/api/cards/:id/heartbeat", async (req, reply) => {
         const id = Number(req.params.id);
         const actor = String(req.body?.as ?? "").trim();
+        const credErr = actorCredError(actor, req.body?.credential ?? req.query?.credential); // ★ ①：kebab agent 名需有效写凭据（硬模式 403；人类缺省流量不变）
+        if (credErr)
+            return reply.code(403).send({ ok: false, error: credErr });
         // ★ 修 #2（2026-09-19）：续期同时撕 lease_notice_at（与 MCP task_heartbeat 同口径）。
         //   原来看板心跳只续窗不清贴条，而 reaper 按「贴条+24h」放回且不看 heartbeat_at ——
         //   漏一次心跳被贴条后，活跃认领者的卡也会被强制收回。撕条是状态变更，写一条事件留痕
