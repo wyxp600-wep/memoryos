@@ -8,7 +8,7 @@
  * 门禁：npm test（smoke-mcp/smoke-agent 走 tools/list）+ npm run lint + npm run snapshot:check 全绿。
  */
 import { z } from "zod";
-import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus } from "./db.js";
+import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, gramProbe } from "./db.js";
 import { hybridSearch, semanticDegradation } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
@@ -280,24 +280,51 @@ export function registerMemoryTools(server, ctx) {
                 let hint = "";
                 if (q.length >= 3) {
                     const esc = q.replace(/"/g, '""');
+                    // ★ 2026-09-25 P1-c′：探测两处修正 —— ① 中文查询原走 FTS MATCH "中文"，trigram
+                    //   分词器对短中文常产 0 token（db.js:147 注释自证）→ "其他 project 有相关内容"的
+                    //   提示对中文永不触发，用户在 global 搜不到就以为记忆不存在（项目 scope 无从被发现）。
+                    //   现含 CJK 探针时改走 2-gram 收窄 + 分词 AND-LIKE（与主检索同口径，中文可靠）。
+                    //   ② 原探测只排除 args.project，默认双 scope 时会把刚搜过零命中的「知识库」当"其他
+                    //   project"再提示一遍 → 现排除全部已搜 scope。
+                    const searched = scopes;
+                    const phS = searched.map(() => "?").join(",");
+                    const gram = gramProbe(q);
                     try {
-                        const probe = db
-                            .prepare(`SELECT m.project project, COUNT(*) c
+                        let probe;
+                        if (gram) {
+                            const tokens = q.split(/\s+/).filter(Boolean);
+                            const andLikes = tokens.map(() => `AND m.content LIKE ? ESCAPE '\\'`).join(" ");
+                            const likeParams = tokens.map((t) => `%${t.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
+                            probe = db
+                                .prepare(`SELECT m.project project, COUNT(*) c
+                 FROM memories m
+                WHERE m.id IN (SELECT memory_id FROM memories_gram WHERE gram = ?)
+                  AND m.status = 'active'
+                  AND m.project NOT IN (${phS})
+                  ${andLikes}
+                GROUP BY m.project ORDER BY c DESC LIMIT 5`)
+                                .all(gram, ...searched, ...likeParams);
+                        }
+                        else {
+                            probe = db
+                                .prepare(`SELECT m.project project, COUNT(*) c
                  FROM memories_fts f
                  JOIN memories m ON m.id = f.rowid
                 WHERE f MATCH ?
-                  AND m.project != ?
+                  AND m.project NOT IN (${phS})
                   AND m.status = 'active'
                 GROUP BY m.project ORDER BY c DESC LIMIT 5`)
-                            .all(`"${esc}"`, args.project);
-                        const others = probe.filter((r) => r.project !== args.project);
+                                .all(`"${esc}"`, ...searched);
+                        }
+                        const searchedSet = new Set(searched);
+                        const others = probe.filter((r) => !searchedSet.has(r.project));
                         if (others.length) {
                             hint = `\n🔍 其他 project 有关键词相关内容（语义未验证）：${others.map((p) => `${p.project}(${p.c})`).join("、")}。可指定对应 project 重搜；不确定有哪些 scope 可调 memory_projects。`;
                         }
                     }
                     catch (e) {
                         hint = "";
-                        console.error(`[search] 跨 scope FTS 探测失败（已降级为空提示）：${e instanceof Error ? e.message : String(e)}`);
+                        console.error(`[search] 跨 scope 探测失败（已降级为空提示）：${e instanceof Error ? e.message : String(e)}`);
                     }
                 }
                 if (!hint && args.project !== "global") {
