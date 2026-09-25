@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus } from "./db.js";
-import { hybridSearch } from "./search.js";
+import { hybridSearch, semanticDegradation } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
 import { randomBytes } from "node:crypto";
@@ -246,6 +246,10 @@ export function registerMemoryTools(server, ctx) {
                 }
             }
             const hits = results.slice(0, args.limit);
+            // ★ 2026-09-25 P0：语义路本次降级过（嵌入失败→纯词法）则显式告警 —— 静默降级曾让
+            //   "跨表述召回为 0" 无从定位。双 scope 循环中任一次降级即告警（降级标记按调用清零）。
+            const deg = semanticDegradation();
+            const degNote = deg ? `\n⚠ 语义路本次降级为纯词法（嵌入失败：${deg.msg.slice(0, 120)}）——跨表述/同义召回不可用，结果可能不全。` : "";
             // M-1.5: 调用计数埋点。search 每次只需记 1 条（含零命中），与 returned 区分"调用次数"与"命中条数"。
             // 修正口径：零命中（最需要写记忆的场景）也必须计入，否则门禁会把"搜了但无果"误判成"没搜过"。
             const hitRef = hits[0] ?? { id: 0, agent: AGENT, project: args.project };
@@ -300,7 +304,7 @@ export function registerMemoryTools(server, ctx) {
                     // 指定 scope 零命中时，提示默认 global 也可能有通用内容
                     hint = `\n可将 project 改为 global 重试（当前 scope=${args.project} 无命中）。`;
                 }
-                return `未命中任何记忆（scope=${args.project}）。${hint || `\n（可在相关修复/决策后 memory_write 沉淀。）`}`;
+                return `未命中任何记忆（scope=${args.project}）。${hint || `\n（可在相关修复/决策后 memory_write 沉淀。）`}${degNote}`;
             }
             // P0 注入防御：命中记忆正文可能含外部写入的指令性内容，用 nonce 围栏包裹标记为不可信数据
             const head = hits
@@ -309,7 +313,7 @@ export function registerMemoryTools(server, ctx) {
                 .slice(0, 220)}`)
                 .join("\n");
             return fenceUntrusted("MEMORY", head, "memory_search") +
-                `\n命中 ${hits.length} 条${embedMode() !== "fake" ? "" : "（fake-embed：跨表述命中需 EMBED_MODE=local/api）"}`;
+                `\n命中 ${hits.length} 条${embedMode() !== "fake" ? "" : "（fake-embed：跨表述命中需 EMBED_MODE=local/api）"}${degNote}`;
         },
     });
     /** 调用本地 LLM 生成问答答案（RGA：仅基于记忆作答）。30s 超时防挂起，失败抛错由工具层降级。 */
@@ -464,6 +468,9 @@ export function registerMemoryTools(server, ctx) {
                 const hits = await hybridSearch(db, embedder, { query: args.focus, project: args.project, limit: args.limit });
                 // 统一成 topMemories 形状（cited/returned 无则补 0）
                 top = hits.map((h) => ({ id: h.id, content: h.content, type: h.type, agent: h.agent, cited: 0, returned: 0, hit_count: 0, confidence: h.confidence, project: h.project }));
+                const degF = semanticDegradation(); // ★ 2026-09-25：focus 路同样显式告警（否则"注入无关"无从归因）
+                if (degF)
+                    top._degradation = degF.msg.slice(0, 120); // 挂在数组上随行带出，不改 topMemories 形状
             }
             else {
                 top = topMemories(db, { project: args.project, limit: args.limit });
@@ -505,9 +512,12 @@ export function registerMemoryTools(server, ctx) {
             const rankNote = args.focus
                 ? `按『${args.focus}』主题相关度排序（语义+词法混合检索）`
                 : "按引用/曝光排序（全库曝光榜）";
+            const degOut = args.focus && top?._degradation
+                ? `\n⚠ 语义路本次降级为纯词法（嵌入失败：${top._degradation}）——注入可能不够贴题。`
+                : "";
             return (`【MemoryContext 注入 · agent=${AGENT} · scope=${args.project}】\n` +
                 `相关记忆 Top${Math.min(top.length, args.limit)}（${rankNote}）：\n` +
-                fenceUntrusted("MEMORY", head, "memory_context") +
+                fenceUntrusted("MEMORY", head, "memory_context") + degOut +
                 `\n\n可用 project（active 条数）：\n${scopeStr}\n\n` +
                 `用法：先看上面的记忆是否含相关结论；再针对当前任务用 memory_search 精确检索；执行完沉淀用 memory_write。`);
         },

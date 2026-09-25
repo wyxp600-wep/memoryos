@@ -25,6 +25,15 @@ function waypointOf(db, id) {
  * 这里不直接排除（正文本身可能仍相关），而是降权，让 daemon 重算完成前的过渡期更安全。
  */
 const STALE_PENALTY = 0.9;
+/** ★ 2026-09-25 P0（检索降级可观测）：hybridSearch 语义路失败原本只在 catch 里静默置空 Map，
+ *  调用方（memory_search/memory_context）无从得知「本次已是纯词法」——跨表述召回为 0 却无任何提示，
+ *  是"召回差且查不出原因"的主要盲区。这里记最近一次降级供调用方在回执里显式告警；
+ *  每次 hybridSearch 开头清零（单线程事件循环，await 间隙不会交错两次检索）。
+ *  返回 { msg, at } 或 null（null = 语义路正常）。 */
+let _lastDegradation = null;
+export function semanticDegradation() {
+    return _lastDegradation;
+}
 /**
  * Gram-Schmidt 正交化：量每个候选对查询向量的「独立贡献度」。
  * 线性相关（同质重复）的候选贡献→0，正交的保留。对顺序敏感，是近似值。
@@ -97,6 +106,7 @@ export async function hybridSearch(db, embedder, p) {
     // 语义路
     let semScores = new Map();
     let depth = null; // 意图聚焦度；语义路成功才有值
+    _lastDegradation = null; // ★ 本次检索先清零：catch 分支会重新置入
     try {
         const [qv] = await embedder.embedTexts([p.query]);
         if (qv) {
@@ -118,8 +128,9 @@ export async function hybridSearch(db, embedder, p) {
             depth = intentDepth(candidates.map((c) => c.sim));
         }
     }
-    catch {
+    catch (e) {
         semScores = new Map(); // embedding 失败 → 纯词法降级
+        _lastDegradation = { msg: e instanceof Error ? e.message : String(e), at: Date.now() }; // ★ 2026-09-25：不再静默，留给调用方回执告警
     }
     // 词法路
     const lex = lexSearch(db, p.query, p.project, topK);
