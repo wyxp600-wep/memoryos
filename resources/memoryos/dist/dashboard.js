@@ -42,9 +42,9 @@ const DEFAULT_PORT = 8787;
 const ALLOWED_TYPES = ["decision", "experience", "pitfall", "convention", "rule"];
 /* ── 受限模式（终端用户能力收敛）────────────────────────────────
  * 目标：任务由系统计划统一派发、采集地址由系统统一分配，用户不可自行创建/导入/指定。
- * 关闭方式：设环境变量 MEMORY_RESTRICTED=0（仅供开发/管理员调试）。
- * 前端据 /api/summary 下发的 restricted 能力位隐藏入口；此处为真限制（防绕过 UI 直调 API）。 */
-const RESTRICTED = process.env.MEMORY_RESTRICTED !== "0";
+ * ★ 2026-09-25 缺省对齐壳层：默认关闭（env 未设 → 非受限，与 core-process.js / launcher.cjs 的缺省 "0" 一致），显式 MEMORY_RESTRICTED=1 才打开。
+ * 前端据 /api/summary 下发的 restricted 能力位仅隐藏入口；此处为真拦截（防绕过 UI 直调 API）。 */
+const RESTRICTED = process.env.MEMORY_RESTRICTED === "1";
 const RESTRICTED_MSG = {
     taskCreate: "任务由系统计划统一派发，不支持手动创建",
     planImport: "计划导入已关闭，请使用系统提供的计划",
