@@ -12,8 +12,13 @@ import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfi
 import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
+
+// ★ 2026-09-25 P0①：门控走异步 execFile（promisify）—— 原实现是同步等待子进程，
+//   验收最长 180s 会把 Fastify/MCP 事件循环整个冻死（期间所有请求假死）。
+const execFileAsync = promisify(execFile);
 
 export function registerTaskTools(server, ctx) {
     const { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, runTaskTx, isCredentialValid, nowIso } = ctx;
@@ -148,7 +153,8 @@ export function registerTaskTools(server, ctx) {
             return envRoot;
         return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     }
-    function runTaskGate(db, gate, memoryId) {
+    /** ★ 2026-09-25 P0①：async（异步 execFile）—— 调用点必须 await，否则拿到的是 Promise 而非验收结果 */
+    async function runTaskGate(db, gate, memoryId) {
         const preset = GATE_PRESETS[gate];
         if (!preset) {
             const detail = `预设 '${gate}' 未定义（可选：${Object.keys(GATE_PRESETS).join(" / ")}）——fail-closed 不执行`;
@@ -159,10 +165,17 @@ export function registerTaskTools(server, ctx) {
         let r;
         try {
             // 固定字面量 node 解释器 + 预设内字面量 argv（上方 GATE_PRESETS），shell:false，无用户输入参与
-            r = spawnSync("node", preset.argv, { shell: false, cwd: root, encoding: "utf8", timeout: 180000, windowsHide: true });
+            // promisify(execFile) 成功时只 resolve {stdout, stderr}（无 status）→ 显式补 status:0（退出码 0 才 resolve）
+            r = { status: 0, ...(await execFileAsync("node", preset.argv, { shell: false, cwd: root, encoding: "utf8", timeout: 180000, windowsHide: true })) };
         }
         catch (e) {
-            return { ok: false, executed: true, detail: `验收执行异常：${e.message}` };
+            // execFile 非零退出/超时被杀/起不来都以 reject 表达：退出码与两路输出都挂在 error 上
+            // （正常非零退出 code 为数字；ENOENT 等系统错误为字符串 → status 记 null，detail 回落 error.message）
+            r = {
+                status: typeof e?.code === "number" ? e.code : null,
+                stdout: e?.stdout ?? "",
+                stderr: e?.stderr ?? (e?.message ?? String(e)),
+            };
         }
         const ok = r.status === 0;
         const detail = `${preset.label} exit=${r.status} ${String(r.stdout || r.stderr || "").trim().slice(0, 200)}`;
@@ -767,7 +780,7 @@ export function registerTaskTools(server, ctx) {
             const gateName = taskGateName(row.content);
             let gateRes = null;
             if (gateName) {
-                gateRes = runTaskGate(db, gateName, row.id);
+                gateRes = await runTaskGate(db, gateName, row.id); // ★ 2026-09-25 P0①：runTaskGate 已改异步，必须 await
                 appendEvent(db, { memory_id: row.id, op: "task_gate", payload: JSON.stringify({ gate: gateName, ...gateRes, fallback: "pending" }), operator: `agent:${AGENT}` });
             }
             if (gateRes && !gateRes.ok) {
