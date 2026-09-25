@@ -84,10 +84,15 @@ function log(...a) {
   console.log(`[MemoryOS-Desktop] ${new Date().toLocaleString("zh-CN")}`, ...a);
 }
 
-function restartMcp() {
-  const { execFileSync } = require("node:child_process");
+async function restartMcp() {
+  // ★ 2026-09-25 P0⑥：原用 execFileSync **同步**等待子进程 —— 点「重启 MCP」时 Electron 主进程被堵住，
+  //   UI 冻结；且 taskkill 未带 /T，node 子进程树里的孤儿会残留。改异步 execFile（事件循环不被堵）
+  //   + /T 杀整树。调用方（托盘菜单）不 await，保持点击即返回。
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const execFileAsync = promisify(execFile);
   try {
-    const out = execFileSync("wmic",
+    const { stdout: out } = await execFileAsync("wmic",
       ["process", "where", "name='node.exe' and commandline like '%dist%server.js%'", "get", "processid"],
       { encoding: "utf8", windowsHide: true });
     const pids = (out.match(/\d+/g) || []).filter((n) => n !== String(process.pid));
@@ -98,7 +103,7 @@ function restartMcp() {
       return;
     }
     for (const pid of pids) {
-      try { execFileSync("taskkill", ["/PID", pid, "/F"], { stdio: "ignore", windowsHide: true }); } catch { /* 已退出 */ }
+      try { await execFileAsync("taskkill", ["/PID", pid, "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch { /* 已退出 */ } // /T：连子进程树一起杀，避免孤儿残留
     }
     log("重启 MCP：已终止 " + pids.length + " 个 server 进程（" + pids.join(",") + "）");
     dialog.showMessageBox({ type: "info", title: "MemoryOS",
@@ -170,7 +175,7 @@ async function finalizeStartup(cfg) {
     onShowMain: () => win.showMain(),
     onUpdateCheck: () => runUpdateCheck(),
     onRestartCore: () => { try { core.restartCore(); } catch (e) { log("重启内核失败", e.message || String(e)); } },
-    onRestartMcp: () => restartMcp(),
+    onRestartMcp: () => { restartMcp().catch((e) => log("重启 MCP 失败", (e && (e.message || String(e))) || "unknown")); }, // ★ P0⑥：异步函数补 rejection 兜底（函数内已 catch+弹框，此处防未处理拒绝）
     onQuit: () => { quitting = true; app.quit(); },
   });
   sched.scheduleAutoIngest();
