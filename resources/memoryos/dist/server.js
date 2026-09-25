@@ -32,9 +32,16 @@ function auditAgentIdentity() {
 }
 const db = openDb(DB_PATH);
 auditAgentIdentity();
+// ★ 2026-09-25 P0③：IDE 里以 stdio 起的 MCP 常不注入 EMBED_MODE —— 若沿用模块默认 fake，
+//   语义检索会静默退化成纯词法召回（库内向量是 bge-m3 真向量，query 造假向量必然对不上）。
+//   故此处补缺省 local（口径对齐 agent-core.js 的 `process.env.EMBED_MODE || "local"`）；
+//   embed.js 已改惰性解析，此刻设置即生效。显式设 api/fake 仍可覆盖。
+const _embedDefaulted = !process.env.EMBED_MODE;
+if (_embedDefaulted)
+    process.env.EMBED_MODE = "local";
 // P0① 启动自检：embed 模式兜底告警（存储向量已是 bge-m3 真实嵌入；检索若跑 fake 模式则 query 向量与库不匹配，召回必失效）
 const _embedMode = embedMode();
-console.error(`[embed] EMBED_MODE=${_embedMode}${_embedMode === "fake" ? "  ⚠ 无语义检索：生产使用需在客户端 MCP 配置注入 EMBED_MODE=local（见 deploy-mcp.mjs 或 dashboard 工具连接页配置示例）" : ""}`);
+console.error(`[embed] EMBED_MODE=${_embedMode}${_embedMode === "fake" ? "  ⚠ 无语义检索：生产使用需在客户端 MCP 配置注入 EMBED_MODE=local（见 deploy-mcp.mjs 或 dashboard 工具连接页配置示例）" : _embedDefaulted ? "（未注入 EMBED_MODE，已按缺省 local 启动；若本机无模型缓存，首次调用会加载/下载模型（约数百 MB）——可显式设 EMBED_MODE=api 或 fake 覆盖）" : ""}`);
 const server = new FastMCP({
     name: "memory-hub",
     version: "0.2.0",

@@ -8,7 +8,10 @@
  */
 import path from "node:path";
 import os from "node:os";
-const MODE = process.env.EMBED_MODE ?? "fake";
+/** ★ 2026-09-25 P0③：模式改为**调用时**惰性解析（原为模块体求值 —— 会把 import 瞬间的 env 固化，
+ *  调用方（如 server.js）在其后补的缺省 EMBED_MODE 就永远读不到，语义检索会静默退化成 fake）。
+ *  默认值不变：未设 env → fake。 */
+const resolveMode = () => process.env.EMBED_MODE ?? "fake";
 const RUNTIME_DIM = Number(process.env.EMBED_DIM ?? 1024);
 /* ---------- 通用缓存 ---------- */
 class TextCache {
@@ -228,12 +231,13 @@ let _local = null;
 let _api = null;
 /** 工厂：按 EMBED_MODE 生产；local 为懒加载（首次真正调用才下载模型）。 */
 export async function getEmbedder() {
-    if (MODE === "local") {
+    const mode = resolveMode(); // ★ P0③：每次调用解析（惰性），不再吃模块体固化的值
+    if (mode === "local") {
         if (!_local)
             _local = await loadLocalEmbedder();
         return _local;
     }
-    if (MODE === "api") {
+    if (mode === "api") {
         if (!_api)
             _api = new ApiEmbedder();
         return _api;
@@ -241,5 +245,5 @@ export async function getEmbedder() {
     return new FakeEmbedder();
 }
 export function embedMode() {
-    return MODE;
+    return resolveMode();
 }

@@ -1356,6 +1356,9 @@ export function lexSearch(db, query, project, limit = 20) {
             // ★ P0-3.4：先用 2-gram 倒排索引把候选集收窄，再 LIKE 精筛。
             // 原实现直接 `content LIKE '%q%'` —— 前导通配符使索引完全失效，中文查询每次全表扫描。
             // bigram 命中是子串命中的必要条件，故收窄安全（不漏召回），LIKE 保证语义精确。
+            // ★ 2026-09-25 P0④：排序改为「命中位置优先」——原按 created_at 倒序，会让关键词落在
+            //   结尾的旧记忆压过开头即命中的新记忆，与检索意图相反。INSTR 必须用裸查询词 q
+            //   （LIKE 转义串含 \ 前缀，拿去字面匹配会永远 -1）。下方纯 LIKE 兜底分支同口径。
             rows = db
                 .prepare(`SELECT id, content, type, agent, project, status, confidence, created_at
            FROM memories
@@ -1363,8 +1366,8 @@ export function lexSearch(db, query, project, limit = 20) {
              AND content LIKE ? ESCAPE '\\'
              AND project IN (?, 'global')
              AND status IN ('active','trial')${LEX_SECRET}
-           ORDER BY created_at DESC LIMIT ?`)
-                .all(probe, like, project, limit);
+           ORDER BY INSTR(content, ?) ASC, created_at DESC LIMIT ?`)
+                .all(probe, like, project, q, limit);
         }
         else {
             // 单个 CJK 字 / <3 字符非 CJK：没有可用的 2-gram 探针，只能回退 LIKE
@@ -1372,8 +1375,9 @@ export function lexSearch(db, query, project, limit = 20) {
                 .prepare(`SELECT id, content, type, agent, project, status, confidence, created_at
            FROM memories WHERE content LIKE ? ESCAPE '\\' AND project IN (?, 'global')
              AND status IN ('active','trial')${LEX_SECRET}
-           ORDER BY created_at DESC LIMIT ?`)
-                .all(like, project, limit);
+           ORDER BY INSTR(content, ?) ASC, created_at DESC LIMIT ?`)
+                // 实参顺序必须跟随 SQL 中的占位符次序（project 在 ORDER BY 之前）
+                .all(like, project, q, limit);
         }
     }
     return rows.map((r, i) => ({ ...rowOf(r), score: rows.length - i }));

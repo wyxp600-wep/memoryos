@@ -36,7 +36,10 @@ function check(name, cond, detail = "") {
 }
 /* ---------- MCP stdio 客户端 ---------- */
 const proc = spawn(process.execPath, [path.join(HERE, "server.js")], {
-    env: { ...process.env, MEMORY_DB: DB_PATH, MEMORY_AGENT: "wysiwyg" },
+    // ★ 2026-09-25（P0③ 联动）：本冒烟只验"用户侧视图 vs AI 侧原文"，其 3 条夹具在真实语义嵌入下
+    //   会被写前去重判为近似（第 3 条被并入第 2 条）→ 断言必然崩。故显式钉住 EMBED_MODE=fake，
+    //   让本项与内核缺省解耦（不再隐式依赖"MCP 缺省 fake"这一旧行为）。
+    env: { ...process.env, EMBED_MODE: "fake", MEMORY_DB: DB_PATH, MEMORY_AGENT: "wysiwyg" },
 });
 let buf = "";
 const pending = new Map();

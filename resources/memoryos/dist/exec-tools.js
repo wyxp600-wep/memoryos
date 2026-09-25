@@ -42,7 +42,7 @@ export const TOOL_RISK = {
     task_claim: { risk: "L1", gate: true },
     task_done: { risk: "L1", gate: true },
     task_supersede: { risk: "L1", gate: true },
-    task_gate: { risk: "L1", gate: true },           // ★ 2026-09-22 补缺（方案 A 实用分级）
+    task_gate: { risk: "L0", gate: false },          // ★ 2026-09-25 改判：纯只读查看（任务头 + 最近一次 task_gate 事件，内部 logExecAudit 早已写 risk:"L0"），不该每次调用都过审批
     task_delegate: { risk: "L1", gate: true },
     task_block: { risk: "L1", gate: true },
     task_reopen: { risk: "L1", gate: true },
@@ -59,7 +59,8 @@ export const TOOL_RISK = {
  *  仅 task_* 与 memory_* 预授权，**执行类 L1（file_write/exec_run 等）仍然拒绝**。
  *  注：obsidian_* 不在预授权内 —— 它们会写工作区外的 vault，无头模式下同样需要显式同意。
  *  ★ 2026-09-22（方案 A）：补 task_release —— 无头模式不归还锁/租约会泄漏资源；
- *    task_gate/delegate/block/reopen/verify 与 memory_credential **不在**预授权内（状态流转/特权仍需人）。 */
+ *    task_delegate/block/reopen/verify 与 memory_credential **不在**预授权内（状态流转/特权仍需人；
+ *    task_gate 已于 2026-09-25 改判 L0/auto —— 纯只读查看，不再属本条所列）。 */
 export const HEADLESS_PREAUTHORIZED = new Set([
     "task_assign", "task_claim", "task_done", "task_supersede", "task_release",
     "memory_write", "memory_feedback", "memory_cite",

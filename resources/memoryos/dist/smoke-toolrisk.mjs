@@ -55,10 +55,14 @@ check("riskPrefix(memory_credential) = L4/required",
     riskPrefix("memory_credential") === "⟨risk:L4|gate:required⟩ ");
 check("riskPrefix(task_heartbeat) = L0/auto",
     riskPrefix("task_heartbeat") === "⟨risk:L0|gate:auto⟩ ");
+check("riskPrefix(task_gate) = L0/auto（2026-09-25 改判：纯只读查看不该每次过审批）",
+    riskPrefix("task_gate") === "⟨risk:L0|gate:auto⟩ ");
 
 // ③ 无头预授权白名单边界（方案 A）
 const mustNotPreauth = ["file_write", "exec_run", "memory_credential",
-    "obsidian_write_note", "task_gate", "task_delegate", "task_block", "task_reopen", "task_verify"];
+    // ★ 2026-09-25：task_gate 移出本表 —— 它已改判 L0/auto（纯只读查看），不属"执行类/特权/状态流转"，
+    //   改由下方显式断言钉住其分级，避免"列表式豁免"掩盖分级回退。
+    "obsidian_write_note", "task_delegate", "task_block", "task_reopen", "task_verify"];
 const leaked = mustNotPreauth.filter((n) => HEADLESS_PREAUTHORIZED.has(n));
 check("HEADLESS_PREAUTHORIZED 不含执行类/特权/状态流转工具", leaked.length === 0, `泄漏=[${leaked.join(", ")}]`);
 check("HEADLESS_PREAUTHORIZED 含 task_release（无头归还锁防泄漏）",
