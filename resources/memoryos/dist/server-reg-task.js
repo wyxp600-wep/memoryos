@@ -455,8 +455,16 @@ export function registerTaskTools(server, ctx) {
             let synced = 0;
             for (const rel of rels) {
                 const cid = Number(rel.card_id);
-                const card = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid);
+                const card = db.prepare(`SELECT status, meta FROM cards WHERE id=?`).get(cid);
                 if (!card)
+                    continue;
+                // ★ 2026-09-25 方案A守卫：只收敛开放态卡（triage/todo/ready/running/blocked）；cardStatus='done'
+                //   额外允许 review（验收后收口）。failed/cancelled/archived 等终态不覆盖，
+                //   原实现无状态守卫（WHERE id=? 盲写）会把验收/租约流转撕坏。
+                // ★ 2026-09-25 跨区补全（并发会话在制品）：源卡 running 是「已认领」而非终态 —— 漏列会把
+                //   block/流转 的收敛整段跳过（实测 p26-lifecycle E3 卡停在 running）。
+                const allowed = cardStatus === "done" ? new Set(["triage", "todo", "ready", "blocked", "running", "review"]) : new Set(["triage", "todo", "ready", "running", "blocked"]);
+                if (!allowed.has(card.status))
                     continue;
             // ★ 2026-09-18：opts.assignee 三态 —— undefined=保持原值 / null=清空 / 字符串=设为该值。
             //   task_claim 传认领者 → 卡片即时显示「已领取·谁」；task_release 侧清空走专用 UPDATE（见下）。
@@ -466,6 +474,8 @@ export function registerTaskTools(server, ctx) {
                 upd.run(cardStatus, cid);
             else
                 upd.run(cardStatus, opts.assignee, cid);
+            if (cardStatus === "done")
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(cid); // ★ 2026-09-25：done 收口清租约残留（与 web /status 同口径）
                 db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, opts.actor ?? "dispatcher", opts.action ?? "mcp_sync", card.status, cardStatus, opts.detail ?? `任务 #${memoryId} MCP 流转同步`);
                 synced++;
             }
