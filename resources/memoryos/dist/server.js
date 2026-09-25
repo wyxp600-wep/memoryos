@@ -80,7 +80,14 @@ server.addTool = (def) => {
         catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[tool:${def.name}] 执行失败: ${msg}`);
-            return `⚠ ${def.name} 执行失败：${msg}\n（异常已捕获，会话未中断。若为 SQLite 锁竞争，可稍后重试一次。）`;
+            // ★ 2026-09-25 P1-d：协议级可判定错误 —— 原返回纯文本，MCP 结果层 isError=false，
+            //   调用方只能靠字符串嗅探 "⚠" 才知道这是失败（agent-core.js:226 对 isError 的消费从未被触发）。
+            //   改为 ContentResult{content, isError:true}：文本原样保留（人类/纯文本解析器零变化），
+            //   符合 MCP 规范的客户端从此能正确判定失败（fastmcp 类型支持见 FastMCP.d.ts:168/606）。
+            return {
+                content: [{ type: "text", text: `⚠ ${def.name} 执行失败：${msg}\n（异常已捕获，会话未中断。若为 SQLite 锁竞争，可稍后重试一次。）` }],
+                isError: true,
+            };
         }
     };
     _origAddTool(def);
