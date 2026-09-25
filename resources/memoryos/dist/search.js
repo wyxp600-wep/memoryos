@@ -153,6 +153,12 @@ export async function hybridSearch(db, embedder, p) {
     const decayEff = (rc) => {
         if (rc.pinned)
             return rc.salience; // pinned=1 免衰减
+        // ★ 2026-09-25 P1-a：decision 同样不衰减 —— 与 daemon computeDecay/computeArchives 的
+        //   decision 豁免（2026-09-15 回归修复，daemon.js:81/:101）对齐。检索层原只豁免 pinned，
+        //   导致约 190 天无曝光的 decision 被 eff≤0.15 静默排除，而 daemon 又永不归档它
+        //   → 决策类记忆变成「库里活着、检索里消失」的僵尸，正是"召回差且查不出原因"的一类根因。
+        if (rc.type === "decision")
+            return rc.salience;
         const lambda = rc.decay_lambda ?? SECTORS[rc.sector]?.lambda ?? 0.01; // 单位/天（M9）
         const base = rc.last_seen_at ?? rc.created_at; // H5：以最近被检索为基准，高频使用不衰
         const days = Math.max(0, (now - Date.parse(base)) / 86400000);
