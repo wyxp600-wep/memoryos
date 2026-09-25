@@ -493,13 +493,21 @@ export function scanAgents() {
  *   原硬编码旧目录 "Desktop/aiagent记忆与规则/..." 项目搬迁后指向不存在路径，接入片段照抄即连错 */
 const MEMORYOS_SERVER = process.env.MEMORYOS_SERVER?.trim() ||
     fileURLToPath(new URL("server.js", import.meta.url)).split(path.sep).join("/");
+/** ★ 2026-09-25（双库分裂修复）：接入片段必须显式注入 MEMORY_DB=应用库（与壳层 core-process.js spawnCore 同口径）。
+ *  server.js 缺省是「仓内 ../data/memory.db」（开发库）——照旧片段接入的 agent 全部落开发库，
+ *  与 claude/codex/minimax/仪表盘（应用库 %APPDATA%\MemoryOS）互不可见：A 写的记忆 B 搜不到，
+ *  是"跨 agent 召回差/不同步"的结构性根因（本机实证：opencode 漏注入即长期写错库）。
+ *  口径与 merge-db.js DEFAULT_TO 一致；原实配（claude/codex）本就注入应用库，此处只是让模板对齐事实。 */
+const MEMORYOS_DB = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
+    "MemoryOS", "data", "memory.db");
 /** memoryhub MCP server 配置片段（各载体语法） */
 const MEMORYOS_MCP_SERVERS = {
     codex: `[[mcp_servers]]
 name = "memoryos"
 command = "node"
-args = [${JSON.stringify(MEMORYOS_SERVER)}]`,
-    claude: `"memoryos": { "command": "node", "args": [${JSON.stringify(MEMORYOS_SERVER)}], "env": { "MEMORY_AGENT": "claude" } }`,
+args = [${JSON.stringify(MEMORYOS_SERVER)}]
+env = { MEMORY_AGENT = 'codex', MEMORY_DB = '${MEMORYOS_DB.split(path.sep).join("/")}' }`,
+    claude: `"memoryos": { "command": "node", "args": [${JSON.stringify(MEMORYOS_SERVER)}], "env": { "MEMORY_AGENT": "claude", "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} } }`,
     trae: `// 在 Trae 的教学面板「管理 MCP 服务器」中新增：
 //  Name: memoryos
 //  Type: stdio
@@ -510,15 +518,18 @@ args = [${JSON.stringify(MEMORYOS_SERVER)}]`,
   "memoryos": {
     "command": "node",
     "args": [${JSON.stringify(MEMORYOS_SERVER)}],
-    "env": {}
+    "env": { "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} }
   }
 }`,
-    /** 通用 stdio MCP JSON（未实证 agent 也能直接复制粘贴；miniMax 2026-09-10 实证接受 transport+enabled+args 数组） */
+    /** 通用 stdio MCP JSON（未实证 agent 也能直接复制粘贴；miniMax 2026-09-10 实证接受 transport+enabled+args 数组）
+     *  ★ 2026-09-25：各载体 env/environment 字段名不一（claude/workbuddy/generic 用 env，opencode 用 environment），
+     *   通用片段按主流 env 给出；若目标 agent 不认 env 键会回落 server 缺省（仓内开发库）——接入后需自检 [db] 行。 */
     generic: `{
   "memoryos": {
     "transport": "stdio",
     "command": "node",
     "args": [${JSON.stringify(MEMORYOS_SERVER)}],
+    "env": { "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} },
     "enabled": true
   }
 }`,
