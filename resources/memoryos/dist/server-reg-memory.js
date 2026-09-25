@@ -51,7 +51,7 @@ export function registerMemoryTools(server, ctx) {
             source_task_id: z.number().int().min(1).optional().describe("P2-6：来源任务记忆 id（追溯用，记事件流）"),
             session_id: z.string().optional().describe("当前会话/任务标识（价值度量的 inferred-cited 判定基础）"),
             task_hint: z.string().optional().describe("任务提示词/上下文标签（埋点用）"),
-            idempotency_key: z.string().max(128).optional().describe("★ 一致性④ 幂等键（可选）：同键重复写入不产生新记忆——键命中且内容一致 → 返回既有记忆 id；内容不同 → 拒绝写入。防调用方重试/多会话并发造成重复沉淀"),
+            idempotency_key: z.string().max(128).optional().describe("幂等键（可选）：同键重复写入不产生新记忆——命中且内容一致 → 返回既有记忆 id；内容不同 → 拒绝写入。防重试/多会话并发重复沉淀"),
         }),
         async execute(args) {
             // P0② 硬门禁（R1 闭环）：写前提示先检索——软规则（conf 0.9 #671）失效后的代码层兜底

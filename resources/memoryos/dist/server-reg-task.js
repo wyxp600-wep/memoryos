@@ -208,7 +208,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_assign",
-        description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。可声明 depends_on 依赖其他任务（多个用 , 分隔），被依赖任务全部 done 后本任务才可做。另一 Agent 用 task_claim 领取、task_done 完成、task_next 查询可做集。默认同步在任务地图建一张 can 领取的卡片（create_card=true），卡片认领/流转会回写 memories 状态头。",
+        description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。depends_on 声明依赖（逗号分隔），依赖全 done 后本任务才可做；对方用 task_claim 领取、task_done 完成、task_next 查可做集。默认同步建任务地图卡（create_card=true），卡片流转回写 memories 状态头。",
         parameters: z.object({
             content: z.string().describe("任务描述（不含状态头，工具自动加）"),
             assignee: z.string().describe("接收方 agent 名（如 codex/trae/zcode/claude）"),
@@ -353,7 +353,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_claim",
-        description: "多 Agent 协同：领取『分配给我 / 未认领』的 pending 任务，把状态头 pending→in_progress。返回当前可领的 pending 任务列表。★ as 参数语义（2026-09-19 文档化，实操问题 #14）：缺省=以当前 agent 身份领取，只能领指派给自己（或 assignee=? 未指派）的任务；as=<他人名> 仅当任务恰指派给该名；as='any'=托管认领，跳过接收方校验、可领任何 pending（含指派他人的）——改写归属受 A1 凭据校验约束（#8）。租约默认 10 分钟（C-3），长任务可 lease_minutes 自声明延长。",
+        description: "多 Agent 协同：领取『分配给我/未认领』的 pending 任务，状态头 pending→in_progress；不传 memory_id 则列出可领列表。as：缺省=本人（仅领指派给自己或 assignee=? 的）；as=<他人名> 仅限恰指派该名；as='any'=托管认领，跳过接收方校验可领任何 pending，改写归属须携 scope>=write 凭据。租约默认 10 分钟，lease_minutes 可延长。",
         parameters: z.object({
             as: z.string().optional().describe("以谁的身份领取（缺省=当前 agent）；传 'any' 托管认领（跳过接收方校验）——语义见工具描述"),
             project: z.string().default("global").describe("任务 scope"),
@@ -852,7 +852,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_verify",
-        description: "多 Agent 协同·第三方验收关闭（2026-09-19，实操复盘 P1#4）：任务实际已完成（如代码已落地/已由他人完成）但任务头未闭环时，由验收方直接把状态头置 done —— 不改 assignee（归属保留）、不发租约、不写 claim 事件，只写 task_verify 事件（verified_by 留痕）。用于消除「为收口而伪造 task_claim」对审计链的污染。不走 [gate] 门控（验收依据由验收方在 reason 中留痕）。",
+        description: "多 Agent 协同·第三方验收关闭：任务实际已完成但任务头未闭环时，验收方直接把状态头置 done——不改 assignee（归属保留）、不发租约、不写 claim 事件，只写 task_verify 事件（verified_by 留痕），消除「为收口伪造 task_claim」的审计污染。不走 [gate] 门控，验收依据在 reason 留痕。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要验收关闭的任务记忆 id"),
             reason: z.string().describe("验收依据（必填，留痕）：对应提交/冒烟结果/证据位置"),
