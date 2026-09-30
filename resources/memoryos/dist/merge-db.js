@@ -13,8 +13,12 @@
  *   - 跨表引用（conflict_with/superseded_by/derived_from）只在被引用记忆也一并迁移时才保留，避免悬空
  *   - 向量按 memory_id 一并搬运；FTS/gram 由 writeMemory 统一维护
  *   - 用法：
- *       node dist/merge-db.js --from <源库> --to <目标库>            # 预演
- *       node dist/merge-db.js --from <源库> --to <目标库> --apply    # 执行
+ *       node dist/merge-db.js --from <源库> --to <目标库>                     # 预演（全量）
+ *       node dist/merge-db.js --from <源库> --to <目标库> --apply             # 执行（全量）
+ *       node dist/merge-db.js --from <源库> --to <目标库> --project <名>      # 只搬指定 project（预演）
+ *       node dist/merge-db.js --from <源库> --to <目标库> --project <名> --apply
+ *   --project（★ 2026-09-30 双库分裂收口）：只想搬回某项目 stranded 记忆、
+ *   不想把源库的 seed/冒烟残留（如 dev 库 global 数百条）灌进生产库时用。
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -29,13 +33,14 @@ const MIGRATABLE = new Set(["active", "trial", "archived"]);
 const norm = (s) => String(s ?? "").replace(/\r\n?/g, "\n");
 
 function parseArgs(argv) {
-    const out = { from: DEFAULT_FROM, to: DEFAULT_TO, apply: false, sample: 15 };
+    const out = { from: DEFAULT_FROM, to: DEFAULT_TO, apply: false, sample: 15, project: null };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--from") out.from = argv[++i];
         else if (a === "--to") out.to = argv[++i];
         else if (a === "--apply") out.apply = true;
         else if (a === "--sample") out.sample = Number(argv[++i]) || 15;
+        else if (a === "--project") out.project = argv[++i] || null;
         else if (a === "--help" || a === "-h") out.help = true;
     }
     return out;
@@ -43,7 +48,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
-    console.log("用法: node dist/merge-db.js --from <源库> --to <目标库> [--apply] [--sample N]");
+    console.log("用法: node dist/merge-db.js --from <源库> --to <目标库> [--project <名>] [--apply] [--sample N]");
     process.exit(0);
 }
 const FROM = path.resolve(args.from);
@@ -61,10 +66,14 @@ for (const [label, p] of [["源库", FROM], ["目标库", TO]]) {
 
 console.log(`源库  : ${FROM}`);
 console.log(`目标库: ${TO}`);
+if (args.project) console.log(`过滤  : 仅 project=${JSON.stringify(args.project)}`);
 console.log(`模式  : ${args.apply ? "★ 执行（写入目标库，写前自动快照）" : "预演（只读，不写任何库）"}\n`);
 
 const src = new DatabaseSync(FROM, { readOnly: true });
-const srcRows = src.prepare(`SELECT * FROM memories`).all();
+// ★ --project 过滤：两分支各自字面量 SQL（占位符与实参一一对应，lint:sql 静态可判）
+const srcRows = args.project
+    ? src.prepare(`SELECT * FROM memories WHERE project=?`).all(args.project)
+    : src.prepare(`SELECT * FROM memories`).all();
 // 预演阶段**只读**打开目标库（绝不在你没确认前触发任何写，包括迁移）
 const target = args.apply ? openDb(TO) : new DatabaseSync(TO, { readOnly: true });
 const targetContents = new Set(target.prepare(`SELECT content FROM memories`).all().map((r) => norm(r.content)));
