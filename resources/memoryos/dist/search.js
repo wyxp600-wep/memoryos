@@ -133,7 +133,42 @@ export async function hybridSearch(db, embedder, p) {
         _lastDegradation = { msg: e instanceof Error ? e.message : String(e), at: Date.now() }; // ★ 2026-09-25：不再静默，留给调用方回执告警
     }
     // 词法路
-    const lex = lexSearch(db, p.query, p.project, topK);
+    let lex = lexSearch(db, p.query, p.project, topK);
+    // ★ 2026-09-30 词法补召（C2 收口）：lexSearch 对 CJK 查询走「整串 LIKE」，词序/间隔稍不同
+    //   （query "四模块 全量诊断" vs 内容 "全量诊断：四模块…"）即 0 命中；语义路又常被无关的
+    //   高相似记忆挤出 topK（实测该 query 下目标 sim=0.54 排名几百，截断后不进候选）→ 双路全灭。
+    //   修法：按分隔符切词，逐词 lexSearch（逐词 LIKE 子串，词序无关）取**交集**（AND 语义），
+    //   与整串结果做**并集**：整串命中保留原位（精度优先），交集只增不减 → 零回归获得跨词序召回。
+    //   仅对含 CJK 的查询生效；英文查询仍走原 FTS 整句短语路径，行为不变。
+    if (/[一-鿿]/.test(p.query)) {
+        const terms = p.query.split(/[\s,，。；;、:：!！?？（）()【】[\]"'·—\-_/\\]+/).filter((t) => t.length >= 1);
+        if (terms.length >= 2) {
+            // 逐词候选取 topK 兜底上限放大（单个常见词的 topK 截断可能把目标挡在交集外）
+            const termLimit = Math.max(topK, 200);
+            const lists = terms.map((t) => lexSearch(db, t, p.project, termLimit));
+            if (!lists.some((r) => r.length === 0)) {
+                // 交集：每个词的候选都出现过；按各词排名之和升序（越靠前越相关）
+                const rk = new Map();
+                for (const r of lists) {
+                    r.forEach((h, i) => {
+                        let e = rk.get(h.id);
+                        if (!e) {
+                            e = { sum: 0, cnt: 0, row: h };
+                            rk.set(h.id, e);
+                        }
+                        e.sum += i + 1;
+                        e.cnt += 1;
+                    });
+                }
+                const inter = [...rk.values()]
+                    .filter((e) => e.cnt === lists.length)
+                    .sort((a, b) => a.sum - b.sum)
+                    .map((e) => e.row);
+                const inWhole = new Set(lex.map((h) => h.id));
+                lex = [...lex, ...inter.filter((h) => !inWhole.has(h.id))];
+            }
+        }
+    }
     const lexScores = new Map();
     lex.forEach((h, i) => lexScores.set(h.id, 1 / (RRF_K + i + 1)));
     // RRF 融合归并（按意图聚焦度动态加权：聚焦→偏语义，发散→偏词法；语义路失败则纯词法）
