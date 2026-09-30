@@ -146,10 +146,14 @@ export async function hybridSearch(db, embedder, p) {
             // 逐词候选取 topK 兜底上限放大（单个常见词的 topK 截断可能把目标挡在交集外）
             const termLimit = Math.max(topK, 200);
             const lists = terms.map((t) => lexSearch(db, t, p.project, termLimit));
-            if (!lists.some((r) => r.length === 0)) {
-                // 交集：每个词的候选都出现过；按各词排名之和升序（越靠前越相关）
+            // ★ 幻影词过滤（2026-09-30 同日精修）：整词全库 0 命中 = 转述词组（如 query『禁止单杀内核』
+            //   vs 内容『禁止外部单杀内核』），不携带任何信息，留在 AND 里只会让交集恒空 → 丢弃。
+            //   剩余可命中词 ≥2 才做交集；仅 1 个可命中词不补召（避免把单词的宽泛结果灌进候选池）。
+            const informative = lists.filter((r) => r.length > 0);
+            if (informative.length >= 2) {
+                // 交集：每个可命中词的候选都出现过；按各词排名之和升序（越靠前越相关）
                 const rk = new Map();
-                for (const r of lists) {
+                for (const r of informative) {
                     r.forEach((h, i) => {
                         let e = rk.get(h.id);
                         if (!e) {
@@ -161,7 +165,7 @@ export async function hybridSearch(db, embedder, p) {
                     });
                 }
                 const inter = [...rk.values()]
-                    .filter((e) => e.cnt === lists.length)
+                    .filter((e) => e.cnt === informative.length)
                     .sort((a, b) => a.sum - b.sum)
                     .map((e) => e.row);
                 const inWhole = new Set(lex.map((h) => h.id));
