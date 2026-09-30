@@ -105,6 +105,8 @@ function makeCore({ port, env = {}, overrides = {} } = {}) {
         spawned.push({ exe, args, opts, child, script: path.basename(String(args[0])) });
         return child;
       },
+      // 不打真 taskkill：fakeChild 的 pid 是 9000+ 的占位值，真杀可能误伤机器上的同号进程
+      spawnSyncImpl: () => ({ status: 0, signal: null, stdout: "", stderr: "" }),
       timers,
       ...overrides,
     });
@@ -274,7 +276,7 @@ test("core: killAll 清掉待重启定时器并复位 pending", async (t) => {
   assert.equal(h.core.stats().scripts["dashboard.js"].pending, false);
 });
 
-test("core: 待重启定时器触发 → 重新拉起内核", async (t) => {
+test("core: 待重启定时器触发 → 只补拉退出的脚本（幂等守卫跳过存活者）", async (t) => {
   const { server, port } = await listenEphemeral();
   t.after(() => server.close());
 
@@ -289,7 +291,54 @@ test("core: 待重启定时器触发 → 重新拉起内核", async (t) => {
   //   若测试先返回，t.after 会关掉监听端口 → 轮询等满 60s 才 reject（既拖慢又产生 unhandledRejection）。
   await new Promise((r) => setTimeout(r, 800));
 
-  assert.equal(h.spawned.length, before + 2, "重启应重新拉起 dashboard + daemon");
+  // ★ 2026-09-30 幂等守卫（#3328）：daemon 仍存活 → 只补拉 dashboard（改前无差别双拉 +2，
+  //   生产里正是这一拉把活着的 dashboard/daemon 再开一份，酿成自愈风暴与重复实例）。
+  assert.equal(h.spawned.length, before + 1, "只应补拉退出的 dashboard");
+  assert.equal(h.spawned.at(-1).script, "dashboard.js");
+  assert.ok(h.logs.some((l) => /daemon\.js 已在运行.*跳过重复拉起/.test(l)), "应记录 daemon 跳过重复拉起");
+});
+
+test("core: daemon 崩溃自愈只补拉 daemon，不重复拉起存活的 dashboard", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+
+  const h = makeCore({ port });
+  await h.core.startCore();
+  const before = h.spawned.length; // 2
+
+  childOf(h, "daemon.js").emit("exit", 1);
+  h.timers.fireLast();
+  await new Promise((r) => setTimeout(r, 800));
+
+  assert.equal(h.spawned.length, before + 1, "只应补拉 daemon");
+  assert.equal(h.spawned.at(-1).script, "daemon.js");
+  assert.ok(h.logs.some((l) => /dashboard\.js 已在运行.*跳过重复拉起/.test(l)), "应记录 dashboard 跳过重复拉起");
+  assert.equal(h.core.stats().scripts["daemon.js"].pending, false, "自愈完成后不应残留待重启定时器");
+});
+
+test("core: restartCore 重启窗口内旧子进程退出不排自愈，新实例不重复", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+
+  const h = makeCore({ port });
+  await h.core.startCore();
+  const oldDash = childOf(h, "dashboard.js");
+  const oldDae = h.spawned.find((s) => s.script === "daemon.js").child;
+
+  const p = h.core.restartCore(); // 同步段：杀旧 → 清册 → 拉新（随后挂起在就绪轮询）
+  oldDash.emit("exit", 1);        // 旧子进程的 exit 在重启窗口内到达（spawnSync 阻塞事件循环的等价时序）
+  oldDae.emit("exit", 1);
+  await p;
+
+  assert.equal(h.spawned.length, 4, "新旧各一份：旧 2 + 新 2");
+  assert.equal(
+    h.timers.scheduled.filter((x) => !h.timers.cleared.includes(x)).length,
+    0,
+    "重启窗口内的旧子进程退出不应排自愈定时器",
+  );
+  assert.equal(h.core.stats().scripts["dashboard.js"].restarts, 0, "重启窗口内不计数");
+  assert.equal(h.core.stats().scripts["daemon.js"].restarts, 0);
+  assert.ok(h.logs.some((l) => /主动重启中退出，不排自愈/.test(l)));
 });
 
 /* ================== 二、scheduler：调度锁与超时 ================== */

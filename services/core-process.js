@@ -6,7 +6,7 @@ const { portOpen } = require("./port");
 /**
  * 内核进程生命周期服务。
  * deps: { nodeExe, getKernel, dataDir, readConfig, getPort, getToken, isQuitting, log, dialog }
- *       可选注入（仅为可测性，生产不传）：spawnImpl、timers { setTimeout, clearTimeout }
+ *       可选注入（仅为可测性，生产不传）：spawnImpl、spawnSyncImpl、timers { setTimeout, clearTimeout }
  * 内部持有 coreChildren，暴露 startCore / restartCore / killAll（+ stats 供自愈观测/测试断言）。
  *
  * ★ P2-1（T12）内核自愈：原实现子进程意外退出**只弹框、不重启**（`exit` 回调里仅 dialog），
@@ -15,13 +15,18 @@ const { portOpen } = require("./port");
  *   ② 每个脚本独立计数 + 独立待重启定时器（同一脚本同一时刻只排一次）；
  *   ③ 健康度过阈值（默认存活 ≥60s）后计数归零——偶发崩溃不累积成"用光重启额度"；
  *   ④ 用尽额度仍失败则弹框告知（保留原有人工介入路径，不无限重启）；
- *   ⑤ 退出流程（isQuitting）不重启；restartCore/killAll 会清掉待重启定时器。
+ *   ⑤ 退出流程（isQuitting）不重启；restartCore/killAll 会清掉待重启定时器；
+ *   ⑥ 幂等守卫（★ 2026-09-30，#3328 回归）：startCore 按脚本查自家存活子进程，活着就跳过——
+ *      原实现在自愈定时器里无差别双拉（daemon 崩 → 把活着的 dashboard 也再拉一份 →
+ *      EADDRINUSE 秒退 → 计数再+1 → 自愈风暴；daemon 无端口保护则直接常驻双开）；
+ *      另设 restarting 重启窗口：主动重启（restartCore）杀出的旧子进程 exit 不再排自愈。
  * 关闭自愈：CORE_SELFHEAL=0（调试期避免反复拉起）。
  */
 function createCore(deps) {
   const {
     nodeExe, getKernel, dataDir, readConfig, getPort, getToken, isQuitting, log, dialog,
     spawnImpl = spawn,
+    spawnSyncImpl = spawnSync,
     timers = { setTimeout, clearTimeout },
   } = deps;
 
@@ -36,6 +41,8 @@ function createCore(deps) {
   const HEALTHY_MS = envInt("CORE_HEALTHY_MS", 60000);         // 存活超过此时长视为健康 → 计数归零
 
   let coreChildren = [];
+  /** ★ 主动重启窗口（restartCore 同步段 → startCore 就绪）：期间被杀旧子进程的 exit 只做清理，不排自愈 */
+  let restarting = false;
   /** script → { count, timer, startedAt, stopped } */
   const book = new Map();
   const entryOf = (script) => {
@@ -66,11 +73,16 @@ function createCore(deps) {
     e.stopped = false;
     child.stdout.on("data", (d) => log(`[${script}]`, String(d).trimEnd()));
     child.stderr.on("data", (d) => log(`[${script}][err]`, String(d).trimEnd()));
+    child.__script = script; // 幂等守卫查找用（startCore 自愈路径按脚本判定存活）
     child.on("exit", (code) => {
       const uptime = Date.now() - e.startedAt;
       log(`${script} 退出（code=${code}，存活 ${Math.round(uptime / 1000)}s）`);
       coreChildren = coreChildren.filter((c) => c !== child);
       if (isQuitting()) return;                       // 正常退出流程：不重启、不弹框
+      if (restarting) {                               // ★ 主动重启窗口：新实例已由 restartCore 拉起，旧子进程退出不排自愈
+        log(`${script} 主动重启中退出，不排自愈`);
+        return;
+      }
       if (uptime >= HEALTHY_MS) e.count = 0;          // 健康存活过 → 额度重置
       if (!SELFHEAL || !isRestorable(script)) {
         dialog.showMessageBox({
@@ -114,6 +126,23 @@ function createCore(deps) {
     }
   }
 
+  /**
+   * ★ ⑥ 幂等守卫（#3328）：该脚本已有存活的自家子进程则跳过重复拉起。
+   * coreChildren 在子进程 exit 时即被剔除 → 数组里存在即活着。
+   * 这是自愈路径（exit → 定时器 → startCore）与重启路径的共用闸门：
+   * daemon 崩时不再把活着的 dashboard 也拉一份（EADDRINUSE 秒退 → 自愈风暴），
+   * 反之 daemon 因无端口保护也不会被二次拉起常驻双开。
+   */
+  function spawnUnlessAlive(script, extraEnv) {
+    const alive = coreChildren.find((c) => c.__script === script);
+    if (alive) {
+      log(`${script} 已在运行（pid=${alive.pid}），跳过重复拉起`);
+      return false;
+    }
+    spawnCore(script, extraEnv);
+    return true;
+  }
+
   async function startCore() {
     const cfg = readConfig() || {};
     log(`启动内核（端口 ${getPort()}）…`);
@@ -133,11 +162,11 @@ function createCore(deps) {
     // 兜底熔断：进程环境置 MEMORYOS_EXEC_OFF=1 可全局禁用（优先级最高）。
     // 遗留（P1）：执行工具未纳入 B3 受限能力位（RESTRICTED 下按能力位隐藏 exec）。
     llmEnv.MEMORYOS_EXEC_ON = "1";
-    spawnCore("dashboard.js", llmEnv);
+    spawnUnlessAlive("dashboard.js", llmEnv);
     // ★ P1-perf（B6′）嵌入侧车收敛：daemon 不再进程内驻留 560MB BGE-M3，改经 dashboard
     //   常驻的 /v1/embeddings（OpenAI 兼容，Bearer=MEMORY_TOKEN）复用同一份模型；
     //   dashboard 不可用时 reembed 失败仅记日志（daemon 小时级自愈重跑），零功能改动。
-    spawnCore("daemon.js", {
+    spawnUnlessAlive("daemon.js", {
       ...llmEnv,
       EMBED_MODE: "api",
       EMBED_API_URL: `http://127.0.0.1:${getPort()}/v1/embeddings`,
@@ -154,22 +183,25 @@ function createCore(deps) {
 
   function restartCore() {
     clearTimers();                                  // 主动重启时作废待执行的自愈
+    restarting = true;                              // ★ 窗口开启：随后杀出的旧子进程 exit 不排自愈（否则新实例就绪后旧定时器复活 → 重复拉起）
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }
     coreChildren = [];
     for (const e of book.values()) e.count = 0;      // 主动重启视为人工复位
-    return startCore().then(() => log("内核已重启（热更新生效）"));
+    return startCore()
+      .then(() => log("内核已重启（热更新生效）"))
+      .finally(() => { restarting = false; });
   }
 
   function killAll() {
     clearTimers();
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }
