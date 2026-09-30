@@ -51,8 +51,10 @@ async function main() {
      ON CONFLICT(memory_id) DO UPDATE SET embedding = excluded.embedding`);
     db.exec("BEGIN");
     try {
+        // ★ 2026-09-30：实参次序必须跟随列序 (memory_id, embedding) —— P1-2.2 重构到独立向量表时
+        //   列序换了实参没换（vec 塞进 memory_id → datatype mismatch），该工具自重构后从未跑通。
         for (let i = 0; i < rows.length; i++)
-            upd.run(vecToBuf(newVecs[i]), rows[i].id);
+            upd.run(rows[i].id, vecToBuf(newVecs[i]));
         // 审计留痕：operator=daemon，task=reembed
         logDaemon(db, {
             task: "reembed",
