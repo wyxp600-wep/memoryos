@@ -72,7 +72,13 @@ function createCore(deps) {
     e.startedAt = Date.now();
     e.stopped = false;
     child.stdout.on("data", (d) => log(`[${script}]`, String(d).trimEnd()));
-    child.stderr.on("data", (d) => log(`[${script}][err]`, String(d).trimEnd()));
+    // ★ #4429：缓冲 stderr 尾部供 exit 判定 EADDRINUSE（截 8KB 防长日志累积）
+    let errTail = "";
+    child.stderr.on("data", (d) => {
+      const s = String(d);
+      log(`[${script}][err]`, s.trimEnd());
+      errTail = (errTail + s).slice(-8192);
+    });
     child.__script = script; // 幂等守卫查找用（startCore 自愈路径按脚本判定存活）
     child.on("exit", (code) => {
       const uptime = Date.now() - e.startedAt;
@@ -81,6 +87,20 @@ function createCore(deps) {
       if (isQuitting()) return;                       // 正常退出流程：不重启、不弹框
       if (restarting) {                               // ★ 主动重启窗口：新实例已由 restartCore 拉起，旧子进程退出不排自愈
         log(`${script} 主动重启中退出，不排自愈`);
+        return;
+      }
+      // ★ #4429 EADDRINUSE 隔离：dashboard 抢端口失败 = 已有实例在服务，非自身故障 →
+      //   不计入 MAX_RESTARTS 额度（防『占端口 → 秒退 → 计数 → 重拉』反馈循环把额度打光）；
+      //   按封顶间隔做轻量重试：每次仅一个秒退进程（零风暴），且占端口的孤儿退出后能自动接管。
+      if (SELFHEAL && script === "dashboard.js" && /EADDRINUSE/.test(errTail)) {
+        log(`${script} 端口已被占用（EADDRINUSE，已有实例在服务）：不计入自愈额度，按 ${MAX_DELAY_MS}ms 间隔轻量重试`);
+        if (e.timer) timers.clearTimeout(e.timer);       // 同脚本只排一次
+        e.timer = timers.setTimeout(() => {
+          e.timer = null;
+          if (isQuitting()) return;
+          log(`${script} 端口占用重试中…`);
+          try { startCore(); } catch (err) { log(`${script} 端口占用重试失败: ${err.message || err}`); }
+        }, MAX_DELAY_MS);
         return;
       }
       if (uptime >= HEALTHY_MS) e.count = 0;          // 健康存活过 → 额度重置

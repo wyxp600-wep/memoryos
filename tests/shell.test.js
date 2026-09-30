@@ -238,6 +238,51 @@ test("core: 重启额度用尽后弹框且不再排期", async (t) => {
   assert.ok(h.dialogs.some((d) => /已停止自动重启/.test(d.message)), "应弹框告知已停止自动重启");
 });
 
+test("core: dashboard EADDRINUSE 不计入自愈额度，按封顶间隔轻量重试（#4429）", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+
+  const h = makeCore({ port, env: { CORE_MAX_RESTARTS: 2 } });
+  await h.core.startCore();
+  const child = childOf(h, "dashboard.js");
+
+  // 端口被孤儿实例占用 → 新 dashboard bind 失败，stderr 打出 EADDRINUSE 后秒退
+  const eaddr = "Error: listen EADDRINUSE: address already in use 127.0.0.1:" + port;
+  child.stderr.emit("data", eaddr);
+  child.emit("exit", 1);
+  child.stderr.emit("data", eaddr);
+  child.emit("exit", 1);
+
+  const s = h.core.stats().scripts["dashboard.js"];
+  assert.equal(s.restarts, 0, "EADDRINUSE 秒退不应计入 MAX_RESTARTS 额度");
+  assert.ok(h.logs.some((l) => /端口已被占用/.test(l)), "应记日志说明端口被占");
+  assert.ok(!h.dialogs.some((d) => /已停止自动重启/.test(d.message)), "额度未消耗，不应弹停止自愈框");
+  const pending = h.timers.scheduled.filter((x) => !h.timers.cleared.includes(x));
+  assert.equal(pending.length, 1, "同脚本只排一次轻量重试");
+  assert.equal(pending.at(-1).ms, 60000, "按封顶间隔重试而非退避递增");
+
+  // 推进重试 → startCore 应再次补拉 dashboard（接管孤儿退出后的空档）
+  h.timers.fireLast();
+  // 等 startCore 首轮 portOpen 轮询（原生 400ms）落地：若测试先结束、t.after 关掉临时端口，
+  // 该轮询会空转 60s 后以「内核 60s 未就绪」悬挂拒绝（async activity after test ended）
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(h.spawned.filter((x) => x.script === "dashboard.js").length, 2, "重试应再次拉起 dashboard");
+});
+
+test("core: daemon 的 EADDRINUSE 不走端口分支（daemon 无端口），仍按退避计数", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+
+  const h = makeCore({ port });
+  await h.core.startCore();
+  const child = childOf(h, "daemon.js");
+  child.stderr.emit("data", "Error: connect EADDRINUSE 127.0.0.1:1");
+  child.emit("exit", 1);
+
+  assert.equal(h.core.stats().scripts["daemon.js"].restarts, 1, "非 dashboard 仍走正常计数");
+  assert.equal(h.timers.scheduled.at(-1).ms, 3000, "首退按基础退避 3000ms");
+});
+
 test("core: isQuitting 为真时不重启也不弹框", async (t) => {
   const { server, port } = await listenEphemeral();
   t.after(() => server.close());
