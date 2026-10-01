@@ -95,6 +95,12 @@ function resolvePlansDir() {
 const PLANS_DIR = resolvePlansDir();
 /** loopback 主机白名单（比对时去掉端口）：防 DNS rebinding 把外部域名解析到 127.0.0.1 后直连本机 API */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+/** ★ 2026-10-02 手机版配对：MEMORY_ALLOW_LAN=1 时放行私网 Host（RFC1918 IPv4 / 单标签机器名 / .local）。
+ *  仅放行 Host 头，令牌门禁（②）照旧逐请求强制；缺省（无该 env）行为与之前完全一致（fail-closed）。 */
+const PRIVATE_HOST_RE = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|[a-z0-9-]+(\.local)?)$/i;
+function lanHostAllowed(host) {
+    return process.env.MEMORY_ALLOW_LAN === "1" && PRIVATE_HOST_RE.test(host);
+}
 const TOKEN_COOKIE = "memoryos_token";
 /** 令牌文件名（与库同目录）：CLI 启动时自动生成/读取 */
 export const TOKEN_FILE = "token";
@@ -119,7 +125,7 @@ function installAccessControl(app, token) {
     };
     app.addHook("onRequest", async (req, reply) => {
         const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
-        if (!LOOPBACK_HOSTS.has(host)) {
+        if (!LOOPBACK_HOSTS.has(host) && !lanHostAllowed(host)) {
             return reply.code(403).send({ ok: false, error: "forbidden-host" });
         }
         // fail-closed（P0-2.2）：无令牌配置时拒绝，而非放行。
@@ -270,7 +276,9 @@ export function buildApp(db, opts = {}) {
 }
 // —— CLI：严格比对入口文件（pathToFileURL 全等），避免被 smoke-dashboard 等 import 时误触发真实监听 ——
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    const dbPath = process.env.MEMORY_DB ?? fileURLToPath(new URL("../data/memory.db", import.meta.url)); // fileURLToPath 正确 decode 中文路径
+    const dbPath = process.env.MEMORY_DB ?? (process.env.APPDATA
+    ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db") // ★ 口径收口（2026-10-02 用户拍板）：缺省只用 %APPDATA% 生产库，不再落仓内 dev 库（原 ../data/memory.db 会让无 env 的裸拉复活双库分裂）
+    : fileURLToPath(new URL("../data/memory.db", import.meta.url))); // APPDATA 缺失（非 Windows）兜底原路径
     const db = openDb(dbPath);
     // 访问令牌：env MEMORY_TOKEN 优先；否则读 data/token，仍无则生成并落盘（首启自举，保证 CLI 启动同样受控）
     const tokenFile = path.join(path.dirname(dbPath), TOKEN_FILE);
@@ -292,7 +300,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         }
     }
     const app = buildApp(db, { token });
-    const host = "127.0.0.1";
+    // ★ 2026-10-02 手机版配对：缺省仍只绑 127.0.0.1（行为不变）；MEMORY_HOST=0.0.0.0 时才对局域网监听
+    //   （须搭配 MEMORY_ALLOW_LAN=1 放行私网 Host；令牌门禁两种情况下都强制）。
+    const host = process.env.MEMORY_HOST ?? "127.0.0.1";
     const port = Number(process.env.MEMORY_PORT ?? DEFAULT_PORT);
     app
         .listen({ host, port })

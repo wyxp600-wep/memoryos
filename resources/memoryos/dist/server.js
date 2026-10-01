@@ -17,7 +17,9 @@ import { registerMemoryTools } from "./server-reg-memory.js";
 import { registerObsidianTools } from "./server-reg-obsidian.js";
 import { registerTaskTools } from "./server-reg-task.js";
 // —— 运行时身份读取（R3 分工：读写自动带 agent/agent_fpath）——
-const DB_PATH = process.env.MEMORY_DB ?? fileURLToPath(new URL("../data/memory.db", import.meta.url)); // fileURLToPath 正确 decode 中文路径
+const DB_PATH = process.env.MEMORY_DB ?? (process.env.APPDATA
+  ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db") // ★ 口径收口（2026-10-02 用户拍板）：缺省只用 %APPDATA% 生产库，不再落仓内 dev 库（防止无 MEMORY_DB 的接入面悄悄写错库）
+  : fileURLToPath(new URL("../data/memory.db", import.meta.url))); // APPDATA 缺失（非 Windows）兜底原路径
 const AGENT = process.env.MEMORY_AGENT ?? "unknown";
 const AGENT_FPATH = process.env.MEMORY_AGENT_FPATH ?? null;
 const ENV_CRED = process.env.MEMORYOS_A1_CREDENTIAL ?? null; // ★ 一致性⑧：MCP 配置注入的本 agent 凭据（调用方省略 credential 入参时回退；归属仍按 who 严格校验，拿他人凭据照样拒绝）
