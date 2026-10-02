@@ -619,8 +619,13 @@ export function openDb(dbPath) {
         ["idempotency_key", "TEXT"],
         ["causal_parent", "INTEGER"],
         // ★ 一致性⑦（2026-09-19）：租约到期「贴条」标记 —— 到期不自动抢回（防误杀在岗认领者 + 防与任务头
-        //   对账震荡），贴条超 24h 无人理（无 heartbeat/收口）才放回池子。NULL=未贴条。
+        //   对账震荡）。NULL=未贴条。
         ["lease_notice_at", "TEXT"],
+        // ★ 批次 B1（2026-10-03，对标 orca「absence never authorizes destruction」）：贴条超期后的**裁决标记**。
+        //   打上即"只标不回收"——卡片保持 running、锁/assignee 保留、dispatch 置 stale；回收或继续必须走正向动作
+        //   （heartbeat 复活 / task_claim(takeover) 换代接管 / task_release 显式归还）。NULL=未到裁决点。
+        //   与 lease_notice_at 两段式配合：贴条（阶段一）→ 裁决标记（阶段二）；本列兼作阶段二幂等键。
+        ["lease_stale_at", "TEXT"],
         // ★ 2026-09-20：卡片主题（归档中心按主题分组用）。NULL=未分类；解析优先级见
         //   dashboard-reg-cards.js 的 topicOfCardRow（topic 列 > meta.topic > 标题 [topic:xxx] > 未分类）。
         ["topic", "TEXT"],
@@ -1858,22 +1863,27 @@ export function readActiveDispatch(db, memoryId) {
         return null;
     }
 }
-/** 建 dispatch（接管语义）：同任务已有 active → 先置 superseded 并继承 generation+1。
- *  「同时只有一个 active」由 idx_dispatches_active 兜底；本函数需在事务内调用才原子。 */
+/** 建 dispatch（接管语义）：同任务的 active / **stale** 前驱 → 先置 superseded 并继承 generation+1。
+ *  「同时只有一个 active」由 idx_dispatches_active 兜底；本函数需在事务内调用才原子。
+ *  ★ 批次 B1（2026-10-03）：取代范围从「仅 active」扩到「active + stale」——reaper 标 stale 的尝试属
+ *    「待裁决」，被接管时若不置 superseded，会审计断链（旧记录永留 stale、不指向新世代）。 */
 export function createDispatch(db, { key, memoryId, agent, sessionId = null, credentialId = null, leaseMinutes = 10 }) {
     const min = Math.max(1, Math.min(1440, Math.floor(Number(leaseMinutes) || 10)));
-    const prev = db.prepare(`SELECT id, generation FROM dispatches WHERE memory_id=? AND state='active'`).get(Number(memoryId));
     // ★ generation 取该任务历史最大值 +1（不是「仅在有 active 时 +1」）——否则结算后重新认领会拿到相同世代，
     //   旧 token 与新一代无法判序，fencing 的核心（新生代永远更大）就失效了。
     const maxRow = db.prepare(`SELECT MAX(generation) g FROM dispatches WHERE memory_id=?`).get(Number(memoryId));
     const generation = Number(maxRow?.g ?? 0) + 1;
-    if (prev)
-        db.prepare(`UPDATE dispatches SET state='superseded', settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(prev.id);
+    const priorsActive = db.prepare(`SELECT id FROM dispatches WHERE memory_id=? AND state='active'`).all(Number(memoryId));
+    const priorsStale = db.prepare(`SELECT id FROM dispatches WHERE memory_id=? AND state='stale'`).all(Number(memoryId));
+    const priors = [...priorsActive, ...priorsStale];
+    for (const p of priors)
+        db.prepare(`UPDATE dispatches SET state='superseded', settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(Number(p.id));
     const r = db.prepare(`INSERT INTO dispatches(dispatch_key, memory_id, agent, session_id, credential_id, state, generation, lease_expires_at) VALUES (?,?,?,?,?,'active',?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`).run(String(key), Number(memoryId), String(agent), sessionId, credentialId, generation, `+${min} minutes`);
     const id = Number(r.lastInsertRowid);
-    if (prev)
-        db.prepare(`UPDATE dispatches SET superseded_by=? WHERE id=?`).run(id, prev.id);
-    return { id, key: String(key), generation, superseded: prev ? Number(prev.id) : null };
+    for (const p of priors)
+        db.prepare(`UPDATE dispatches SET superseded_by=? WHERE id=?`).run(id, Number(p.id));
+    const superseded = priorsActive.length ? Number(priorsActive[0].id) : priorsStale.length ? Number(priorsStale[0].id) : null;
+    return { id, key: String(key), generation, superseded };
 }
 /** 结算：settled + outcome + evidence。orca 口径：outcome 必填，禁止只在散文里编码失败。 */
 export function settleDispatch(db, dispatchId, outcome, evidence = null) {

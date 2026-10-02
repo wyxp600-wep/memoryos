@@ -10,7 +10,7 @@
  *   ③ 去重    sim>0.96 合并，存活者=命中多者；跨来源印证 conf+0.1；LIMIT 50/轮
  * 验收：--once --dry-run 输出计划且不落库。
  */
-import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory, updateMemory } from "./db.js";
+import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
 import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
 import { maybeRunRuleReflection } from "./rule-reflection.js"; // ★ 批次⑧：每日规则反思生产线（钩子在 run() 治理链内）
@@ -362,7 +362,7 @@ export async function reembedStale(db, limit = 20) {
 }
 /**
  * 长期治理一轮（每小时）：
- *  ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at（不抢回）；放回由 reapExpiredLeases 阶段二统一处理
+ *  ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at（不抢回）；超期裁决由 reapExpiredLeases 阶段二处理（⑧ 只标不回收）
  *  ② triage 超时（M1）：>24h → todo + auto_refine
  *  ③ 熔断：failed≥2 → blocked + circuit_break
  *  ④ 依赖提升（M3）：todo 且 depends 全 done → ready + auto_ready
@@ -474,14 +474,14 @@ export function housekeepBoard(db, opts = {}) {
     db.exec("BEGIN IMMEDIATE");
     try {
         // ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at 标记，**不抢回**（卡保持 running 与任务头
-        //    一致，防震荡防误杀）；放回由 reapExpiredLeases 阶段二统一处理（头 CAS 回 pending）。
+        //    一致，防震荡防误杀）；超期裁决由 reapExpiredLeases 阶段二统一处理（⑧ 只标不回收，不抢回）。
         //    replace(' ','T')：lease_expires_at 存量为 SQLite 空格格式，与 JS ISO 裸比较「同日恒真」，先归一再比。
         const expired = db.prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND replace(lease_expires_at,' ','T') < ? AND lease_notice_at IS NULL`).all(now);
         for (const e of expired) {
             const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, e.id);
             if (Number(upd.changes) === 0)
                 continue;
-            ev(e.id, "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理自动放回（⑦）`);
+            ev(e.id, "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理转「待裁决」（⑧ 只标不回收）`);
             out.leased_back++;
         }
         // ② triage 超时
@@ -671,22 +671,26 @@ export function maybeVacuum(db, { dbPath = null, ratio = 0.3, minDays = 7 } = {}
 }
 // —— CLI ——
 /**
- * ★ P2-6（C-3 / #4199）→ ★ 一致性⑦（2026-09-19）：租约到期「贴条」守护 —— 到期**不再自动抢回**。
- *  原语义（过期 running → ready 清锁）两大害：① 卡被回 ready 但记忆头仍 in_progress，5min 对账又把卡
- *  对齐回 running、卡再被回收 → ready↔running 无限震荡、任务头永久卡死；② 心跳缺失 ≠ 工作已死，
- *  直接抢回会把「任务卡死」换成「两人重复执行」。新语义两阶段：
+ * ★ P2-6（C-3 / #4199）→ ★ 一致性⑦（2026-09-19）→ ★ 批次 B1（2026-10-03）：租约到期守护 —— **只标不回收**。
+ *  演进史：原语义（过期 running → ready 清锁）会「卡回 ready 但记忆头仍 in_progress → 对账再对齐回
+ *  running → 再回收」无限震荡、任务头永久卡死；⑦ 改为两阶段但阶段②仍会「贴条超期 → 抢回放池」。
+ *  B1 对标 orca「absence never authorizes destruction」：**沉默/缺席不是退出证明**，不得据此抢回。
  *    阶段一（贴条）：过期 running 卡打 lease_notice_at + lease_expired 事件，卡保持 running、锁保留
  *      —— 与任务头一致零震荡；认领者 task_heartbeat 续期 / task_done 收口即自动撕条。
- *    阶段二（放回）：贴条超 graceHours（默认 24h，MEMORYOS_LEASE_GRACE_HOURS 可覆盖）无人理 →
- *      一笔事务内：任务头 CAS 回 pending（有 dispatch 关联且头确为 in_progress 时）+ 卡 ready 清锁撕条。
- *      头 CAS 失败（MCP 侧正在改写）→ 整卡回滚跳过、下轮再试；头已 done/pending/blocked → 仅撕条留痕。
- *  幂等、失败不阻断守护主流程。housekeepBoard ① 与 /api/dispatch ① 同贴条口径（三处互不抢回）。
+ *    阶段二（**只标**）：贴条超 graceHours（默认 24h，MEMORYOS_LEASE_GRACE_HOURS 可覆盖）无人理 →
+ *      给卡打 lease_stale_at 裁决标记（保持 running / 锁 / assignee 全保留）+ 关联 active dispatch 置
+ *      state='stale'（"待裁决"）。**不改任务头、不清锁、不放回池子。**
+ *   回收或继续必须走**正向动作**：原持有者 task_heartbeat（touchDispatchLease 顺带唤醒 stale→active）
+ *    或 task_done 收口；他人 task_claim(takeover) 换代接管（createDispatch 会取代 stale 前驱）；
+ *    显式 task_release 归还。G2 口径见《MemoryOS改造计划-20261002.md》。
+ *  幂等由 lease_stale_at（NULL→打标 changes>0 才记账）与技术兜底；失败不阻断守护主流程。
+ *  housekeepBoard ① 与 /api/dispatch ① 同贴条口径（三处互不抢回）。
  *  ⚠ 顺手修格式错位：lease_expires_at 存量含 SQLite 空格格式（datetime('now')），与 JS ISO 的 T/Z
  *  做裸字符串比较时「同日恒小于」→ 同日租约被即刻判过期；统一 replace(' ','T') 后再比，
  *  且 touchCardLease 新写入改用 strftime T 格式（双保险，老数据兼容）。
  */
 export function reapExpiredLeases(db, opts = {}) {
-  const out = { noticed: 0, reclaimed: 0 };
+  const out = { noticed: 0, staled: 0, reclaimed: 0 };
   const graceH = Math.max(0, Number(process.env.MEMORYOS_LEASE_GRACE_HOURS ?? opts.graceHours ?? 24));
   try {
     const now = new Date().toISOString();
@@ -696,45 +700,36 @@ export function reapExpiredLeases(db, opts = {}) {
       const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, c.id);
       if (Number(upd.changes) === 0)
         continue;
-      db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_expired', 'running', 'running', `租约过期（原 ${c.assignee ?? String.fromCharCode(63)}）——贴条待确认：task_heartbeat 续期或 task_done 收口；超 ${graceH}h 无人理自动放回池子（⑦）`);
+      db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_expired', 'running', 'running', `租约过期（原 ${c.assignee ?? String.fromCharCode(63)}）——贴条待确认：task_heartbeat 续期或 task_done 收口；超 ${graceH}h 无人理转「待裁决」（只标不回收，⑧）`);
       out.noticed++;
     }
-    // —— 阶段二：贴条超期无人理 → 放回池子（头 CAS + 卡放回一笔事务；格式统一用 JS ISO 比较）——
+    // —— 阶段二：贴条超期无人理 → **只标不回收**（批次 B1；格式统一用 JS ISO 比较）——
+    //   只做两件事：①卡打 lease_stale_at 裁决标记（running/锁/assignee 全保留）；②关联 active dispatch 置 stale。
+    //   不改任务头、不放回池子、不清锁 —— 回收必须来自正向动作（heartbeat / takeover / release）。
+    //   lease_stale_at 兼作幂等键：NULL→打标 changes>0 才记账，重复运行零副作用。
     const cutoff = new Date(Date.now() - graceH * 3600000).toISOString();
-    const abandoned = db.prepare(`SELECT id, assignee, lease_notice_at FROM cards WHERE status='running' AND lease_notice_at IS NOT NULL AND lease_notice_at < ?`).all(cutoff);
+    const abandoned = db.prepare(`SELECT id, assignee, lease_notice_at FROM cards WHERE status='running' AND lease_notice_at IS NOT NULL AND lease_notice_at < ? AND lease_stale_at IS NULL`).all(cutoff);
     for (const c of abandoned) {
       try {
         db.exec("BEGIN IMMEDIATE");
         try {
-          const rel = db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(c.id);
-          const m = rel ? db.prepare(`SELECT id, content, version, status FROM memories WHERE id=?`).get(rel.memory_id) : null;
-          // ★ 2026-09-19（弊端 H5）：status 只解析首行（与 server.js readTaskState 同口径）——正文引用的标记不再影响 reaper 判定
-          const _hl = m ? m.content.slice(0, m.content.indexOf("\n") < 0 ? m.content.length : m.content.indexOf("\n")) : "";
-          const st = _hl.match(/\[status:([a-z_]+)\]/)?.[1] || null;
-          if (m && ["active", "trial"].includes(String(m.status)) && st === "in_progress") {
-            // 任务头回 pending：CAS（MCP 侧正在改写 → 版本漂移 → 整体回滚，下轮再试）
-            // ★ 修 #5（2026-09-19）：裸 UPDATE 改走 updateMemory 正门 CAS —— 原写法 version+1 但
-            //   不同步 FTS/2-gram、不置 embedding_stale（一致性②同款漏网，头回 pending 后检索索引脏读）。
-            //   漂移 → null → 整体回滚下轮再试，语义不变。
-            const cas = updateMemory(db, m.id, { content: m.content.replace(`[status:${st}]`, "[status:pending]"), expectedVersion: m.version });
-            if (!cas) {
-              db.exec("ROLLBACK");
-              continue;
-            }
-            db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(m.id, "task_lease_reclaim", JSON.stringify({ card: c.id, by: "reaper", notice_at: c.lease_notice_at, assignee: c.assignee ?? null }), "daemon:reaper");
-          }
-          else if (m && ["active", "trial"].includes(String(m.status))) {
-            // 头已非进行中（done/pending/blocked…）→ 无需抢回，仅撕条留痕，卡交由既有同步/对账收敛
-            db.prepare(`UPDATE cards SET lease_notice_at=NULL, updated_at=? WHERE id=? AND status='running'`).run(now, c.id);
-            db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_notice_cleared', 'running', 'running', `贴条超期但任务头=${st ?? String.fromCharCode(63)}，无需放回（⑦）`);
-            db.exec("COMMIT");
+          const mark = db.prepare(`UPDATE cards SET lease_stale_at=?, updated_at=? WHERE id=? AND status='running' AND lease_stale_at IS NULL`).run(now, now, c.id);
+          if (Number(mark.changes) === 0) {
+            db.exec("ROLLBACK");
             continue;
           }
-          // 卡放回池子（含无关联任务记忆的孤儿卡）
-          db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL, version=version+1, updated_at=? WHERE id=? AND status='running'`).run(now, c.id);
-          db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_reclaimed', 'running', 'ready', `贴条超 ${graceH}h 无人理（原 ${c.assignee ?? String.fromCharCode(63)}），放回池子${m && st === "in_progress" ? "；任务头已回 pending" : ""}（⑦）`);
+          const rel = db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(c.id);
+          const mid = rel ? Number(rel.memory_id) : null;
+          let staled = 0;
+          if (mid != null) {
+            // 只动 active → stale；settled/released/superseded 等终态不覆盖（避免翻案已结算的尝试）
+            staled = Number(db.prepare(`UPDATE dispatches SET state='stale' WHERE memory_id=? AND state='active'`).run(mid).changes ?? 0);
+            if (staled > 0)
+              db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(mid, "task_lease_stale", JSON.stringify({ card: c.id, by: "reaper", notice_at: c.lease_notice_at, assignee: c.assignee ?? null, grace_h: graceH }), "daemon:reaper");
+          }
+          db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, 'reaper', 'lease_stale', 'running', 'running', `贴条超 ${graceH}h 无人理（原 ${c.assignee ?? String.fromCharCode(63)}）——**只标不回收**：卡保持 running、锁保留${staled > 0 ? "、工作证置 stale" : ""}；回收需正向动作：heartbeat 复活 / task_claim(takeover) 接管 / task_release 归还（⑧）`);
           db.exec("COMMIT");
-          out.reclaimed++;
+          out.staled++;
         }
         catch (e) {
           try { db.exec("ROLLBACK"); } catch (rbErr) { console.error(`[reaper] 回滚失败: ${rbErr instanceof Error ? rbErr.message : String(rbErr)}`); }
@@ -742,14 +737,14 @@ export function reapExpiredLeases(db, opts = {}) {
         }
       }
       catch (e) {
-        console.error(`[reaper] 卡 #${c.id} 放回失败（下轮重试）: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`[reaper] 卡 #${c.id} 标记失败（下轮重试）: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
   catch (e) {
     console.error(`[reaper] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
   }
-  out.reaped = out.reclaimed; // 旧调用方/日志兼容别名
+  out.reaped = out.staled; // 旧调用方/日志兼容别名（B1 后"回收"已不存在，别名指向"标记"数）
   return out;
 }
 

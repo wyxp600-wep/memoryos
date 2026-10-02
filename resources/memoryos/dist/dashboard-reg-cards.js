@@ -84,7 +84,7 @@ export function registerCards(app, ctx) {
         return {
             id: Number(r.id), board: r.board, kind: r.kind, title: r.title, body: r.body, status: r.status,
             assignee: r.assignee, lane: r.lane, priority: Number(r.priority ?? 0), failure_count: Number(r.failure_count ?? 0),
-            claim_lock: r.claim_lock, lease_expires_at: r.lease_expires_at, heartbeat_at: r.heartbeat_at, lease_notice_at: r.lease_notice_at ?? null,
+            claim_lock: r.claim_lock, lease_expires_at: r.lease_expires_at, heartbeat_at: r.heartbeat_at, lease_notice_at: r.lease_notice_at ?? null, lease_stale_at: r.lease_stale_at ?? null,
             workspace: r.workspace, workspace_kind: r.workspace_kind, ref_kind: r.ref_kind, ref_id: r.ref_id,
             meta: r.meta, created_at: r.created_at, updated_at: r.updated_at,
         };
@@ -791,13 +791,14 @@ export function registerCards(app, ctx) {
         if (credErr)
             return reply.code(403).send({ ok: false, error: credErr });
         // ★ 修 #2（2026-09-19）：续期同时撕 lease_notice_at（与 MCP task_heartbeat 同口径）。
-        //   原来看板心跳只续窗不清贴条，而 reaper 按「贴条+24h」放回且不看 heartbeat_at ——
-        //   漏一次心跳被贴条后，活跃认领者的卡也会被强制收回。撕条是状态变更，写一条事件留痕
-        //   （R6-4 的"心跳静默"口径仅指常规续窗，不含贴条撕除）。
+        //   原来看板心跳只续窗不清贴条，导致漏一次心跳被贴条后，活跃认领者的卡被误判。
+        //   撕条是状态变更，写一条事件留痕（R6-4 的"心跳静默"口径仅指常规续窗，不含贴条撕除）。
+        // ★ 批次 B1（2026-10-03）：心跳=**正面存活证明** → 同时撤 lease_stale_at 裁决标记（reaper 已改
+        //   「只标不回收」，撤销标记即回到正常持有态；卡恢复 running 全权）。
         const had = db.prepare(`SELECT lease_notice_at FROM cards WHERE id=? AND assignee=?`).get(id, actor);
                 // ★ 2026-09-19（弊端 M3）：心跳续租仅限 running 态卡——done/blocked 卡不再被静默续租
         const info = db
-            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL WHERE id=? AND assignee=? AND status='running'`)
+            .prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND assignee=? AND status='running'`)
             .run(id, actor);
         if (Number(info.changes) === 0)
             return reply.code(409).send({ ok: false, error: "心跳失败：非认领者 / 无此卡 / 卡片不在 running 态" });
@@ -1281,8 +1282,9 @@ export function registerCards(app, ctx) {
         const now = new Date().toISOString();
         txBegin(); // ★ 修 #9：事务内事件入队
         try {
-            // ① 租约贴条（⑦/H3 演进）：过期不再自动抢回 —— 打 lease_notice_at 标记、卡保持 running（与任务头一致零震荡）；
-            //    认领者 heartbeat 续期/收口即撕条；超期放回由 reapExpiredLeases 阶段二统一处理（头 CAS 回 pending）。
+            // ① 租约贴条（⑦/H3 演进 → ⑧ 批次 B1 只标不回收）：过期不再自动抢回 —— 打 lease_notice_at 标记、卡保持
+            //    running（与任务头一致零震荡）；认领者 heartbeat 续期/收口即撕条。超期裁决由 reapExpiredLeases
+            //    阶段二统一处理（⑧：只标 lease_stale_at + dispatch 置 stale，不回收、不放回池子）。
             //    replace(' ','T')：lease_expires_at 存量含 SQLite 空格格式，与 JS ISO 裸比较「同日恒真」，先归一再比。
             const expired = db
                 .prepare(`SELECT id, assignee FROM cards WHERE status='running' AND lease_expires_at IS NOT NULL AND replace(lease_expires_at,' ','T') < ? AND lease_notice_at IS NULL`)
@@ -1291,7 +1293,7 @@ export function registerCards(app, ctx) {
                 const upd = db.prepare(`UPDATE cards SET lease_notice_at=?, updated_at=? WHERE id=? AND status='running' AND lease_notice_at IS NULL`).run(now, now, e.id);
                 if (Number(upd.changes) === 0)
                     continue;
-                writeCardEvent(e.id, "dispatcher", "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理自动放回（⑦）`);
+                writeCardEvent(e.id, "dispatcher", "lease_expired", "running", "running", `租约过期（原 ${e.assignee ?? "?"}）——贴条待确认：heartbeat 续期 / 收口；超 24h 无人理转「待裁决」（⑧ 只标不回收）`);
                 out.leased_back++;
             }
             // ② triage 超时（M1）：>24h 未动 → todo

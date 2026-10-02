@@ -99,19 +99,22 @@ try {
     db3.prepare(`INSERT INTO cards(board,kind,title,body,status,assignee,claim_lock,lease_expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run("default", "task", "租约回收样本", "smoke", "running", "agentA", "lock-expired-1", "2000-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z");
     const expiredCardId = Number(db3.prepare(`SELECT id FROM cards WHERE claim_lock=?`).get("lock-expired-1").id);
-    // ★ 一致性⑦（2026-09-19）：租约到期改「贴条」两阶段 —— 到期不抢回（防误杀在岗认领者 + 防对账震荡），超期才放回
+    // ★ 一致性⑦（2026-09-19）→ ★ 批次 B1（2026-10-03）：租约到期两阶段 —— 到期「贴条」不抢回，超期「只标不回收」（⑧ 缺席不授权销毁）
     const rp1 = reapExpiredLeases(db3);
     const afterNotice = db3.prepare(`SELECT status, assignee, claim_lock, lease_notice_at FROM cards WHERE id=?`).get(expiredCardId);
     check("G1a.过期租约贴条不抢回（running 保持 + 锁保留 + notice 标记）", rp1.noticed >= 1 && afterNotice.status === "running" && afterNotice.claim_lock === "lock-expired-1" && !!afterNotice.lease_notice_at, `noticed=${rp1.noticed} status=${afterNotice.status} notice=${!!afterNotice.lease_notice_at}`);
     check("G1b.贴条留 card_events 事件（可审计）", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_expired").c >= 1);
     const rp2 = reapExpiredLeases(db3);
     check("G1c.贴条幂等（再跑无新增）", rp2.noticed === 0, `noticed=${rp2.noticed}`);
-    // G1d 贴条超期（notice 时间回拨 + grace=0）→ 放回池子（该样本卡无关联任务记忆，走孤儿卡直放回路径）
+    // G1d 贴条超期（notice 时间回拨 + grace=0）→ **只标不回收**（批次 B1；⑧ absence never authorizes destruction）
+    //   该样本卡无关联任务记忆 → 走孤儿卡路径：只打 lease_stale_at 裁决标记，running/锁/归属全保留。
     db3.prepare(`UPDATE cards SET lease_notice_at=? WHERE id=?`).run("2000-01-01T00:00:00.000Z", expiredCardId);
     const rp3 = reapExpiredLeases(db3, { graceHours: 0 });
-    const afterReclaim = db3.prepare(`SELECT status, assignee, claim_lock, lease_notice_at FROM cards WHERE id=?`).get(expiredCardId);
-    check("G1d.贴条超期放回（ready + 清锁 + 撕条）", rp3.reclaimed >= 1 && afterReclaim.status === "ready" && afterReclaim.assignee === null && afterReclaim.claim_lock === null && afterReclaim.lease_notice_at === null, `reclaimed=${rp3.reclaimed} status=${afterReclaim.status}`);
-    check("G1e.放回留 lease_reclaimed 事件", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_reclaimed").c >= 1);
+    const afterStale = db3.prepare(`SELECT status, assignee, claim_lock, lease_notice_at, lease_stale_at FROM cards WHERE id=?`).get(expiredCardId);
+    check("G1d.贴条超期只标不回收（running 保持 + 锁/归属保留 + 打 lease_stale_at）", rp3.staled >= 1 && rp3.reclaimed === 0 && afterStale.status === "running" && afterStale.assignee === "agentA" && afterStale.claim_lock === "lock-expired-1" && !!afterStale.lease_stale_at, `staled=${rp3.staled} reclaimed=${rp3.reclaimed} status=${afterStale.status} stale=${!!afterStale.lease_stale_at}`);
+    check("G1e.只标留 lease_stale 事件、不再产生 lease_reclaimed", db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_stale").c >= 1 && db3.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action=?`).get(expiredCardId, "lease_reclaimed").c === 0, "lease_stale≥1 且 lease_reclaimed=0");
+    const rp4 = reapExpiredLeases(db3, { graceHours: 0 });
+    check("G1f.裁决标记幂等（再跑 0 新增；lease_stale_at 兼作幂等键）", rp4.staled === 0 && rp4.reclaimed === 0, `staled=${rp4.staled} reclaimed=${rp4.reclaimed}`);
     // G2 投影重建（C-5）：任务记忆无卡 → 补建
     const taskRow = writeMemory(db3, { content: "[task][assignee:?][status:pending] 对账样本：无卡任务", type: "task", agent: "macp-smoke", agent_fpath: null, project: "global", embedding: null });
     const rc1 = reconcileTasksAndCards(db3);
