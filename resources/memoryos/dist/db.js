@@ -1577,9 +1577,67 @@ function syncTaskHeaderOnTerminal(db, id, colStatus) {
         id,
     );
 }
+/* ★ 2026-09-25 方案A（任务看板僵尸卡·写时收敛）：卡片事件推送器注入。
+ *  dashboard 进程（dashboard-reg-cards.js registerCards）启动时注入 pushCardEvt；MCP 等独立进程不注入 → 收敛仅落库（card_events 行仍在，看板水印轮询/刷新可拾）。 */
+let cardEvtPusher = null;
+export function setCardEvtPusher(fn) { cardEvtPusher = fn; }
+/** 任务记忆的关联卡集合：cards.ref_kind='memory' 直连 + card_memory 镜像卡（去重）。 */
+function linkedCardsOf(db, memoryId) {
+    const out = [];
+    const seen = new Set();
+    for (const r of db.prepare(`SELECT id, status, meta FROM cards WHERE ref_kind='memory' AND ref_id=?`).all(memoryId)) { out.push(r); seen.add(r.id); }
+    for (const r of db.prepare(`SELECT c.id, c.status, c.meta FROM card_memory cm JOIN cards c ON c.id=cm.card_id WHERE cm.memory_id=?`).all(memoryId))
+        if (!seen.has(r.id)) out.push(r);
+    return out;
+}
+/** ★ 2026-09-25 方案A：记忆终态（done 头 / archived / merged / rejected）→ 关联卡收敛。
+ *  根治「活干完了、卡永远 ready」导致的任务看板「未完成」虚高（2026-09-25 实证 24 张僵尸卡）。
+ *  规则：
+ *   - 仅收敛开放态卡（triage/todo/ready/blocked）；running/review 在途归租约/验收主，不抢；终态不覆盖；
+ *   - toStatus='done' 且卡带验收标准（meta.acceptance 非空）→ 不自动 done（M2 验收门），只留事件贴条；
+ *   - 逐卡：状态守卫 UPDATE + card_events 审计 + SSE 推送（pusher 已注入时）；
+ *   - 收敛失败不阻断记忆主流程（与 syncCardToTask 同口径：留痕 + 回填/对账兑底）。
+ *  返回实际收敛的卡数。 */
+export function convergeLinkedCards(db, memoryId, toStatus, actor = "memory-sync", detail = "") {
+    try {
+        const OPEN = new Set(["triage", "todo", "ready", "blocked"]);
+        let changed = 0;
+        for (const c of linkedCardsOf(db, memoryId)) {
+            if (!OPEN.has(c.status))
+                continue;
+            if (toStatus === "done") {
+                let meta = null;
+                try {
+                    meta = c.meta ? JSON.parse(c.meta) : null;
+                }
+                catch { meta = { acceptance: "parse-error" }; } // meta 损坏 → 保守按有验收标准处理
+                const acc = meta?.acceptance;
+                const hasAcc = acc != null && !(Array.isArray(acc) && acc.length === 0);
+                if (hasAcc) {
+                    db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, actor, "memory_done_hold", c.status, c.status, `任务 #${memoryId} 已 done 但卡带验收标准，留 /accept 人工验收；${detail}`);
+                    continue;
+                }
+            }
+            const prev = c.status;
+            db.prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status=?`).run(toStatus, c.id, prev);
+            if (toStatus !== "blocked")
+                db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(c.id); // 终态清租约残留（与 /status done 收口同口径）
+            db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(c.id, actor, "memory_sync", prev, toStatus, detail || `任务 #${memoryId} → ${toStatus} 卡侧收敛`);
+            if (cardEvtPusher)
+                try { cardEvtPusher({ type: "memory_sync", cardId: c.id, from: prev, to: toStatus, actor, ts: Date.now() }); } catch { /* 推送失败不影响落库 */ }
+            changed++;
+        }
+        return changed;
+    }
+    catch (e) {
+        console.error(`[convergeLinkedCards] 卡侧收敛失败（记忆 #${memoryId} → ${toStatus}）：${e.message}`);
+        return 0;
+    }
+}
 export function archiveMemory(db, id) {
     db.prepare(`UPDATE memories SET status='archived' WHERE id = ? AND status='active'`).run(id);
     syncTaskHeaderOnTerminal(db, id, "archived"); // ★ 2026-09-19：开放态任务头随归档归一（堵脏数据生产侧）
+    convergeLinkedCards(db, id, "archived", "governance:archive"); // ★ 2026-09-25 方案A：任务卡侧收敛
     invalidateVectorCache(db); // P0-4.1：active → archived 会缩小 activeOnly 候选池
 }
 /**
@@ -1591,6 +1649,7 @@ export function archiveMemory(db, id) {
 export function archiveTrial(db, id) {
     db.prepare(`UPDATE memories SET status='archived' WHERE id = ? AND status='trial'`).run(id);
     syncTaskHeaderOnTerminal(db, id, "archived"); // ★ 2026-09-19：同 archiveMemory（堵脏数据生产侧）
+    convergeLinkedCards(db, id, "archived", "governance:archive-trial"); // ★ 2026-09-25 方案A：任务卡侧收敛
     invalidateVectorCache(db); // P0-4.1
 }
 /** 去重合并：把 loser 置 merged + superseded_by；递增算子放在 daemon 单事务内
@@ -1600,6 +1659,7 @@ export function archiveTrial(db, id) {
 export function markMerged(db, loserId, winnerId) {
     db.prepare(`UPDATE memories SET status='merged', superseded_by = ? WHERE id = ?`).run(winnerId, loserId);
     syncTaskHeaderOnTerminal(db, loserId, "merged"); // ★ 2026-09-18（实操问题 #2，P0）：头文本同步 merged
+    convergeLinkedCards(db, loserId, "archived", "governance:merge", `记忆 #${loserId} 被去重合并（主 #${winnerId}），卡片随归一`); // ★ 2026-09-25 方案A：任务卡侧收敛
     invalidateVectorCache(db); // P0-4.1：merged 不再进入检索候选
 }
 export { joinPrefix }; // 保留出口（格式工具，备用）
@@ -1692,6 +1752,7 @@ function restore(db, s, confOverride) {
 /** 软删：置 status='rejected'（保留原文/向量/审计），供规则页删除与人仲裁复用。可选传入 operator 自动写审计。 */
 export function rejectMemory(db, id, operator = "unknown") {
     setStatus(db, id, "rejected");
+    convergeLinkedCards(db, id, "cancelled", "governance:reject", `记忆 #${id} 软删 rejected（${operator}），关联卡取消`); // ★ 2026-09-25 方案A：任务卡侧收敛
     logDaemon(db, { task: "reject", op: "reject", memory_id: id, operator, detail: "软删 rejected" });
 }
 /** 按类型查列表（规则页用 type='rule'），status 为空则不限；created 倒序 */
@@ -1711,8 +1772,10 @@ export function setStatus(db, id, status, supersededBy) {
     else {
         db.prepare(`UPDATE memories SET status=? WHERE id=?`).run(status, id);
     }
-    if (status === "archived" || status === "merged")
+    if (status === "archived" || status === "merged") {
         syncTaskHeaderOnTerminal(db, id, status); // ★ 2026-09-19：终态列流转同步任务头（堵脏数据生产侧）
+        convergeLinkedCards(db, id, "archived", "governance:set-status"); // ★ 2026-09-25 方案A：任务卡侧收敛（非任务记忆无关联卡，空转）
+    }
     // P0-4.1：状态流转直接决定 activeOnly 候选池；本次带出的 rejectMemory / applyArbitration 亦经此路径。
     invalidateVectorCache(db);
 }

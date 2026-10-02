@@ -1,7 +1,7 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— cards 域。
  * handler 自 dashboard.js 原行 1332-2396 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS, updateMemory } from "./db.js";
+import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS, updateMemory, setCardEvtPusher } from "./db.js";
 import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { randomBytes } from "node:crypto";
 import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
@@ -45,6 +45,7 @@ export function registerCards(app, ctx) {
             try { sub(payload); } catch { cardSubs.delete(sub); }
         }
     }
+    setCardEvtPusher(pushCardEvt); // ★ 2026-09-25 方案A：db.js convergeLinkedCards（记忆终态→卡片收敛）同进程写 card_events 时即时推 SSE
     /* ★ 跨进程事件补流（2026-09-18）：MCP server / daemon 等独立进程直写 card_events
      *  （task_claim/task_done/task_release、apply-plan、mcp_reopen…），不经过本进程 pushCardEvt。
      *  有订阅者时以 2s 轮询 card_events 增量补推（水位线 lastId）；与进程内即时推送重复无害
