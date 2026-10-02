@@ -112,6 +112,7 @@
 
 | 日期 | 对象（文件 / 任务） | ① 接管前置条件 | ② 接管边界 | ③ conflict-free 确认 | 接管人 |
 |---|---|---|---|---|---|
+| 2026-10-02 | 2026-10-02 笔记 / Obsidian 面板改动：① 笔记编辑能力（`dashboard-reg-knowledge.js` + `app.js` hunk5-8 + `index.html` hunk3）② Obsidian 进度条（`app.js` hunk1-4 + `index.html` hunk1-2） | 用户 2026-10-02 授权「①⑤都收」 | 只提交上述两组；**不动**壳层三文件（`main.js` / `app/lifecycle.js` / `security/token.js`）——取证发现是**调试现场**：硬编码 `C:/Users/WYX/Desktop/MemoryOS/exe-debug.log` 调试日志，且 `dataDir()` 方向与 HEAD `6a29cd3`「拍板只用生产库 %APPDATA%」**相反**；不做重构 | `git status` 逐文件核对；`app.js` / `index.html` 用 **hunk 级 `git apply --cached`**（先例 `72fe0d1`）；`apply --check` 先预检 | A 分区 |
 | 2026-10-02 | 9/25 在制品：`db.js` 的 `convergeLinkedCards` 链路（hunk 2-6）+ `dashboard-reg-cards.js`（+3 行 `setCardEvtPusher`）+ `backfill-card-convergence-20260925.mjs` | 原并发会话 09-25 后静默、无交接说明；用户 2026-10-02 明确授权「先做完」 | 只提交上述三处；**不动** `db.js` 的 dispatches 段（hunk 1+7，属 Dispatch 批次 1）、**不动** `dashboard-reg-knowledge.js`（属 2026-10-02 笔记类型贯通，他人在制品）；不做重构、不改相邻逻辑 | `git status` 逐文件核对；`db.js` 用 **hunk 级 `git apply --cached`** 拆分（先例 `72fe0d1`）；`apply --check` 先预检 | A 分区 |
 | _（示例，勿照填）_ 2026-10-02 | `dist/foo.js` 的 xxx 改动 | 原负责方静默 ≥ Xh 且无交接说明 + 用户授权 | 只提交 xxx hunk；不顺手重构、不改相邻逻辑 | `git status` 确认无他人正在改该文件；CLAIM 无冲突登记 | A 分区 |
 
