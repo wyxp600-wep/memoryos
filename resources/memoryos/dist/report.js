@@ -119,3 +119,44 @@ export function usageHealth(db, days = 30) {
         .all();
     return { search, returned, write, cited, search_trigger_rate, empty_recall_rate, write_read_ratio, per_agent };
 }
+/**
+ * ★ 2026-10-02（P1-9，对标 Orca AI Vault 的 status）：索引侧健康。
+ * 与 usageHealth（回答「有没有在用」）互补，本函数回答「索引全不全」——召回变差时用来区分
+ *   「确实没有这条」与「索引没跟上 / 索引坏了」。
+ * 口径：向量以 memory_vectors 为权威（memories.embedding 已由 migrateVectorsSplit 搬离并置空）；
+ *   stale = 正文改过但向量未跟（updateMemory 置位，daemon 限量重算）。
+ * 纯读、零建表、不改 schema → 不影响 /api/health 基线哈希。
+ * 注：schema 未记录「上次重建时间 / 索引代数」，故不报（不编造）。
+ */
+export function indexHealth(db) {
+    const cv = (v) => Number(v ?? 0);
+    const total = cv(db.prepare(`SELECT COUNT(*) c FROM memories`).get()?.c);
+    const active = cv(db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='active'`).get()?.c);
+    const withVec = cv(db
+        .prepare(`SELECT COUNT(*) c FROM memories m JOIN memory_vectors v ON v.memory_id = m.id WHERE m.status='active'`)
+        .get()?.c);
+    const stale = cv(db.prepare(`SELECT COUNT(*) c FROM memories WHERE embedding_stale=1`).get()?.c);
+    // FTS 行数与 memories 行数应一致；不等 = 触发器漏同步（幽灵结果 / 漏召回）
+    const ftsRows = cv(db.prepare(`SELECT COUNT(*) c FROM memories_fts`).get()?.c);
+    // gram 覆盖：只算 memory_id 仍存在的。gram 表无删除触发器（由 syncGrams 手动维护，
+    //   见 db.js「先删后插」注释），记忆被删时可能留下「孤儿残留」—— 单独计数暴露，不混进覆盖率。
+    const gramMem = cv(db
+        .prepare(`SELECT COUNT(DISTINCT g.memory_id) c FROM memories_gram g JOIN memories m ON m.id = g.memory_id`)
+        .get()?.c);
+    const gramOrphan = cv(db
+        .prepare(`SELECT COUNT(DISTINCT g.memory_id) c FROM memories_gram g LEFT JOIN memories m ON m.id = g.memory_id WHERE m.id IS NULL`)
+        .get()?.c);
+    return {
+        total,
+        active,
+        withVec,
+        vecMissing: Math.max(0, active - withVec),
+        vecCoverage: active > 0 ? Math.round((withVec / active) * 1000) / 1000 : 1,
+        stale,
+        ftsRows,
+        ftsDrift: total - ftsRows,
+        gramMem,
+        gramOrphan,
+        gramCoverage: total > 0 ? Math.round((gramMem / total) * 1000) / 1000 : 1,
+    };
+}

@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, gramProbe } from "./db.js";
 import { hybridSearch, semanticDegradation } from "./search.js";
-import { funnel, trend, topMemories, zombies, crossTool, usageHealth, REPORT_NAMES } from "./report.js";
+import { funnel, trend, topMemories, zombies, crossTool, usageHealth, indexHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
 import { randomBytes } from "node:crypto";
 
@@ -764,6 +764,15 @@ export function registerMemoryTools(server, ctx) {
             for (const a of h.per_agent) {
                 lines.push(`  ${a.agent}: search=${a.search} returned=${a.returned} cited=${a.cited} write=${a.write}`);
             }
+            // ★ 2026-10-02 P1-9（对标 Orca AI Vault status）：索引侧健康 —— 与上方「使用侧」互补，
+            //   回答「索引全不全」，用于把「确实没有这条」与「索引没跟上/坏了」区分开。纯读，零建表。
+            const ix = indexHealth(db);
+            const pct = (v) => `${(v * 100).toFixed(1)}%`;
+            lines.push(`\n【索引健康 · 当前】`);
+            lines.push(`向量覆盖=${pct(ix.vecCoverage)}（${ix.withVec}/${ix.active} active）${ix.vecMissing > 0 ? ` ⚠ 缺 ${ix.vecMissing}` : ""}`);
+            lines.push(`待重嵌=${ix.stale}（正文改过、向量未跟上）${ix.stale > 0 ? " ⚠ 需 daemon 重算" : ""}`);
+            lines.push(`全文索引=${ix.ftsRows} 行 / 记忆 ${ix.total} 行（差 ${ix.ftsDrift}）${ix.ftsDrift !== 0 ? " ⚠ 索引与正文不一致（幽灵/漏召回）" : ""}`);
+            lines.push(`中文 gram 覆盖=${pct(ix.gramCoverage)}（${ix.gramMem}/${ix.total}）${ix.gramOrphan > 0 ? ` ⚠ 孤儿残留 ${ix.gramOrphan} 条（记忆已删、gram 未清）` : ""}`);
             return lines.join("\n");
         },
     });
