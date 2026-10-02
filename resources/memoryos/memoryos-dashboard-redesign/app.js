@@ -2082,6 +2082,7 @@
   let NOTE_ALL = [];              // /api/notes 索引（跨 vault，≤500）
   let NOTE_VAULTS = [];           // 本机探测到的 vault
   let NOTE_SELECTED_ID = null;
+  let NOTE_EDITING_ID = null;     // 非空 = 正在编辑该笔记（保存走 PUT 写回原文件，而非另存新笔记）
   let NOTE_GRAPH_CHART = null;
   let NOTE_GRAPH_IDS = [];
   let NOTE_GRAPH_ZOOM = 1;
@@ -2295,19 +2296,49 @@
       </div>
       <div class="notes-detail-meta" style="margin-top:6px">修改时间 ${note.mtime_ms ? esc(fmtDate(new Date(Number(note.mtime_ms)).toISOString())) : '—'} · 正文来源 ${res.from === 'notes' ? '笔记索引' : res.from === 'memory' ? '记忆库镜像' : '不可用'}</div>
       ${bodyHtml}
-      <div style="display:flex;gap:8px;margin-top:10px">
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn-ghost" id="noteDetailLinksBtn" style="padding:5px 12px;font-size:12px">反向链接</button>
-        <button class="btn-ghost" id="noteDetailEditBtn" style="padding:5px 12px;font-size:12px">复制到编辑器</button>
+        ${(res.body != null && res.body !== '') ? `<button class="btn-ghost" id="noteDetailPutBtn" style="padding:5px 12px;font-size:12px" title="编辑原文件，保存写回并同步更新对应记忆；若文件在外部被改过会自动留副本">编辑此笔记</button>` : ''}
+        <button class="btn-ghost" id="noteDetailEditBtn" style="padding:5px 12px;font-size:12px" title="把正文复制到编辑器，保存时写成一条新笔记（不覆盖原文件）">另存为新笔记</button>
+        <button class="btn-ghost" id="noteDetailDelBtn" style="padding:5px 12px;font-size:12px;color:var(--error)" title="移入 vault 的 .trash（可找回），相关链接退化为未解析">删除</button>
       </div>`;
     const lb = $('#noteDetailLinksBtn');
     if (lb) lb.onclick = () => switchNoteTab('links');
+    const del = $('#noteDetailDelBtn');
+    if (del) del.onclick = async () => {
+      const okd = await askForm({ title: `删除笔记「${note.title}」？`, okText: '删除' });
+      if (!okd) return;
+      const r = await fetch('/api/notes/' + note.id, { method: 'DELETE' }).then(x => x.json()).catch(() => null);
+      if (!r || !r.ok) { toast('删除失败：' + ((r && r.error) || '未知错误')); return; }
+      if (NOTE_EDITING_ID === note.id) NOTE_EDITING_ID = null;
+      if (NOTE_SELECTED_ID === note.id) NOTE_SELECTED_ID = null;
+      const box = $('#noteDetail');
+      if (box) box.innerHTML = '<div class="notes-empty"><span class="big">📄</span>从左侧列表或中间图谱点选一条笔记</div>';
+      toast('已移入 .trash：' + note.rel_path);
+      refreshNoteWorkbench();
+      loadObsidianStatus();
+    };
     const eb = $('#noteDetailEditBtn');
     if (eb) eb.onclick = () => {
       switchNoteTab('edit');
-      const t = $('#noteTitle'), b = $('#noteBody'), h = $('#noteHint');
-      if (t) t.value = note.title;
+      NOTE_EDITING_ID = null;
+      const t = $('#noteTitle'), b = $('#noteBody'), h = $('#noteHint'), p = $('#notePreviewBox'), ty = $('#noteType');
+      if (t) { t.value = note.title; t.readOnly = false; }
       if (b) b.value = res.body || '';
+      if (ty) { ty.disabled = false; ty.value = 'experience'; }
+      if (p) p.style.display = 'none';
       if (h) { h.className = 'form-hint'; h.textContent = '已复制到编辑器；保存会作为新笔记写入 vault（不覆盖原文件）'; }
+    };
+    const pb = $('#noteDetailPutBtn');
+    if (pb) pb.onclick = () => {
+      switchNoteTab('edit');
+      NOTE_EDITING_ID = note.id;
+      const t = $('#noteTitle'), b = $('#noteBody'), h = $('#noteHint'), p = $('#notePreviewBox'), ty = $('#noteType');
+      if (t) { t.value = note.title; t.readOnly = true; }
+      if (b) b.value = res.body || '';
+      if (ty) { ty.disabled = true; } // 类型在新建时确定；PUT 保留磁盘 frontmatter 原类型，不提供改类型
+      if (p) p.style.display = 'none';
+      if (h) { h.className = 'form-hint'; h.textContent = `正在编辑 ${note.rel_path}（标题与类型锁定）；保存写回原文件，并同步更新对应的记忆`; }
     };
     // 正文里的 [[wikilink]] 直接跳转
     $$('#noteDetail .notes-body .wl[data-title]').forEach(el => el.onclick = () => {
@@ -2409,9 +2440,12 @@
       nb.dataset.wbBound = '1';
       nb.onclick = () => {
         switchNoteTab('edit');
-        const t = $('#noteTitle'), b = $('#noteBody'), h = $('#noteHint'), p = $('#notePreviewBox');
-        if (t) t.value = ''; if (b) b.value = '';
-        if (h) { h.className = 'form-hint'; h.textContent = ''; }
+        NOTE_EDITING_ID = null;
+        const t = $('#noteTitle'), b = $('#noteBody'), h = $('#noteHint'), p = $('#notePreviewBox'), ty = $('#noteType');
+        if (t) { t.value = ''; t.readOnly = false; t.focus(); }
+        if (b) b.value = '';
+        if (ty) { ty.disabled = false; ty.value = 'experience'; }
+        if (h) { h.className = 'form-hint'; h.textContent = '新笔记：填类型、标题与正文，点「保存笔记」写入所选 vault 的 MemoryOS 写入/ 目录，并转成对应类型的记忆'; }
         if (p) p.style.display = 'none';
       };
     }
@@ -5061,7 +5095,21 @@
     const title = $('#noteTitle').value.trim();
     const content = $('#noteBody').value.trim();
     if (!title) { hint.textContent = '标题不能为空'; hint.className = 'form-hint err'; return; }
-    const res = await fetch('/api/notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vault, title, content }) });
+    // 编辑已有笔记：PUT 写回原文件（标题跟随原笔记，编辑模式下标题输入框锁定）
+    if (NOTE_EDITING_ID != null) {
+      const r = await fetch('/api/notes/' + NOTE_EDITING_ID, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { hint.textContent = j.error || '保存失败'; hint.className = 'form-hint err'; return; }
+      const edited = NOTE_ALL.find(n => n.id === NOTE_EDITING_ID);
+      hint.textContent = '已写回原文件 → ' + (edited ? edited.rel_path : '#' + NOTE_EDITING_ID);
+      hint.className = 'form-hint';
+      NOTE_EDITING_ID = null;
+      await loadNoteIndex();
+      renderNoteRail();
+      drawNoteGraph();
+      return;
+    }
+    const res = await fetch('/api/notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vault, title, content, type: (($('#noteType') || {}).value || undefined) }) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { hint.textContent = j.error || '保存失败'; hint.className = 'form-hint err'; return; }
     hint.textContent = '已保存 → ' + (j.note_path || j.file) + (j.created ? '' : '（已存在，追加时间戳后缀）');

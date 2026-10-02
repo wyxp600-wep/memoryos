@@ -1,14 +1,14 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— knowledge 域。
  * handler 自 dashboard.js 原行 2397-2727 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { syncNotesIndex, demoteNoteLinks, writeNoteToVault } from "./obsidian-sync.js";
+import { syncNotesIndex, demoteNoteLinks, writeNoteToVault, mapType } from "./obsidian-sync.js";
 import { getEmbedder } from "./embed.js";
 import { detectSkillTargets } from "./skill-sync.js";
 import { resolveLlm, runAgent, buildSystemPrompt, callLlm } from "./agent-core.js";
 import { unprotectSecret } from "./secret-store.js";
 import { createRunRegistry, readArtifact, extractArtifactPath, extractTaskHint, simpleDiff } from "./agent-runs.js";
 import { resolveInside } from "./exec-tools.js";
-import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit } from "./db.js";
+import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit, updateMemory, logDaemon } from "./db.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -302,7 +302,16 @@ export function registerKnowledge(app, ctx) {
         return { ok: true, linked, unlinked, outgoing, unresolved };
     });
     // —— 笔记（用户自建 + vault 镜像；POST/PUT/DELETE 走写盘 + 索引同步）——
-    app.get("/api/notes", async (req) => {
+    app.get("/api/notes", async (req, reply) => {
+        // ?id= 单条详情（含正文，notes.body 由 syncNotesIndex 落全文）——前端编辑器/详情页取正文用
+        if (req.query.id) {
+            const one = db
+                .prepare(`SELECT id, vault_root, rel_path, title, aliases, tags, sector, body, origin, memory_id, mtime_ms, updated_at FROM notes WHERE id=?`)
+                .get(Number(req.query.id));
+            if (!one)
+                return reply.code(404).send({ ok: false, error: "笔记不存在" });
+            return { ok: true, note: one };
+        }
         const where = [];
         const params = [];
         if (req.query.vault) {
@@ -334,6 +343,7 @@ export function registerKnowledge(app, ctx) {
                 vaultPath: vault,
                 title,
                 content: content || title,
+                type: String(b.type ?? ""),
                 agent: "human:dashboard",
             });
             return { ok: true, file: r.file, note_path: r.notePath, memory_id: r.memoryId, created: r.created };
@@ -360,9 +370,25 @@ export function registerKnowledge(app, ctx) {
             const mergePath = `${filePath.slice(0, -3)}.memoryos-merge-${ts}.md`;
             fs.writeFileSync(mergePath, `---\ntitle: ${n.title}\n---\n\n${diskBody}\n`, "utf8");
         }
-        const fm = ["---", `title: ${n.title}`, `type: experience`, "source: memoryos", "---"].join("\n");
+        // 类型：优先取 body.type（编辑器换类型），否则保留磁盘 frontmatter 原类型，均缺省回落 experience——
+        //   改为硬编码 experience 会把 decision/pitfall 笔记在编辑一次后降级（2026-10-02 笔记类型贯通修复）
+        const fmType = /^type:\s*(.+)$/m.exec(onDisk ?? "");
+        const noteType = mapType(String(req.body?.type ?? fmType?.[1] ?? ""));
+        const fm = ["---", `title: ${n.title}`, `type: ${noteType}`, "source: memoryos", "---"].join("\n");
         fs.writeFileSync(filePath, `${fm}\n\n${content}\n`, "utf8");
         syncNotesIndex(db, n.vault_root);
+        // ★ 2026-10-02 笔记→记忆联动：写回原文件后同步更新生成时的记忆行（内容+类型）。
+        //   updateMemory 置 embedding_stale=1 由 daemon 异步重算向量，FTS/2-gram 同步内置；
+        //   联动失败不阻断笔记写回（主操作已成功，留痕排查）。
+        if (n.memory_id) {
+            try {
+                updateMemory(db, n.memory_id, { content, type: noteType });
+                logDaemon(db, { task: "manual-edit", op: "edit", memory_id: n.memory_id, operator: "human:dashboard", detail: `笔记编辑联动更新记忆（${n.rel_path}）` });
+            }
+            catch (e) {
+                console.error(`[notes] 记忆联动更新失败 (#${n.memory_id}): ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
         return { ok: true, id };
     });
     app.delete("/api/notes/:id", async (req, reply) => {

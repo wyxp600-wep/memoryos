@@ -4364,6 +4364,15 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
           <div class="notes-tabpane" data-npane="edit" style="display:none">
             <div class="form-field" style="margin-bottom:8px">
+              <label>类型（保存后转成记忆的类别）</label>
+              <select id="noteType" class="form-input" style="width:100%;padding:7px 10px">
+                <option value="experience">经验 experience</option>
+                <option value="decision">决策 decision</option>
+                <option value="pitfall">坑 pitfall</option>
+                <option value="convention">约定 convention</option>
+              </select>
+            </div>
+            <div class="form-field" style="margin-bottom:8px">
               <label>标题</label>
               <input id="noteTitle" class="form-input" placeholder="笔记标题（自动作文件名）" style="width:100%">
             </div>
