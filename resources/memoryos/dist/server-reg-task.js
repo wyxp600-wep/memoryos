@@ -100,6 +100,31 @@ export function registerTaskTools(server, ctx) {
             return `\ndispatch 提示（软模式）：该 dispatch 由 ${d.agent} 持有，本次调用方为 ${who}，本次已放行。`;
         return "";
     }
+    /** ★ 2026-10-03 批次 A3（fenced 位）：让 worker 从 heartbeat 回执**主动**得知「我持有的 dispatch 是否已被取代」。
+     *  A1 只被动提到 `state=superseded`；A3 补齐主动通道 —— 被换代者下一次心跳即收到 `fenced=true`，
+     *  据此停止写入并重新 task_next / task_claim，避免「旧持有者继续写」的孤儿写入（对标 Orca fencing）。
+     *  定位调用方 dispatch：优先用入参 dispatch_key；无票时回退按 (memory_id, agent) 取最新 generation。
+     *  判据：latest.state==='superseded' 或 当前 active 的 id ≠ latest.id —— 二者任一即 fenced。
+     *  ⚠ 同 softDispatchNotice：提示串自带**前导换行**，避免污染同行 `⟨state⟩` JSON（p26-lifecycle I2 教训）。
+     *  与 A1 的分工：A3 行优先（`fence || dspNotice`），二者语义重叠时只出 fenced 行，不重复播报。 */
+    function fencedLine(memoryId, dispatchKey, who) {
+        const active = readActiveDispatch(db, memoryId);
+        let mine = dispatchKey ? readDispatchByKey(db, dispatchKey) : null;
+        if (!mine) {
+            try {
+                mine = db.prepare(`SELECT * FROM dispatches WHERE memory_id=? AND agent=? ORDER BY generation DESC LIMIT 1`).get(Number(memoryId), String(who)) ?? null;
+            }
+            catch {
+                mine = null;
+            }
+        }
+        if (!mine)
+            return ""; // 无票且自定位不到（legacy 调用方）→ 不加 fenced 行，A1 提示已覆盖该情形
+        const fenced = String(mine.state) === "superseded" || (active != null && Number(active.id) !== Number(mine.id));
+        if (!fenced)
+            return `\nfenced=false：你的 dispatch（gen=${mine.generation}）仍为当前权威。`;
+        return `\nfenced=true：你持有的 dispatch（gen=${mine.generation}）已被取代 —— 当前权威为 ${active ? `${String(active.dispatch_key).slice(0, 12)}… / gen=${active.generation} / ${active.agent}` : "无（已结算或释放）"}；请停止对该任务的写入，重新 task_next / task_claim 后再继续。`;
+    }
     /** ★ 2026-09-18（实操问题 #1，P0）：按 id 分支的列守卫。readMemory 是裸 `WHERE id=?`（无 status 过滤），
      *  实测 29 条任务「头 pending 但列已 archived/merged」——列表分支有列过滤挡住，按 id 分支只看头文本会放行。
      *  返回错误文案（不可操作）或 null（放行）。 */
@@ -596,12 +621,14 @@ export function registerTaskTools(server, ctx) {
                 return `#${args.memory_id} 当前非进行中，无需续租。`;
             const who = args.as && args.as !== "any" ? args.as : AGENT;
             const dspNotice = softDispatchNotice(row.id, args.dispatch_key, who); // ★ A1：权威提示（软模式，只提示不拒绝）
+            const fence = fencedLine(row.id, args.dispatch_key, who); // ★ A3：fenced 位（已被取代者主动得知，A1 的主动版）
+            const tail = fence || dspNotice; // ★ A3：fenced 行优先，二者语义重叠时只播报一次
             if (st.assignee !== "?" && st.assignee !== who)
                 return `#${args.memory_id} 认领者为 ${st.assignee}，${who} 无权续租。`;
             const card = cardOfTask(row.id);
             if (!card) {
                 appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, cards: [] }), operator: `agent:${AGENT}` });
-                return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。` + dspNotice;
+                return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。` + tail;
             }
             const hMin = Math.max(10, Math.min(120, Math.floor(Number(args.lease_minutes) || 10)));
             const hRunning = cardsOfTask(row.id).filter((cc) => cc.status === "running"); // ★ ③-A：全集合 running 卡
@@ -611,10 +638,10 @@ export function registerTaskTools(server, ctx) {
                     touchCardLease(row.id, null, args.lease_minutes); // ★ #13：分级续窗（全集合 running 卡逐张）
                     appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, cards: hRunning.map((cc) => cc.id), window_min: hMin }), operator: `agent:${AGENT}` });
                 });
-                return `任务 #${row.id} 续租成功（全集合 ${hRunning.length} 张 running 卡，租约窗口 → ${hMin} 分钟）。` + dspNotice;
+                return `任务 #${row.id} 续租成功（全集合 ${hRunning.length} 张 running 卡，租约窗口 → ${hMin} 分钟）。` + tail;
             }
             const hFirst = card;
-            return `任务 #${row.id} 续租未生效：卡片 #${hFirst.id} 当前 status=${hFirst.status}${hFirst.claim_lock ? "（他方持有租约）" : ""}。` + dspNotice;
+            return `任务 #${row.id} 续租未生效：卡片 #${hFirst.id} 当前 status=${hFirst.status}${hFirst.claim_lock ? "（他方持有租约）" : ""}。` + tail;
         },
     });
     server.addTool({

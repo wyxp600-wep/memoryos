@@ -133,6 +133,27 @@ try {
     // T8o：有 active 但未携带 key → 提示持有者（legacy 调用方可观测到自己没带权威锚点）
     check("T8o.软模式·无 key + 有 active → 提示持有者", softDispatchNotice(dt.id, null, "claude").includes("已有 active dispatch") && softDispatchNotice(dt.id, null, "claude").includes("codex"));
     settleDispatch(db, d4.id, "succeeded", "A1 用例收尾");
+    // ── ★ 2026-10-03 批次 A3：heartbeat 回执带 `fenced` 位（与 server-reg-task.js fencedLine 同源复刻布尔判据）──
+    //   fenced 语义：调用方持有的 dispatch 是否已被取代 —— ①其 state 已 superseded，或 ②当前 active 不是它。
+    //   二者任一即 true；定位不到调用方 dispatch（legacy 无票且无历史）返回 null（实现里表现为「不加 fenced 行」）。
+    const fencedOf = (memoryId, dispatchKey, who) => {
+        const active = readActiveDispatch(db, memoryId);
+        let mine = dispatchKey ? readDispatchByKey(db, dispatchKey) : null;
+        if (!mine)
+            mine = db.prepare(`SELECT * FROM dispatches WHERE memory_id=? AND agent=? ORDER BY generation DESC LIMIT 1`).get(Number(memoryId), String(who)) ?? null;
+        if (!mine)
+            return null;
+        return String(mine.state) === "superseded" || (active != null && Number(active.id) !== Number(mine.id));
+    };
+    const dt3 = writeMemory(db, { content: `${taskHead("open", "codex")} fenced 位样例`, type: "task", agent: "trae", agent_fpath: null, project: "global" });
+    const f1 = createDispatch(db, { key: "aaaabbbbcccc", memoryId: dt3.id, agent: "codex", leaseMinutes: 10 });
+    const f2 = createDispatch(db, { key: "ddddeeeeffff", memoryId: dt3.id, agent: "claude", leaseMinutes: 10 });
+    // T8p：换代后旧持有者带旧票 → fenced=true（A3 的核心用例：被取代者下一次心跳即得知）
+    check("T8p.fenced·旧票（已被取代）→ true", fencedOf(dt3.id, f1.key, "codex") === true, JSON.stringify({ p: fencedOf(dt3.id, f1.key, "codex"), f1: f1.generation, f2: f2.generation }));
+    // T8q：当前权威带自己的票 → fenced=false
+    check("T8q.fenced·当前权威票 → false", fencedOf(dt3.id, f2.key, "claude") === false, JSON.stringify({ q: fencedOf(dt3.id, f2.key, "claude") }));
+    // T8r：无票回退按 (memory_id, agent) 定位最新 → codex 最新仍是已 superseded 的 gen1 → true
+    check("T8r.fenced·无票回退定位（旧持有者）→ true", fencedOf(dt3.id, null, "codex") === true, JSON.stringify({ r: fencedOf(dt3.id, null, "codex") }));
     db.close();
 }
 finally {
