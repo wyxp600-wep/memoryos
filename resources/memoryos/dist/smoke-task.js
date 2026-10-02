@@ -4,7 +4,7 @@
  * 用例：T1 写好头 + FTS 可检索；T2 open→claimed；T3 claimed→done；T4 非法任务不匹配
  * 用法：node dist/smoke-task.js
  */
-import { openDb, writeMemory, readMemory } from "./db.js";
+import { openDb, writeMemory, readMemory, createDispatch, readActiveDispatch, readDispatchByKey, settleDispatch } from "./db.js";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -78,6 +78,28 @@ try {
     db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(claimedB2, b2.id);
     const stB2 = readState(readMemory(db, b2.id).content);
     check("T7.状态流转保留 depends", stB2?.status === "claimed" && stB2.deps.includes(a.id), JSON.stringify(stB2));
+    // ── ★ 2026-10-02 Dispatch 语义（对标 orca「one authoritative Task attempt」）──
+    //   权威只来自 active dispatch；idx_dispatches_active 机器保证「一任务同时只有一个 active 尝试」。
+    const dt = writeMemory(db, { content: `${taskHead("open", "codex")} dispatch 语义样例`, type: "task", agent: "trae", agent_fpath: null, project: "global" });
+    const d1 = createDispatch(db, { key: "aaaa1111bbbb", memoryId: dt.id, agent: "codex", sessionId: "sess-1", credentialId: null, leaseMinutes: 10 });
+    check("T8a.首次 dispatch 建 active（generation=1）", d1.generation === 1 && d1.superseded === null, JSON.stringify(d1));
+    const ac1 = readActiveDispatch(db, dt.id);
+    check("T8b.readActiveDispatch 命中且带会话身份", ac1?.dispatch_key === "aaaa1111bbbb" && ac1?.session_id === "sess-1" && ac1?.state === "active", JSON.stringify({ k: ac1?.dispatch_key, s: ac1?.session_id }));
+    const d2 = createDispatch(db, { key: "cccc2222dddd", memoryId: dt.id, agent: "claude", leaseMinutes: 10 });
+    check("T8c.二次认领=接管（generation=2 + 旧被取代）", d2.generation === 2 && d2.superseded === d1.id, JSON.stringify(d2));
+    const old1 = readDispatchByKey(db, "aaaa1111bbbb");
+    check("T8d.旧 dispatch 已 superseded 且指向新代", old1?.state === "superseded" && old1?.superseded_by === d2.id, JSON.stringify({ s: old1?.state, by: old1?.superseded_by }));
+    const ac2 = readActiveDispatch(db, dt.id);
+    check("T8e.同一任务同时只有一个 active", ac2?.dispatch_key === "cccc2222dddd", String(ac2?.dispatch_key));
+    const staleSettle = settleDispatch(db, d1.id, "succeeded", "越权结算");
+    check("T8f.对已 superseded 的 dispatch 结算被拒（权威只来自 active）", staleSettle === false);
+    const okSettle = settleDispatch(db, d2.id, "succeeded", "task_done by claude");
+    const settled = readDispatchByKey(db, "cccc2222dddd");
+    check("T8g.active dispatch 结算成功（outcome 落库）", okSettle === true && settled?.state === "settled" && settled?.outcome === "succeeded", JSON.stringify({ s: settled?.state, o: settled?.outcome }));
+    const d3 = createDispatch(db, { key: "eeee3333ffff", memoryId: dt.id, agent: "codex", leaseMinutes: 10 });
+    check("T8h.结算后再认领 generation 单调递增（不复用旧世代）", d3.generation === 3 && d3.superseded === null, JSON.stringify(d3));
+    settleDispatch(db, d3.id, "whatever", null);
+    check("T8i.outcome 归一（非 failed 一律 succeeded）", readDispatchByKey(db, "eeee3333ffff")?.outcome === "succeeded");
     db.close();
 }
 finally {

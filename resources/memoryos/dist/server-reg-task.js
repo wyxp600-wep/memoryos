@@ -8,7 +8,7 @@
  * 门禁：npm test（smoke-task / smoke-p26-lifecycle / smoke-macp）+ npm run lint 全绿。
  */
 import { z } from "zod";
-import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit } from "./db.js";
+import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit, createDispatch, readDispatchByKey, settleDispatch } from "./db.js"; // ★ 2026-10-02：+createDispatch/readDispatchByKey/settleDispatch（Dispatch 语义）
 import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -407,18 +407,22 @@ export function registerTaskTools(server, ctx) {
                 //   不再出现「头已 in_progress、卡还 ready、事件缺失」的三方分裂；锁竞争由 withTx 整段重试，
                 //   事务回滚后 version 未变，「请刷新后重试」提示从此真实有效。
                 let lock = null;
+                let dsp = null; // ★ 2026-10-02 Dispatch 语义：认领即建「一次权威尝试」（Dispatch = one authoritative Task attempt）
                 const claimAbort = runTaskTx(db, () => {
                     const claimed = updateMemory(db, row.id, { content: newContent, expectedVersion: row.version });
                     if (!claimed)
                         throw new TxAbort(`#${row.id} 并发认领冲突（版本已漂移 v${row.version}）：任务刚被其他会话领取或改写；请 task_next 刷新后重试。`);
-                    lock = randomBytes(12).toString("hex"); // ★ P2-6：租约锁（与 web CAS 锁同形态）
-                    appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, as_any: args.as === "any" || undefined, lease_token: lock, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计；★ ⑧：as=any 托管认领强制留痕（改写归属的可审计性）
+                    // ★ 2026-10-02：同一枚 token 现在同时是 dispatch_key —— 从「查不出持有者的锁」变为「可查询/可换代/可取代的尝试句柄」
+                    //   形态保持纯 hex（不加 d- 前缀）：既有冒烟断言 / 卡片 CAS 锁 / agent 侧解析均按 [0-9a-f]+ 提取，加前缀会被截断。
+                    lock = randomBytes(12).toString("hex");
+                    dsp = createDispatch(db, { key: lock, memoryId: row.id, agent: who, sessionId: args.session_id ?? null, credentialId: cred.credId, leaseMinutes: args.lease_minutes });
+                    appendEvent(db, { memory_id: row.id, op: "task_claim", payload: JSON.stringify({ by: who, as_any: args.as === "any" || undefined, lease_token: lock, dispatch_id: dsp?.id, generation: dsp?.generation, superseded: dsp?.superseded ?? undefined, version: row.version + 1, session_id: args.session_id ?? null, cred_id: cred.credId }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计；★ ⑧：as=any 托管认领强制留痕；★ 2026-10-02：dispatch 身份落审计（谁以第几代尝试持有）
                     syncTaskToCard(row.id, "running", { assignee: who, actor: `agent:${who}`, action: "claim", detail: `MCP 认领（agent ${who}）` }); // ★ 2026-09-15：认领 → 关联卡片 running + assignee=认领者，看板即时显示「已领取·谁」
                     touchCardLease(row.id, lock, args.lease_minutes); // ★ P2-6：卡片租约锁定（默认 10min，#13 可分级 10..120）
                 });
                 if (claimAbort)
                     return claimAbort;
-                return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "task_claim", id: row.id, status: "in_progress", version: row.version + 1, assignee: who, lease_token: lock, cred_id: cred.credId, session_id: args.session_id ?? null });
+                return `已认领任务 #${row.id}（status=in_progress by ${who}）lease_token=${lock}（即 dispatch_key，task_done 时携带）：${newContent.replace(/\s+/g, " ").slice(0, 120)}` + stateReceipt({ op: "task_claim", id: row.id, status: "in_progress", version: row.version + 1, assignee: who, lease_token: lock, dispatch_key: lock, dispatch_id: dsp?.id, generation: dsp?.generation, superseded: dsp?.superseded ?? undefined, cred_id: cred.credId, session_id: args.session_id ?? null });
             }
             // 列可领任务：type='task' 且状态头 pending（★ H4：secret 任务不进工具通道）
             const rows = db.prepare(`SELECT id, content, agent, created_at FROM memories
@@ -744,6 +748,7 @@ export function registerTaskTools(server, ctx) {
             //   造成整个 MCP 服务端起不来（SyntaxError: Unexpected identifier 'expected_version'）。
             //   2026-09-16 修正：在此声明一次，使拒绝逻辑真正生效。**勿再重复插入（曾出现同字段重复声明）。**
             lease_token: z.string().optional().describe("P2-6 fencing：task_claim 返回的租约锁；与卡片当前锁不符 → 拒绝过期完成写"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-02 Dispatch 语义：task_claim 返回的 dispatch_key（与 lease_token 同值）。传了即强制「权威只来自 active dispatch」——已 settled/released/superseded、或任务/归属不符一律拒绝。软模式可省略。"),
             expected_version: z.number().int().optional().describe("P2-6 fencing：任务记忆乐观版本；不一致 → 拒绝陈旧完成写"),
             credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
             session_id: z.string().optional(),
@@ -783,6 +788,19 @@ export function registerTaskTools(server, ctx) {
             // ★ ②-A：A1 硬模式下 fencing 版本必填 —— 防僵尸会话陈旧完成写（软模式保持兼容）
             if (process.env.MEMORYOS_A1_ENFORCE === "1" && args.expected_version == null)
                 return `#${args.memory_id} A1 硬模式（MEMORYOS_A1_ENFORCE=1）：task_done 必须携带 expected_version（fencing：task_next / task_read 回执中的 version）；请刷新任务后重试。`;
+            // ★ 2026-10-02 Dispatch 语义（对标 orca「Lifecycle authority comes from the active Dispatch」）：
+            //   权威**只**来自 active dispatch —— 传了 key 就必须逐条过关；不传则软模式放行（与 A1 同款兼容策略）。
+            const dspRow = args.dispatch_key ? readDispatchByKey(db, args.dispatch_key) : null;
+            if (args.dispatch_key) {
+                if (!dspRow)
+                    return `#${args.memory_id} dispatch 不存在（${String(args.dispatch_key).slice(0, 12)}…）：请 task_next / task_claim 重新获取后再完成。`;
+                if (Number(dspRow.memory_id) !== Number(row.id))
+                    return `#${args.memory_id} dispatch 归属不符（该 dispatch 属于任务 #${dspRow.memory_id}）：拒绝跨任务写入。`;
+                if (dspRow.state !== "active")
+                    return `#${args.memory_id} 该 dispatch 已 ${dspRow.state}（你已被取代或已结算）：权威只来自 active dispatch，请重新 task_next 后领取。`;
+                if (dspRow.agent !== AGENT)
+                    return `#${args.memory_id} 该 dispatch 由 ${dspRow.agent} 持有，你（${AGENT}）不是持有者：拒绝写入。`;
+            }
             const body = taskBody(row.content);
             // ★ P3 确定性门控：任务头声明 [gate:预设] 时，先跑验收——不信任 Agent 自报结论。
             //   门控通过 → 标记 done；门控失败/未命中预设 → fail-closed，状态置 pending（可重新 task_claim 重试），
@@ -840,14 +858,17 @@ export function registerTaskTools(server, ctx) {
                 //   置信强化只给低档 0.02；经 [gate:] 门控通过的关闭保持 0.05 全强度。
                 const selfVerified = !gateRes;
                 bumpConfidence(db, row.id, selfVerified ? 0.02 : 0.05); // 完成任务强化（确定性验收全强度 / 自述低强度）
-                appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId, self_verified: selfVerified || undefined }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计；④：自述标记
+                appendEvent(db, { memory_id: row.id, op: "task_done", payload: JSON.stringify({ by: AGENT, session_id: args.session_id ?? null, cred_id: cred.credId, self_verified: selfVerified || undefined, dispatch_id: dspRow?.id, generation: dspRow?.generation }), operator: `agent:${AGENT}` }); // ★ #7/#8：session/凭据落审计；④：自述标记；★ 2026-10-02：dispatch 结算留痕
+                // ★ 2026-10-02 Dispatch 结算：outcome 必填（orca 口径——禁止只在散文里编码失败）；event 已留痕，此处落结构态
+                if (dspRow)
+                    settleDispatch(db, dspRow.id, "succeeded", `task_done by ${AGENT}${gateRes ? ` gate=${gateName} PASS` : " self_verified"}`);
                 syncTaskToCard(row.id, "done", { actor: `agent:${AGENT}`, detail: `任务 #${row.id} MCP 完成` }); // ★ 2026-09-15：完成 → 关联卡片 done（assignee 保留=完成者），看板即时同步
                 for (const cc of cardsOfTask(row.id)) // ★ ③-A：全集合清锁（原单卡 cardNowDone，多卡第 2..n 张会留旧锁）；P2-6：完成即释放租约锁；⑦：顺带撕贴条
                     db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL WHERE id=?`).run(cc.id);
             });
             if (doneAbort)
                 return doneAbort;
-            return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}` + stateReceipt({ op: "task_done", id: row.id, status: "done", version: row.version + 1, cred_id: cred.credId, session_id: args.session_id ?? null });
+            return `任务 #${row.id} 已完成（status=done）[${row.type}|${row.agent}] 结论：${args.conclusion.trim().slice(0, 100)}` + stateReceipt({ op: "task_done", id: row.id, status: "done", version: row.version + 1, cred_id: cred.credId, session_id: args.session_id ?? null, dispatch_key: dspRow ? args.dispatch_key : undefined, dispatch_id: dspRow?.id, generation: dspRow?.generation, outcome: dspRow ? "succeeded" : undefined });
         },
     });
     server.addTool({

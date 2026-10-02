@@ -286,6 +286,31 @@ CREATE TABLE IF NOT EXISTS card_memory (
 );
 CREATE INDEX IF NOT EXISTS idx_card_memory_mem ON card_memory(memory_id);
 
+-- ★ 2026-10-02 Dispatch 语义（对标 orca orchestration「one authoritative Task attempt」）：
+--   把「谁有权改这个任务」从散落的 memories.version / cards.claim_lock / session_id / 任务头，
+--   收敛为一个显式实体。权威**只**来自 active dispatch——任务头 / 卡片 / DB 行都不能单独授权写。
+--   idx_dispatches_active 与 idx_resource_locks_active 同构：机器保证「一任务同时只有一个 active 尝试」。
+CREATE TABLE IF NOT EXISTS dispatches (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  dispatch_key     TEXT    NOT NULL UNIQUE,           -- 对外句柄（纯 hex，与 lease_token 同值同形态）；取代「查不出持有者的裸锁」
+  memory_id        INTEGER NOT NULL,                  -- 关联任务
+  agent            TEXT    NOT NULL,                  -- 持有者（AGENT_NAME_RE 口径）
+  session_id       TEXT,                              -- 会话隔离（原问题 #7：同 agent 名多会话串号）
+  credential_id    INTEGER,                           -- A1 凭据追溯
+  state            TEXT    NOT NULL DEFAULT 'active', -- active/settled/released/superseded/stale
+  generation       INTEGER NOT NULL DEFAULT 1,        -- 尝试世代（仅接管/换代 +1）；与 memories.version 分工不同
+  outcome          TEXT,                              -- succeeded/failed（结算必填，orca 口径：禁止只在散文里编码失败）
+  evidence         TEXT,                              -- 结构化终态 JSON（回执）
+  lease_expires_at TEXT    NOT NULL,
+  heartbeat_at     TEXT,
+  started_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  settled_at       TEXT,
+  superseded_by    INTEGER                            -- 被哪次 dispatch 取代
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatches_active ON dispatches(memory_id) WHERE state='active';
+CREATE INDEX IF NOT EXISTS idx_dispatches_agent ON dispatches(agent, state);
+CREATE INDEX IF NOT EXISTS idx_dispatches_lease ON dispatches(lease_expires_at) WHERE state='active';
+
 -- ★ R4-1（第四轮评审）：长期治理保留策略归档目标表（只归档不删除，对齐 v1.1 纪律）
 CREATE TABLE IF NOT EXISTS card_events_archive (
   id          INTEGER PRIMARY KEY,
@@ -1800,4 +1825,70 @@ function insertMerged(db, a, b) {
     });
     db.prepare(`UPDATE memories SET derived_from=? WHERE id=?`).run(a.id, out.id);
     return out;
+}
+
+/* ── ★ 2026-10-02 Dispatch 语义（对标 orca orchestration「one authoritative Task attempt」）──
+ * 权威规则：写权限**只**来自 active dispatch —— 任务头 / 卡片 / DB 行都不能单独授权写。
+ * 与既有字段分工（避免「两套版本」）：
+ *   - memories.version      管并发写冲突（任何改写 +1；现有 CAS 事务不动）
+ *   - dispatches.generation 管尝试世代（仅接管/换代 +1）
+ *   - cards.claim_lock      继续写 dispatch_key 作**投影**（卡片侧零权威）
+ * 存活三态（orca 口径 live/unverifiable/exited）：租约到期只标 stale，不回收、不释放——
+ *   回收必须有正向动作（接管 / 人工裁决 / 显式 release）；absence 永不授权破坏性动作。
+ * key 生成由调用方负责（server-reg-task.js 已 import randomBytes），本模块零新依赖。
+ */
+export const DISPATCH_STATES = ["active", "settled", "released", "superseded", "stale"];
+/** 按 key 读 dispatch（含非 active）；不存在/异常返回 null */
+export function readDispatchByKey(db, key) {
+    if (!key)
+        return null;
+    try {
+        return db.prepare(`SELECT * FROM dispatches WHERE dispatch_key=?`).get(String(key)) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 读某任务当前的 active dispatch（无则 null） */
+export function readActiveDispatch(db, memoryId) {
+    try {
+        return db.prepare(`SELECT * FROM dispatches WHERE memory_id=? AND state='active'`).get(Number(memoryId)) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 建 dispatch（接管语义）：同任务已有 active → 先置 superseded 并继承 generation+1。
+ *  「同时只有一个 active」由 idx_dispatches_active 兜底；本函数需在事务内调用才原子。 */
+export function createDispatch(db, { key, memoryId, agent, sessionId = null, credentialId = null, leaseMinutes = 10 }) {
+    const min = Math.max(1, Math.min(1440, Math.floor(Number(leaseMinutes) || 10)));
+    const prev = db.prepare(`SELECT id, generation FROM dispatches WHERE memory_id=? AND state='active'`).get(Number(memoryId));
+    // ★ generation 取该任务历史最大值 +1（不是「仅在有 active 时 +1」）——否则结算后重新认领会拿到相同世代，
+    //   旧 token 与新一代无法判序，fencing 的核心（新生代永远更大）就失效了。
+    const maxRow = db.prepare(`SELECT MAX(generation) g FROM dispatches WHERE memory_id=?`).get(Number(memoryId));
+    const generation = Number(maxRow?.g ?? 0) + 1;
+    if (prev)
+        db.prepare(`UPDATE dispatches SET state='superseded', settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(prev.id);
+    const r = db.prepare(`INSERT INTO dispatches(dispatch_key, memory_id, agent, session_id, credential_id, state, generation, lease_expires_at) VALUES (?,?,?,?,?,'active',?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`).run(String(key), Number(memoryId), String(agent), sessionId, credentialId, generation, `+${min} minutes`);
+    const id = Number(r.lastInsertRowid);
+    if (prev)
+        db.prepare(`UPDATE dispatches SET superseded_by=? WHERE id=?`).run(id, prev.id);
+    return { id, key: String(key), generation, superseded: prev ? Number(prev.id) : null };
+}
+/** 结算：settled + outcome + evidence。orca 口径：outcome 必填，禁止只在散文里编码失败。 */
+export function settleDispatch(db, dispatchId, outcome, evidence = null) {
+    const oc = outcome === "failed" ? "failed" : "succeeded";
+    const r = db.prepare(`UPDATE dispatches SET state='settled', outcome=?, evidence=?, settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND state='active'`).run(oc, evidence ? String(evidence) : null, Number(dispatchId));
+    return Number(r.changes ?? 0) > 0;
+}
+/** 释放：未完工归还（与 settled 区分）。orca：release 是结算后清理，不是取消。 */
+export function releaseDispatch(db, dispatchId, reason = null) {
+    const r = db.prepare(`UPDATE dispatches SET state='released', evidence=?, settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND state IN ('active','stale')`).run(reason ? String(reason) : null, Number(dispatchId));
+    return Number(r.changes ?? 0) > 0;
+}
+/** 续租/心跳：只证存活，不证完成；顺带把 stale 唤醒回 active（absence 不是失败）。 */
+export function touchDispatchLease(db, dispatchId, minutes = 10) {
+    const min = Math.max(1, Math.min(1440, Math.floor(Number(minutes) || 10)));
+    const r = db.prepare(`UPDATE dispatches SET state='active', heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',?) WHERE id=? AND state IN ('active','stale')`).run(`+${min} minutes`, Number(dispatchId));
+    return Number(r.changes ?? 0) > 0;
 }
