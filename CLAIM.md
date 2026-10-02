@@ -117,6 +117,8 @@
 
 | 2026-10-03 | **改造计划批次 D1（写类 `task_*` 加 `request_id` 幂等重放，对标 orca `--retry-request`）**：`resources/memoryos/dist/db.js`（新表 `request_receipts` + `readRequestReceipt`/`saveRequestReceipt`）、`dist/server-reg-task.js`（**单点包裹 `addTool`** + zod `.extend()` 注入 `request_id` 声明）、`dist/smoke-mcp.js`（D1a–D1g 端到端断言）、`outputs/route-snapshot.json`（**基线重定，G4**） | 依据 §2.1 判据 **J2/J3** 与 orca 分析 P2-1「写类 `task_*` 加可选 `request_id`，落一张轻量 `request_receipts`」。语义边界照抄 orca：**无记录 ≠ 未发生**——不带 `request_id` 的调用一律不查不落（零回归）。**★ G4 基线重定理由**：新增表改变 `/api/health` 返回的库统计（`pageCount`/`sizeMb` 等），body 450B→448B，属**预期内的结构变更**、非 T8 类重构回归；重定后 `snapshot:check` 结构契约 196 + 无参 GET 50 + 动态段 11 + 鉴权 逐项一致 ✅。**门禁实证**：`lint` 79 PASS·0 FAIL｜`lint:sql` 448 处调用 0 不匹配｜`npm test` 23 PASS·0 FAIL·2 SKIP｜`smoke-mcp` D1a–D1g 全 PASS（含「副作用只一次」以 DB 终态计数判定=1）｜`shell.test` 25/25｜pre-commit gate ALL PASS。提交 `93f240f`（4 文件，+135/−12） |
 
+| 2026-10-03 | **① 门禁文案：「完成后沉淀」条补「报出记忆编号」（并入既有条目，条数仍 8）；② 缺陷修：`dist/sync-rules.js` 的 CLI 缺省 DB 对齐 `server.js`「只用生产库」口径** | ① 该约束此前只写在记忆库硬约束与手写文档里，**不在真相源 `GATE_RULES`** → 下次同步会被覆盖（与 10-03「真相源在代码里」同源）；并入既有条目而非新增第 9 条 → 条数/契约零影响。② **实测踩到的静默降级**：`node dist/sync-rules.js` 缺省读**仓内空 dev 库** → `rules=8`（静默丢掉规则页 `inject=1` 的 12 条规则）、`exit=0` 无告警，6 个注入段被降级；`server.js:20-22` 早在 2026-10-02 已按用户拍板收口「缺省只用 `%APPDATA%` 生产库」，本文件漏改。已按同口径对齐（`MEMORY_DB ?? %APPDATA%/MemoryOS/data/memory.db ?? 仓内兜底`）。**验证**：`node --check` EXIT=0；**不设 env** 复跑读到生产库（memories=2120）、6 目标 `rules=20 skipped=391`；6 目标逐文件核验：新文案各命中 1 处、纯同步文件（`AGENTS.md`/`CLAUDE.md`/`rule-memoryos.md`）条目数=20 与改前一致（无规则丢失）。提交 `f0888fb`（1 文件） | A 分区 |
+
 ---
 
 ## 5. 接管登记（模板）
