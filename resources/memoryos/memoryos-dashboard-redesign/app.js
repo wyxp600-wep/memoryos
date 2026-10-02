@@ -1984,16 +1984,26 @@
     if (badge) badge.textContent = `笔记 ${r.noteFiles} · 已导入 ${r.imported} · 待导入 ${r.pending} · 库中 obsidian 记忆 ${r.memoriesFromObsidian}`;
     renderObsidianImported(r.imported || []);
   }
+  let _obsidianTick = null;       // 进度条用时计时器（真进度只有完成态 stats，进行中只报已用时）
   function obsidianProgressStart(label) {
     $('#obsidianProgress').style.display = 'block';
     $('#obsidianStatus').textContent = label;
-    $('#obsidianPercent').textContent = '0%';
-    $('#obsidianBar').style.width = '0%';
+    $('#obsidianPercent').textContent = '0s';
+    $('#obsidianBar').classList.add('indeterminate');
     $('#obsidianStats').innerHTML = '';
+    const t0 = Date.now();
+    clearInterval(_obsidianTick);
+    _obsidianTick = setInterval(() => {
+      const el = $('#obsidianPercent');
+      if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + 's';
+    }, 1000);
   }
   function obsidianProgressDone(ok, stats, label, isDryRun) {
+    clearInterval(_obsidianTick); _obsidianTick = null;
+    const barEl = $('#obsidianBar');
+    if (barEl) barEl.classList.remove('indeterminate');
     $('#obsidianBar').style.width = '100%';
-    $('#obsidianPercent').textContent = '100%';
+    $('#obsidianPercent').textContent = ok ? '完成' : '—';
     $('#obsidianStatus').textContent = ok ? (isDryRun ? '预演完成（未落库）' : label + '完成') : label + '失败';
     if (stats) {
       const parts = [];
@@ -2014,15 +2024,12 @@
     const dryRun = $('#obsidianDryRun').checked;
     const btn = $('#obsidianImportBtn');
     btn.disabled = true; btn.style.opacity = '0.6';
-    obsidianProgressStart(dryRun ? '正在预演导入（不落库）…' : '正在扫描 vault 并增量导入…');
-    let p = 8;
-    const iv = setInterval(() => { p = Math.min(p + 5, 90); $('#obsidianBar').style.width = p + '%'; $('#obsidianPercent').textContent = p + '%'; }, 220);
+    obsidianProgressStart(dryRun ? '正在预演导入（不落库）…' : '正在扫描 vault 并增量导入…（大 vault 首次可能需要数分钟）');
     try {
       const r = await fetch('/api/obsidian/import', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vault, project: $('#obsidianProjectInput').value.trim() || undefined, dry_run: dryRun }),
       }).then(x => x.json());
-      clearInterval(iv);
       obsidianProgressDone(!!r.ok, r.stats, '导入', dryRun);
       if (r.ok) {
         toast(dryRun ? '预演完成' : ('导入完成：新增 ' + (r.stats.added || 0) + ' / 更新 ' + (r.stats.updated || 0)));
@@ -2030,7 +2037,6 @@
         if (!dryRun) refreshNoteWorkbench();
       } else toast('导入失败：' + (r.error || '未知错误'));
     } catch (e) {
-      clearInterval(iv);
       obsidianProgressDone(false, null, '导入', false);
       toast('导入失败：' + e.message);
     } finally { btn.disabled = false; btn.style.opacity = '1'; }
@@ -2041,19 +2047,15 @@
     const btn = $('#obsidianExportBtn');
     btn.disabled = true; btn.style.opacity = '0.6';
     obsidianProgressStart('正在导出 active 记忆到 vault/MemoryOS 导出/…');
-    let p = 10;
-    const iv = setInterval(() => { p = Math.min(p + 6, 88); $('#obsidianBar').style.width = p + '%'; $('#obsidianPercent').textContent = p + '%'; }, 200);
     try {
       const r = await fetch('/api/obsidian/export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vault, project: $('#obsidianProjectInput').value.trim() || undefined }),
       }).then(x => x.json());
-      clearInterval(iv);
       obsidianProgressDone(!!r.ok, r.stats, '导出', false);
       if (r.ok) toast('导出完成：写入 ' + (r.stats.written || 0) + ' / 跳过 ' + (r.stats.skipped || 0));
       else toast('导出失败：' + (r.error || '未知错误'));
     } catch (e) {
-      clearInterval(iv);
       obsidianProgressDone(false, null, '导出', false);
       toast('导出失败：' + e.message);
     } finally { btn.disabled = false; btn.style.opacity = '1'; }

@@ -2302,6 +2302,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .notes-vchip.on { color: var(--accent-cyan); border-color: var(--border-glow); background: rgba(65,187,200,0.13); }
   .notes-hint { font-size: 11px; color: var(--text-muted); line-height: 1.8; margin: 0 2px 12px; }
   .notes-progress { display: none; margin: 0 2px 12px; }
+  /* 进行中无真百分比（内核一次性返回 stats）→ 不定态滑动条 + 右侧真实已用时，避免假进度停在 90% 像卡死 */
+  #obsidianBar.indeterminate { width: 34% !important; animation: obsbar-slide 1.3s ease-in-out infinite; }
+  @keyframes obsbar-slide { from { margin-left: -34%; } to { margin-left: 100%; } }
 
   .notes-workbench {
     display: grid; grid-template-columns: 246px minmax(0, 1fr) 330px; gap: 12px;
@@ -4273,7 +4276,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             导入笔记
           </button>
-          <button class="btn-primary" id="obsidianExportBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)">
+          <button class="btn-primary" id="obsidianExportBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)" title="导出不适用 dry-run：dry-run 仅用于「导入笔记」预演">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             导出记忆
           </button>
