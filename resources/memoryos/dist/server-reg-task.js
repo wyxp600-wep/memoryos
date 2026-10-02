@@ -8,7 +8,7 @@
  * 门禁：npm test（smoke-task / smoke-p26-lifecycle / smoke-macp）+ npm run lint 全绿。
  */
 import { z } from "zod";
-import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit, createDispatch, readDispatchByKey, readActiveDispatch, settleDispatch } from "./db.js"; // ★ 2026-10-02：+createDispatch/readDispatchByKey/settleDispatch（Dispatch 语义）；★ 2026-10-03 A1：+readActiveDispatch（六处写入点软模式提示）
+import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit, createDispatch, readDispatchByKey, readActiveDispatch, settleDispatch, readRequestReceipt, saveRequestReceipt } from "./db.js"; // ★ 2026-10-02：+createDispatch/readDispatchByKey/settleDispatch（Dispatch 语义）；★ 2026-10-03 A1：+readActiveDispatch（六处写入点软模式提示）；★ 2026-10-03 D1：+readRequestReceipt/saveRequestReceipt（request_id 幂等重放）
 import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -232,6 +232,47 @@ export function registerTaskTools(server, ctx) {
         try { logExecAudit(db, { tool: "task_gate", risk: "L0", approval: "gate-auto", agent: AGENT, memory_id: memoryId, argsDigest: gate, detail, ok }); } catch { }
         return { ok, executed: true, detail };
     }
+    /* ── ★ 批次 D1（2026-10-03，对标 orca `--retry-request <id>`）：写类 task_* 请求幂等 ──
+     *  场景：agent 网络超时后无法判定「是否已生效」，只能重试 → 重复 done / 重复 release。
+     *  做法：写类工具可选入参 `request_id`（客户端生成、全局唯一）。
+     *    · 首达：正常执行 → 落 request_receipts 回执（原始返回串）；
+     *    · 重放（同 id 再达）：**不执行**，原样返回首次回执 + 前缀标注 → 副作用只发生一次；
+     *    · 错配（同 id 用在别的工具）：拒绝复用，防串号。
+     *  语义边界（对齐 orca）：本表只证「该 id 已处理过」；**无记录 ≠ 未发生**——
+     *    不带 request_id 的调用一律不查不落，行为与改动前完全一致（零回归）。
+     *  实现：**单点包裹 addTool**（按工具名白名单）+ zod `.extend()` 注入参数声明，
+     *    避免逐个工具改参数表与函数体（10 处重复改动 = 10 处漏改风险）。
+     *    `server` 是形参，此处局部换成包裹版：函数外的调用方仍持有原对象（无需还原，天然原子）。 */
+    const IDEMPOTENT_TASK_TOOLS = new Set(["task_assign", "task_delegate", "task_claim", "task_heartbeat", "task_release", "task_block", "task_reopen", "task_done", "task_verify", "task_supersede"]);
+    const REQUEST_ID_DESC = "★ D1 幂等键：网络超时重试时带同一 id → 已处理过则复用首次回执、不重复执行副作用。不传 = 行为与改动前一致。";
+    const rawAddTool = server.addTool.bind(server);
+    server = {
+        addTool: (tool) => {
+            if (!tool || !IDEMPOTENT_TASK_TOOLS.has(tool.name) || typeof tool.execute !== "function")
+                return rawAddTool(tool);
+            const inner = tool.execute.bind(tool);
+            return rawAddTool({
+                ...tool,
+                parameters: tool.parameters?.extend ? tool.parameters.extend({ request_id: z.string().min(1).max(200).optional().describe(REQUEST_ID_DESC) }) : tool.parameters,
+                async execute(args) {
+                    const rid = args?.request_id ? String(args.request_id) : "";
+                    if (!rid)
+                        return inner(args); // 未带幂等键 → 原路径，零开销
+                    const hit = readRequestReceipt(db, rid);
+                    if (hit) {
+                        if (hit.tool !== tool.name)
+                            return `request_id「${rid}」此前已用于 ${hit.tool}，与本次 ${tool.name} 不符：拒绝复用（防串号）。如需重试本工具，请换新的 request_id。`;
+                        return `♻️ 幂等重放（request_id「${rid}」已于 ${hit.created_at} 由 ${hit.tool} 处理，本次未重复执行）：\n${hit.result}`;
+                    }
+                    const out = await inner(args);
+                    // 只缓存字符串回执（本域工具均返回字符串）；非字符串不回缓存，避免类型往返失真。
+                    if (typeof out === "string")
+                        saveRequestReceipt(db, { requestId: rid, tool: tool.name, agent: AGENT, memoryId: Number.isInteger(args?.memory_id) ? args.memory_id : null, result: out });
+                    return out;
+                },
+            });
+        },
+    };
     server.addTool({
         name: "task_gate",
         description: "多 Agent 协同·确定性验收门：查看任务的 [gate:预设] 声明与最近一次验收结果。预设白名单（lint-sql/lint-catch/smoke-mcp/smoke-task/smoke-p26/snapshot）——task_done 会先跑该验收，通过才 done，失败 fail-closed 回退 pending（E-0 后无 review 态）。",

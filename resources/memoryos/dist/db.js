@@ -434,6 +434,22 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   finished_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_finished ON agent_runs(finished_at DESC);
+
+/* ── ★ 批次 D1（2026-10-03，对标 orca 的 --retry-request <id>）：写类工具的「请求回执」 ──
+ * 目的：agent 网络超时后无法判定「是否已生效」，只能重试 → 重复 done / 重复 release。
+ *   同 request_id 二次到达时**复用首次回执、不重复执行**（幂等重放）。
+ * 语义边界（对齐 orca）：本表只证「该 request_id 已被处理过」；**无记录 ≠ 未发生**——
+ *   没带 request_id 的调用一律不查不落，行为与改动前完全一致（零回归）。
+ * 键口径：request_id 由客户端生成、全局唯一（PRIMARY KEY 即约束）；tool 仅作错配校验不参与键。
+ *   回执**不存敏感内容**：写入的是工具的正常业务回执串（与 MCP 返回同体）。 */
+CREATE TABLE IF NOT EXISTS request_receipts (
+  request_id TEXT PRIMARY KEY,                  -- 客户端生成的请求身份（复用 orca --retry-request 语义）
+  tool       TEXT    NOT NULL,                  -- 首次处理该请求的工具名（重放错配 → 拒绝，防串号）
+  agent      TEXT,                              -- 首办 agent（审计用）
+  memory_id  INTEGER,                           -- 关联任务（审计用，可空）
+  result     TEXT    NOT NULL,                  -- 首次执行的原始回执（重放原样返回）
+  created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -1900,5 +1916,28 @@ export function releaseDispatch(db, dispatchId, reason = null) {
 export function touchDispatchLease(db, dispatchId, minutes = 10) {
     const min = Math.max(1, Math.min(1440, Math.floor(Number(minutes) || 10)));
     const r = db.prepare(`UPDATE dispatches SET state='active', heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',?) WHERE id=? AND state IN ('active','stale')`).run(`+${min} minutes`, Number(dispatchId));
+    return Number(r.changes ?? 0) > 0;
+}
+
+/* ── ★ 批次 D1（2026-10-03）：request_id 幂等回执读写 ─────────────────────────
+ * 两个函数只做「查 / 落」一件事，判定与返回文案由工具层（server-reg-task.js 单点包裹）负责——
+ * 保持 db.js 无业务话术、工具层无 SQL，与既有分工一致。 */
+/** 读请求回执（幂等重放命中判据）：无 request_id 或未命中 → null。 */
+export function readRequestReceipt(db, requestId) {
+    if (!requestId)
+        return null;
+    try {
+        return db.prepare(`SELECT request_id, tool, agent, memory_id, result, created_at FROM request_receipts WHERE request_id=?`).get(String(requestId)) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 落请求回执（INSERT OR IGNORE：并发首达竞争时不覆盖既有回执）。
+ *  返回 true = 本次新建；false = 已存在（调用方仍原样返回本次结果即可，不阻断业务）。 */
+export function saveRequestReceipt(db, { requestId, tool, agent = null, memoryId = null, result }) {
+    if (!requestId)
+        return false;
+    const r = db.prepare(`INSERT OR IGNORE INTO request_receipts(request_id, tool, agent, memory_id, result) VALUES (?,?,?,?,?)`).run(String(requestId), String(tool), agent, memoryId == null ? null : Number(memoryId), String(result));
     return Number(r.changes ?? 0) > 0;
 }

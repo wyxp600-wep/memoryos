@@ -152,6 +152,49 @@ try {
     }));
     const tdnt = tdn.result?.content?.[0]?.text ?? "";
     check("task_done 完成 done", tdnt.includes("已完成") && tdnt.includes("status=done"), JSON.stringify(tdnt.slice(0, 60)));
+    // ★ 批次 D1（2026-10-03，对标 orca `--retry-request <id>`）：写类 task_* 的 request_id 幂等重放（真实 MCP 链路）
+    //   断言口径（对应计划 D1「同 request_id 重放两次 → 结果与副作用一致」）：
+    //     a. 首达带 id → 正常执行；b. 同 id 重放 → 复用首次回执、不重复执行（副作用只一次，以 DB 终态计数判定）；
+    //     c. 同 id 换工具 → 拒绝复用（防串号）；d. 回执表只记首办工具；e. 不带 id → 不查不落、零回归。
+    const D1RID = "smoke-d1-req-1";
+    const D1MARK = "D1-IDEM-MARKER-7f3a"; // 唯一串：用于按正文计数（task_assign 会加状态头，故用 LIKE 而非等值）
+    const D1BODY = `D1 幂等样本（${D1MARK}）：网关超时重试不应重复建任务`;
+    const d1a = (await send("tools/call", {
+        name: "task_assign",
+        arguments: { content: D1BODY, assignee: "codex", project: "global", request_id: D1RID },
+    }));
+    const d1at = d1a.result?.content?.[0]?.text ?? "";
+    const d1tid = (d1at.match(/#(\d+)/) || [])[1];
+    check("D1a.首达带 request_id 正常执行（回执落库）", /已分派任务 #\d+/.test(d1at) && !!d1tid, JSON.stringify(d1at.slice(0, 60)));
+    const d1b = (await send("tools/call", {
+        name: "task_assign",
+        arguments: { content: D1BODY, assignee: "codex", project: "global", request_id: D1RID },
+    }));
+    const d1bt = d1b.result?.content?.[0]?.text ?? "";
+    check("D1b.同 request_id 重放 → 复用首次回执、不重复执行", d1bt.includes("♻️ 幂等重放") && d1bt.includes(`已分派任务 #${d1tid}`), JSON.stringify(d1bt.slice(0, 70)));
+    const d1c = (await send("tools/call", {
+        name: "task_claim",
+        arguments: { as: "codex", memory_id: Number(d1tid), request_id: D1RID },
+    }));
+    const d1ct = d1c.result?.content?.[0]?.text ?? "";
+    check("D1c.同 request_id 换工具 → 拒绝复用（防串号）", d1ct.includes("拒绝复用") && d1ct.includes("task_assign"), JSON.stringify(d1ct.slice(0, 70)));
+    // ★ 副作用只一次：以 DB 终态判定（若重放真执行了，同正文任务记忆会变成 2 条）——与文案无关
+    const d1db = new DatabaseSync(DB_PATH, { readOnly: true });
+    const d1cnt = d1db.prepare(`SELECT COUNT(*) c FROM memories WHERE content LIKE '%' || ? || '%'`).get(D1MARK).c;
+    const d1rec = d1db.prepare(`SELECT tool, COUNT(*) c FROM request_receipts GROUP BY tool`).all();
+    d1db.close();
+    check("D1d.副作用只发生一次（重放未新建任务记忆）", Number(d1cnt) === 1, `memories=${d1cnt}（期望 1）`);
+    check("D1e.回执表只记首办工具（无串号污染）", d1rec.length === 1 && d1rec[0].tool === "task_assign" && Number(d1rec[0].c) === 1, JSON.stringify(d1rec));
+    // ★ 零回归：不带 request_id 的写类调用行为不变（同工具可再次正常执行）
+    const d1f = (await send("tools/call", {
+        name: "task_assign",
+        arguments: { content: "D1 零回归对照：不带幂等键仍可正常调用", assignee: "codex", project: "global" },
+    }));
+    const d1ft = d1f.result?.content?.[0]?.text ?? "";
+    check("D1f.不带 request_id → 不查不落、行为与改动前一致", /已分派任务 #\d+/.test(d1ft), JSON.stringify(d1ft.slice(0, 60)));
+    // ★ 可发现性：MCP 握手下发的 task_assign 入参声明里必须含 request_id（否则 agent 无从知晓）
+    const d1props = tools.find((t) => t.name === "task_assign")?.inputSchema?.properties ?? {};
+    check("D1g.MCP 握手已下发 request_id 参数声明", !!d1props.request_id, `props=${Object.keys(d1props).join(",")}`);
     // task_next：依赖拓扑可做集（真实 MCP 链路）
     const tn = (await send("tools/call", {
         name: "task_next",
