@@ -154,6 +154,30 @@ try {
     check("T8q.fenced·当前权威票 → false", fencedOf(dt3.id, f2.key, "claude") === false, JSON.stringify({ q: fencedOf(dt3.id, f2.key, "claude") }));
     // T8r：无票回退按 (memory_id, agent) 定位最新 → codex 最新仍是已 superseded 的 gen1 → true
     check("T8r.fenced·无票回退定位（旧持有者）→ true", fencedOf(dt3.id, null, "codex") === true, JSON.stringify({ r: fencedOf(dt3.id, null, "codex") }));
+    // ── ★ 2026-10-03 批次 A2：task_next「待处理」段（与 server-reg-task.js 待决策段同源复刻取数口径）──
+    //   入栏判据（两条并列，任一中即入栏）：① dispatch.state='active' 且租约已过期；② 卡片 status='running' 且已贴提醒条。
+    //   设计语义（Orca J2）：到期/沉默只是检查点，不授权回收 —— 但必须显式可见，否则无人裁决 = 永久积压。
+    //   负例同样重要：未过期不得入栏，避免「所有 active 都被列出」的过度上报把真问题淹没。
+    const pendingOf = () => {
+        const out = [];
+        const overdue = db.prepare(`SELECT memory_id, agent FROM dispatches
+           WHERE state='active' AND julianday(lease_expires_at) < julianday('now')`).all();
+        for (const o of overdue)
+            out.push({ via: "lease", mid: Number(o.memory_id), who: o.agent });
+        const noticed = db.prepare(`SELECT c.id AS card_id, c.assignee FROM cards c
+           WHERE c.status='running' AND c.lease_notice_at IS NOT NULL`).all();
+        for (const n of noticed)
+            out.push({ via: "notice", card: Number(n.card_id), who: n.assignee });
+        return out;
+    };
+    const dt4 = writeMemory(db, { content: `${taskHead("open", "codex")} 待决策栏样例·租约过期`, type: "task", agent: "trae", agent_fpath: null, project: "global" });
+    const d5 = createDispatch(db, { key: "999988887777", memoryId: dt4.id, agent: "codex", leaseMinutes: 10 });
+    check("T8s.待决策·租约未过期 → 不入栏", !pendingOf().some((x) => x.via === "lease" && x.mid === dt4.id), JSON.stringify(pendingOf()));
+    db.prepare(`UPDATE dispatches SET lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-3 hours') WHERE id=?`).run(d5.id);
+    check("T8t.待决策·租约过期仍 active → 入栏", pendingOf().some((x) => x.via === "lease" && x.mid === dt4.id && x.who === "codex"), JSON.stringify(pendingOf()));
+    const cardIns = db.prepare(`INSERT INTO cards(board, kind, title, status, assignee, lease_expires_at, lease_notice_at)
+       VALUES('default','task','待决策栏样例卡','running','claude',strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 hours'),strftime('%Y-%m-%dT%H:%M:%fZ','now','-18 hours'))`).run();
+    check("T8u.待决策·已贴提醒条 → 入栏", pendingOf().some((x) => x.via === "notice" && x.card === Number(cardIns.lastInsertRowid) && x.who === "claude"), JSON.stringify(pendingOf()));
     db.close();
 }
 finally {

@@ -1173,12 +1173,66 @@ export function registerTaskTools(server, ctx) {
             const sortLane = (a, b) => b.prio - a.prio || a.key - b.key;
             avail.sort(sortLane);
             blocked.sort(sortLane);
+            // ★ 2026-10-03（批次 A2）：待决策段 —— 把「租约到期仍挂着 / 已贴条待回收」的活显式列出。
+            //   对标 Orca J2：到期与沉默只是检查点，不授权回收；但必须让人看得见，否则无人裁决 = 永久积压。
+            const fmtDur = (min) => {
+                const m = Math.max(0, Number(min) || 0);
+                if (m < 60)
+                    return `${Math.round(m)} 分钟`;
+                if (m < 1440)
+                    return `${Math.round(m / 60)} 小时`;
+                return `${Math.round(m / 1440)} 天`;
+            };
+            const pendMap = new Map(); // memoryId（卡无关联任务时退化为 card:<id>）→ { who, tags[] }
+            try {
+                const overdue = db.prepare(`SELECT memory_id, agent, (julianday('now') - julianday(lease_expires_at)) * 1440 AS m
+           FROM dispatches WHERE state='active' AND julianday(lease_expires_at) < julianday('now')
+           ORDER BY lease_expires_at ASC LIMIT 50`).all();
+                for (const o of overdue) {
+                    const mid = Number(o.memory_id);
+                    const e = pendMap.get(mid) ?? { who: o.agent, tags: [] };
+                    e.tags.push(`工作证过期 ${fmtDur(o.m)}`);
+                    pendMap.set(mid, e);
+                }
+            }
+            catch { /* 待决策段失败不影响主清单 */ }
+            try {
+                const graceH = Math.max(0, Number(process.env.MEMORYOS_LEASE_GRACE_HOURS ?? 24));
+                const noticed = db.prepare(`SELECT id AS card_id, assignee, (julianday('now') - julianday(lease_notice_at)) * 24 AS h
+           FROM cards WHERE status='running' AND lease_notice_at IS NOT NULL
+           ORDER BY lease_notice_at ASC LIMIT 50`).all();
+                for (const n of noticed) {
+                    let mid = null;
+                    try {
+                        const rel = db.prepare(`SELECT memory_id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(Number(n.card_id));
+                        mid = rel ? Number(rel.memory_id) : null;
+                    }
+                    catch { mid = null; }
+                    const key = mid ?? `card:${n.card_id}`;
+                    const e = pendMap.get(key) ?? { who: n.assignee, tags: [] };
+                    e.tags.push(`已贴提醒条 ${fmtDur(Number(n.h) * 60)}（超 ${graceH} 小时会被回收）`);
+                    pendMap.set(key, e);
+                }
+            }
+            catch { /* 同上：卡片侧查询失败不阻断 */ }
+            const pendingDecisions = [];
+            for (const [key, e] of pendMap) {
+                if (typeof key === "number") {
+                    const row = taskById.get(key);
+                    const body = row ? ` ${taskBody(row.content).slice(0, 50)}` : "";
+                    pendingDecisions.push(`#${key} ${e.who ?? "?"} · ${e.tags.join(" · ")}${lastEvtOf(key)}${body}`);
+                }
+                else
+                    pendingDecisions.push(`卡片 #${String(key).slice(5)} ${e.who ?? "?"} · ${e.tags.join(" · ")}`);
+            }
             let out = `【task_next · as=${who}】\n`;
             out += `可做（pending 且依赖done，按优先级）:\n${avail.length ? avail.map((x) => x.label).join("\n") : "（暂无，检查阻塞项）"}\n\n`;
             out += `阻塞（依赖未完成）:\n${blocked.length ? blocked.map((x) => x.label).join("\n") : "（无）"}\n\n`;
             out += `我在做:\n${mine.length ? mine.join("\n") : "（无进行中任务）"}`;
             if (mineOther.length)
                 out += `\n\n同名其他会话进行中（非本会话，勿动）:\n${mineOther.join("\n")}`;
+            // ★ 2026-10-03（批次 A2）：待决策栏输出 —— 空集也显式写「（无）」，避免「查不到」与「确实没有」混淆。
+            out += `\n\n待处理（需要拿主意）:\n${pendingDecisions.length ? pendingDecisions.join("\n") : "（无）"}`;
             // ★ 2026-09-15：跨 project 回退提示 —— 指定 project 无开放任务且确实存在其他 project 的任务时，
             // 明确提示而非静默空结果（避免『任务存在但领不到』）。
             if (avail.length === 0 && args.project !== "global") {
