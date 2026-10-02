@@ -23,7 +23,7 @@ const MIN_CONF = Math.max(0, Math.min(1, Number(process.env.RULE_MIN_CONF ?? 0.6
 /** 内置门禁层：仅这 8 条常驻注入段（token 收益最大的低语义重复行为守则） */
 const GATE_RULES = [
     { content: "开工先读记忆（硬性触发·不可跳过·第一步）：收到用户任何消息后，先调用 memory_context 注入当前项目高价值记忆，才能开始回复或调用其他工具；之后可按需 memory_search 精确检索（关键词覆盖主题/模块/报错现象）；命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。禁止跳过此步直接回复或开干，修改核心模块或遇报错时尤其如此。", agent: "gate" },
-    { content: "完成后沉淀：解决重要问题（>30min 修复/技术决策/踩坑/隐藏约定/阶段性结论）后，须 memory_write 沉淀一条核心结论+依据，与 memory_search/memory_cite 构成先查-命中-沉淀-回查闭环；未沉淀不得声明任务完成。", agent: "gate" },
+    { content: "完成后沉淀：解决重要问题（>30min 修复/技术决策/踩坑/隐藏约定/阶段性结论）后，须 memory_write 沉淀一条核心结论+依据，与 memory_search/memory_cite 构成先查-命中-沉淀-回查闭环；未沉淀不得声明任务完成，且须在回复里报出本次沉淀的记忆编号（便于用户回查）。", agent: "gate" },
     { content: "实证后声明：完成声明必须附 build/curl/netstat 等实证日志，禁用 should/probably/basically 等模糊表述，坚持 docs before code、evidence before conclusions。", agent: "gate" },
     { content: "副本修改：严禁直接修改源文件，必须复制文件后在副本上修改，保留原始版本；修改文件前明确告知改动范围，避免污染原路径（修改产物统一放桌面/独立目录）。", agent: "gate" },
     { content: "最全+最优改动（范围由需求定、深度做满）：需求范围内一处不留——不留半成品、不留「待用户点一下」、不留已知未修；同类问题在别处出现则列清单报告，不越界、不动他人分区。方案在多条可行路径里挑收益最高者，不为省事挑最省事的；现有实现已非最优时允许替换，但换前先给权衡。可回滚仍是硬边界。", agent: "gate" },
@@ -33,7 +33,12 @@ const GATE_RULES = [
 ];
 /** 默认注入门禁；SYNC_ALL_RULES=1 回退全量高置信规则 */
 const USE_GATE = process.env.SYNC_ALL_RULES !== "1";
-const DB_PATH = process.env.MEMORY_DB ?? fileURLToPath(new URL("../data/memory.db", import.meta.url));
+/** ★ 2026-10-03 缺陷修（口径对齐 server.js:20-22 的「缺省只用生产库」拍板）：原缺省落**仓内 dev 库**，
+ *  而 dev 库是空库 → CLI 同步只注入 8 条内置门禁、**静默丢掉**规则页 inject=1 的规则（实测：dev=8 / 生产=20，
+ *  且 exit=0 无任何告警）。非 Windows（无 APPDATA）才回落仓内路径。 */
+const DB_PATH = process.env.MEMORY_DB ?? (process.env.APPDATA
+    ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db")
+    : fileURLToPath(new URL("../data/memory.db", import.meta.url)));
 /** 段标记：MD 渲染时 HTML 注释不可见，便于程序 grep 与幂等替换 */
 export const SEG_START = "<!-- MEMORYOS-SYNC-RULES-START -->";
 export const SEG_END = "<!-- MEMORYOS-SYNC-RULES-END -->";
