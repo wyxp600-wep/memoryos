@@ -67,3 +67,4 @@ _db_patch*
 
 # ---- 热更新签名私钥（只存发布机，绝不入库；公钥已内置 services/updater.js）----
 security/update-signing/
+android/MemoryOSMobile/release.keystore
