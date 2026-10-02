@@ -8,7 +8,7 @@
  * 门禁：npm test（smoke-task / smoke-p26-lifecycle / smoke-macp）+ npm run lint 全绿。
  */
 import { z } from "zod";
-import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit, createDispatch, readDispatchByKey, settleDispatch } from "./db.js"; // ★ 2026-10-02：+createDispatch/readDispatchByKey/settleDispatch（Dispatch 语义）
+import { readMemory, writeMemory, updateMemory, appendEvent, logUsage, bumpConfidence, markMerged, logExecAudit, createDispatch, readDispatchByKey, readActiveDispatch, settleDispatch } from "./db.js"; // ★ 2026-10-02：+createDispatch/readDispatchByKey/settleDispatch（Dispatch 语义）；★ 2026-10-03 A1：+readActiveDispatch（六处写入点软模式提示）
 import { TASK_NORMALIZE } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：归一表上移权威对照表
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,31 @@ export function registerTaskTools(server, ctx) {
         if (row.scope === "read")
             return { ok: false, credId: row.id, msg: `A1 拒绝：凭据 scope=read 不足，改写任务需 scope>=write（id=${row.id}）。` };
         return { ok: true, credId: row.id, msg: "" };
+    }
+    /** ★ 2026-10-03 批次 A1（Dispatch 语义·**软模式**）：六处写入点（heartbeat/release/block/reopen/verify/supersede）
+     *  的权威提示 —— 只**告警**不**拒绝**，不破坏现有调用方（缺参数的老调用方逐字节行为不变）。
+     *  判据与 `task_done` 硬校验同源（server-reg-task.js task_done 的 dispatch 段）：
+     *  ① key 可解析；② memory_id 相符；③ state='active'；④ agent 相符。任一不满足 → 出提示文案。
+     *  硬模式（fail-closed）留待 G6 按软跑一批的观测结果再定，本批**不实现** —— 避免一次改动同时改语义与兼容策略。
+     *  ⚠ 提示串自带**前导换行**：回执的 `⟨state⟩` JSON 是单行、被调用方/冒烟按行解析（`split("⟨state⟩ ")[1].split("\n")[0]`），
+     *     提示必须独立成行 —— 实测直接拼在同行会让 JSON.parse 失败（p26-lifecycle I2 回执断言红）。 */
+    function softDispatchNotice(memoryId, dispatchKey, who) {
+        const active = readActiveDispatch(db, memoryId);
+        if (!dispatchKey) {
+            return active
+                ? `\ndispatch 提示（软模式）：任务 #${memoryId} 已有 active dispatch（${String(active.dispatch_key).slice(0, 12)}…，持有者 ${active.agent}，gen=${active.generation}），本次未携带 dispatch_key —— 已放行；接管/换代后建议携带以证明权威。`
+                : `\ndispatch 提示（软模式）：任务 #${memoryId} 当前无 active dispatch（未经 task_claim 认领），本次未携带 dispatch_key —— 已放行。`;
+        }
+        const d = readDispatchByKey(db, dispatchKey);
+        if (!d)
+            return `\ndispatch 提示（软模式）：dispatch_key=${String(dispatchKey).slice(0, 12)}… 不存在，本次已放行。`;
+        if (Number(d.memory_id) !== Number(memoryId))
+            return `\ndispatch 提示（软模式）：该 dispatch 归属任务 #${d.memory_id} ≠ #${memoryId}（跨任务），本次已放行。`;
+        if (d.state !== "active")
+            return `\ndispatch 提示（软模式）：该 dispatch 已 ${d.state}（你已被取代或已结算）——权威只来自 active dispatch，本次已放行。`;
+        if (d.agent !== who)
+            return `\ndispatch 提示（软模式）：该 dispatch 由 ${d.agent} 持有，本次调用方为 ${who}，本次已放行。`;
+        return "";
     }
     /** ★ 2026-09-18（实操问题 #1，P0）：按 id 分支的列守卫。readMemory 是裸 `WHERE id=?`（无 status 过滤），
      *  实测 29 条任务「头 pending 但列已 archived/merged」——列表分支有列过滤挡住，按 id 分支只看头文本会放行。
@@ -555,6 +580,7 @@ export function registerTaskTools(server, ctx) {
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             as: z.string().optional().describe("以谁的身份续租（缺省=当前 agent）；须与任务认领者一致"),
             lease_minutes: z.number().int().min(10).max(120).optional().describe("续租分钟数（10..120，默认 10）；与 task_claim 的租约分级同口径"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：task_claim 返回的 dispatch_key（与 lease_token 同值）；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             session_id: z.string().optional(),
             task_hint: z.string().optional(),
         }),
@@ -569,12 +595,13 @@ export function registerTaskTools(server, ctx) {
             if (!st || st.status !== "in_progress")
                 return `#${args.memory_id} 当前非进行中，无需续租。`;
             const who = args.as && args.as !== "any" ? args.as : AGENT;
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, who); // ★ A1：权威提示（软模式，只提示不拒绝）
             if (st.assignee !== "?" && st.assignee !== who)
                 return `#${args.memory_id} 认领者为 ${st.assignee}，${who} 无权续租。`;
             const card = cardOfTask(row.id);
             if (!card) {
                 appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, cards: [] }), operator: `agent:${AGENT}` });
-                return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。`;
+                return `任务 #${row.id} 续租成功（无关联卡片，纯任务，仅记事件）。` + dspNotice;
             }
             const hMin = Math.max(10, Math.min(120, Math.floor(Number(args.lease_minutes) || 10)));
             const hRunning = cardsOfTask(row.id).filter((cc) => cc.status === "running"); // ★ ③-A：全集合 running 卡
@@ -584,10 +611,10 @@ export function registerTaskTools(server, ctx) {
                     touchCardLease(row.id, null, args.lease_minutes); // ★ #13：分级续窗（全集合 running 卡逐张）
                     appendEvent(db, { memory_id: row.id, op: "task_heartbeat", payload: JSON.stringify({ by: who, cards: hRunning.map((cc) => cc.id), window_min: hMin }), operator: `agent:${AGENT}` });
                 });
-                return `任务 #${row.id} 续租成功（全集合 ${hRunning.length} 张 running 卡，租约窗口 → ${hMin} 分钟）。`;
+                return `任务 #${row.id} 续租成功（全集合 ${hRunning.length} 张 running 卡，租约窗口 → ${hMin} 分钟）。` + dspNotice;
             }
             const hFirst = card;
-            return `任务 #${row.id} 续租未生效：卡片 #${hFirst.id} 当前 status=${hFirst.status}${hFirst.claim_lock ? "（他方持有租约）" : ""}。`;
+            return `任务 #${row.id} 续租未生效：卡片 #${hFirst.id} 当前 status=${hFirst.status}${hFirst.claim_lock ? "（他方持有租约）" : ""}。` + dspNotice;
         },
     });
     server.addTool({
@@ -597,6 +624,7 @@ export function registerTaskTools(server, ctx) {
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             reason: z.string().optional().describe("释放原因（留痕 card_events/事件流）"),
             credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：task_claim 返回的 dispatch_key；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             session_id: z.string().optional(),
             task_hint: z.string().optional(),
         }),
@@ -641,7 +669,8 @@ export function registerTaskTools(server, ctx) {
             });
             if (relAbort)
                 return relAbort;
-            return `任务 #${row.id} 已释放（status=pending，重新可领）：${newContent.replace(/\s+/g, " ").slice(0, 100)}` + stateReceipt({ op: "task_release", id: row.id, status: "pending", version: row.version + 1, cred_id: cred.credId });
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, AGENT); // ★ A1：权威提示（软模式，只提示不拒绝）
+            return `任务 #${row.id} 已释放（status=pending，重新可领）：${newContent.replace(/\s+/g, " ").slice(0, 100)}` + stateReceipt({ op: "task_release", id: row.id, status: "pending", version: row.version + 1, cred_id: cred.credId }) + dspNotice;
         },
     });server.addTool({
         name: "task_block",
@@ -650,6 +679,7 @@ export function registerTaskTools(server, ctx) {
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             reason: z.string().describe("受阻原因（必填，留痕）"),
             credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：task_claim 返回的 dispatch_key；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             session_id: z.string().optional(),
             task_hint: z.string().optional(),
         }),
@@ -680,7 +710,8 @@ export function registerTaskTools(server, ctx) {
             });
             if (blkAbort)
                 return blkAbort;
-            return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_block", id: row.id, status: "blocked", version: row.version + 1, cred_id: cred.credId });
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, AGENT); // ★ A1：权威提示（软模式，只提示不拒绝）
+            return `任务 #${row.id} 已标记受阻（status=blocked）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_block", id: row.id, status: "blocked", version: row.version + 1, cred_id: cred.credId }) + dspNotice;
         },
     });server.addTool({
         name: "task_reopen",
@@ -690,6 +721,7 @@ export function registerTaskTools(server, ctx) {
             assignee: z.string().optional().describe("重开后指派给谁（缺省=原认领者）"),
             reason: z.string().describe("重开原因（必填，留痕）"),
             credential: z.string().optional().describe("A1 凭据（scope>=write，须归属当前 agent）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：调用方持有的 dispatch_key；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             session_id: z.string().optional(),
             task_hint: z.string().optional(),
         }),
@@ -734,7 +766,8 @@ export function registerTaskTools(server, ctx) {
             });
             if (ropenAbort)
                 return ropenAbort;
-            return `任务 #${row.id} 已重开（${st.status} → in_progress，指派 ${who}）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_reopen", id: row.id, status: "in_progress", version: row.version + 1, assignee: who });
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, AGENT); // ★ A1：权威提示（软模式，只提示不拒绝）
+            return `任务 #${row.id} 已重开（${st.status} → in_progress，指派 ${who}）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_reopen", id: row.id, status: "in_progress", version: row.version + 1, assignee: who }) + dspNotice;
         },
     });
     server.addTool({
@@ -878,6 +911,7 @@ export function registerTaskTools(server, ctx) {
             memory_id: z.number().int().min(1).describe("要验收关闭的任务记忆 id"),
             reason: z.string().describe("验收依据（必填，留痕）：对应提交/冒烟结果/证据位置"),
             as: z.string().optional().describe("验收方身份（缺省=当前 agent）"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：验收方持有的 dispatch_key（若有）；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             expected_version: z.number().int().optional().describe("P2-6 fencing：乐观版本；不一致 → 拒绝陈旧验收写"),
             credential: z.string().optional().describe("A1 凭据（scope>=write，须归属验收方）；软模式下可省略，MEMORYOS_A1_ENFORCE=1 时必填"),
             session_id: z.string().optional(),
@@ -920,7 +954,8 @@ export function registerTaskTools(server, ctx) {
             });
             if (vfAbort)
                 return vfAbort;
-            return `任务 #${row.id} 已验收关闭（status=done，verified_by=${verifier}，未改归属/未发租约）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_verify", id: row.id, status: "done", version: row.version + 1, verified_by: verifier, cred_id: cred.credId, session_id: args.session_id ?? null });
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, verifier); // ★ A1：权威提示（软模式，只提示不拒绝）
+            return `任务 #${row.id} 已验收关闭（status=done，verified_by=${verifier}，未改归属/未发租约）：${args.reason.trim().slice(0, 100)}` + stateReceipt({ op: "task_verify", id: row.id, status: "done", version: row.version + 1, verified_by: verifier, cred_id: cred.credId, session_id: args.session_id ?? null }) + dspNotice;
         },
     });
     server.addTool({
@@ -929,6 +964,7 @@ export function registerTaskTools(server, ctx) {
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要归档的重复任务记忆 id（loser）"),
             superseded_by: z.number().int().min(1).describe("保留的主任务记忆 id（winner）"),
+            dispatch_key: z.string().optional().describe("★ 2026-10-03 A1（软模式）：调用方持有的 dispatch_key（loser 任务上的）；携带且为 active 即证明权威，不传/传错仅回执提示不拒绝。"),
             session_id: z.string().optional(),
             task_hint: z.string().optional(),
         }),
@@ -962,7 +998,8 @@ export function registerTaskTools(server, ctx) {
             });
             if (spAbort)
                 return spAbort;
-            return `任务 #${args.memory_id} 已标记被 #${args.superseded_by} 取代（merged ⇒ 移出可做集，可经 superseded_by 追溯）`;
+            const dspNotice = softDispatchNotice(row.id, args.dispatch_key, AGENT); // ★ A1：权威提示（软模式，只提示不拒绝）
+            return `任务 #${args.memory_id} 已标记被 #${args.superseded_by} 取代（merged ⇒ 移出可做集，可经 superseded_by 追溯）` + dspNotice;
         },
     });
     server.addTool({

@@ -100,6 +100,39 @@ try {
     check("T8h.结算后再认领 generation 单调递增（不复用旧世代）", d3.generation === 3 && d3.superseded === null, JSON.stringify(d3));
     settleDispatch(db, d3.id, "whatever", null);
     check("T8i.outcome 归一（非 failed 一律 succeeded）", readDispatchByKey(db, "eeee3333ffff")?.outcome === "succeeded");
+    // ── ★ 2026-10-03 批次 A1：六处写入点 dispatch 权威「软模式」（与 server-reg-task.js softDispatchNotice 同源复刻）──
+    //   软模式定义：不传 / 传错 dispatch_key 一律**放行**，只回提示；四项判据全过 → 返回空串（静默）。
+    //   注：真实实现每条提示自带前导 "\n"（让 ⟨state⟩ JSON 独立成行，见 server-reg-task.js 注）；此处只验判据表，故略去换行。
+    const softDispatchNotice = (memoryId, dispatchKey, who) => {
+        const active = readActiveDispatch(db, memoryId);
+        if (!dispatchKey)
+            return active ? `已有 active dispatch（持有者 ${active.agent}）` : `当前无 active dispatch`;
+        const d = readDispatchByKey(db, dispatchKey);
+        if (!d)
+            return `dispatch 不存在`;
+        if (Number(d.memory_id) !== Number(memoryId))
+            return `dispatch 归属任务 #${d.memory_id}`;
+        if (d.state !== "active")
+            return `dispatch 已 ${d.state}`;
+        if (d.agent !== who)
+            return `dispatch 由 ${d.agent} 持有`;
+        return "";
+    };
+    // T8j：结算完（无 active）且未携带 key → 提示「无 active dispatch」
+    check("T8j.软模式·无 key + 无 active → 提示无权威锚点", softDispatchNotice(dt.id, null, "codex").includes("当前无 active dispatch"), softDispatchNotice(dt.id, null, "codex"));
+    const d4 = createDispatch(db, { key: "1357ace91357", memoryId: dt.id, agent: "codex", leaseMinutes: 10 });
+    // T8k：携带有效 key（active + 同任务 + 同持有者）→ 静默（空串）
+    check("T8k.软模式·有效 key → 静默放行", softDispatchNotice(dt.id, d4.key, "codex") === "", JSON.stringify(softDispatchNotice(dt.id, d4.key, "codex")));
+    // T8l：key 不存在 → 提示
+    check("T8l.软模式·key 不存在 → 提示", softDispatchNotice(dt.id, "ffffffffffff", "codex").includes("不存在"));
+    // T8m：key 属别的任务 → 提示归属（跨任务写入）
+    const dt2 = writeMemory(db, { content: `${taskHead("open", "claude")} 软模式跨任务反例`, type: "task", agent: "trae", agent_fpath: null, project: "global" });
+    check("T8m.软模式·跨任务 key → 提示归属", softDispatchNotice(dt2.id, d4.key, "codex").includes(`归属任务 #${dt.id}`), softDispatchNotice(dt2.id, d4.key, "codex"));
+    // T8n：key 已被结算（非 active）→ 提示已 settled
+    check("T8n.软模式·已结算 key → 提示已 settled", softDispatchNotice(dt.id, "eeee3333ffff", "codex").includes("已 settled"));
+    // T8o：有 active 但未携带 key → 提示持有者（legacy 调用方可观测到自己没带权威锚点）
+    check("T8o.软模式·无 key + 有 active → 提示持有者", softDispatchNotice(dt.id, null, "claude").includes("已有 active dispatch") && softDispatchNotice(dt.id, null, "claude").includes("codex"));
+    settleDispatch(db, d4.id, "succeeded", "A1 用例收尾");
     db.close();
 }
 finally {
