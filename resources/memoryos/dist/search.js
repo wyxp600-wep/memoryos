@@ -107,6 +107,19 @@ export async function hybridSearch(db, embedder, p) {
     let semScores = new Map();
     let depth = null; // 意图聚焦度；语义路成功才有值
     _lastDegradation = null; // ★ 本次检索先清零：catch 分支会重新置入
+    // ★ 2026-10-03 批次C2（截断契约扩面）：把「悄悄砍」的三处量化，随返回数组带出交给调用方回执，
+    //   仅在真发生截断时提示（不发生时零变化 → 零回归）。沿用既有 `top._degradation`（memory_context 路）
+    //   的挂属性先例，不改返回值形态（下游仍当普通数组用，`.map/.length` 不受影响）。
+    const _stats = {
+        semPool: 0, // 语义路 sim>0.4 候选池大小（截断前）
+        semTopK: topK, // 语义粗筛上限
+        semSliced: false, // 语义候选是否被 topK 截断（截断层①）
+        merged: 0, // RRF 融合后进入重排的候选总数
+        preLimit: 0, // 过滤后、按 limit 截断前的条数
+        returned: 0, // 最终返回条数
+        limitSliced: false, // 是否被 limit 截断（截断层②）
+        degraded: null, // 语义降级信息（同 _lastDegradation；随本次返回值带出，修「双 scope 只报最后一次」）
+    };
     try {
         const [qv] = await embedder.embedTexts([p.query]);
         if (qv) {
@@ -116,11 +129,13 @@ export async function hybridSearch(db, embedder, p) {
             const existing = getVectorsOnProjectCached(db, p.project, true); // 仅 active：非 active 候选后续必被过滤，提前收窄候选池
             // cosine 粗筛（保留向量，供正交化重排；阈值 0.4 与原 vecSearch 一致）
             // ★ P1-2.4：对 stale（正文已改、向量未重算）的记忆按 STALE_PENALTY 降权后再排序。
-            const candidates = existing
+            const pool = existing
                 .map((e) => ({ id: e.id, vec: e.vec, sim: cosine(qv, e.vec) * (e.stale ? STALE_PENALTY : 1) }))
                 .filter((x) => x.sim > 0.4)
-                .sort((a, b) => b.sim - a.sim)
-                .slice(0, topK);
+                .sort((a, b) => b.sim - a.sim);
+            const candidates = pool.slice(0, topK);
+            _stats.semPool = pool.length; // ★ 批次C2：截断层①——池大于 topK 即发生「悄悄砍」
+            _stats.semSliced = pool.length > topK;
             // Gram-Schmidt 独立贡献度重排：同质重复→贡献 0，正交独立→上浮
             const ranked = orthogonalContrib(qv, candidates);
             ranked.forEach((r, i) => semScores.set(r.id, 1 / (RRF_K + i + 1)));
@@ -131,6 +146,7 @@ export async function hybridSearch(db, embedder, p) {
     catch (e) {
         semScores = new Map(); // embedding 失败 → 纯词法降级
         _lastDegradation = { msg: e instanceof Error ? e.message : String(e), at: Date.now() }; // ★ 2026-09-25：不再静默，留给调用方回执告警
+        _stats.degraded = _lastDegradation; // ★ 批次C2：随返回值带出（多 scope 循环逐次收集 → 不再只反映最后一次）
     }
     // 词法路
     let lex = lexSearch(db, p.query, p.project, topK);
@@ -185,6 +201,7 @@ export async function hybridSearch(db, embedder, p) {
         agg.set(id, (agg.get(id) ?? 0) + s * semW);
     for (const [id, s] of lexScores)
         agg.set(id, (agg.get(id) ?? 0) + s * lexW);
+    _stats.merged = agg.size; // ★ 批次C2：融合后的候选总数（用于区分「池就这么多」与「被 limit 砍了」）
     // ★ R4-5 惰性衰减 + w_sector 加权 + H4 secret 过滤 + H6 前瞻过期排除：
     //   一次性拉取全部候选行，按 final = agg × w_sector × eff_effective 重排后截断
     //   （不先截断——避免把待过滤的 secret/过期行挤进前 limit 造成"漏过滤"）。
@@ -205,7 +222,7 @@ export async function hybridSearch(db, embedder, p) {
     };
     const wOf = (rc) => SECTORS[rc.sector]?.w ?? 1;
     const fetchedAll = readMemoriesByIds(db, [...agg.keys()]);
-    const ranked = [...agg.keys()]
+    const rankedAll = [...agg.keys()]
         .map((id) => {
         const rc = fetchedAll.get(id);
         if (!rc || rc.status !== "active")
@@ -226,8 +243,12 @@ export async function hybridSearch(db, embedder, p) {
         return { id, rc, final: agg.get(id) * wOf(rc) * eff * (0.85 + 0.3 * wp) };
     })
         .filter((x) => x !== null)
-        .sort((a, b) => b.final - a.final)
-        .slice(0, limit);
+        .sort((a, b) => b.final - a.final);
+    // ★ 批次C2：截断层②——过滤后按 limit 截断（原为链式 `.slice(0, limit)`，拆出以便量化）
+    const ranked = rankedAll.slice(0, limit);
+    _stats.preLimit = rankedAll.length;
+    _stats.returned = ranked.length;
+    _stats.limitSliced = rankedAll.length > limit;
     const out = [];
     const hitIds = [];
     for (const { id, rc } of ranked) {
@@ -253,5 +274,6 @@ export async function hybridSearch(db, embedder, p) {
                 bump.run(id);
         });
     }
+    out._searchStats = _stats; // ★ 批次C2：截断/降级量化随返回值带出（调用方回执据此告警）
     return out;
 }
