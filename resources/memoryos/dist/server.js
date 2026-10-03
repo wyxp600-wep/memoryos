@@ -146,7 +146,7 @@ function runTaskTx(db, fn) {
 
 /* ── 工具注册：调用顺序 = REGISTERED_TOOLS 顺序，等价于原文件声明顺序；勿调整 ──
  *   memory → obsidian → task；执行面（file_read/file_write/exec_run）在其后按需追加。 */
-const ctx = { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, runTaskTx, isCredentialValid, nowIso, plusHoursIso };
+const ctx = { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, TxAbort, runTaskTx, isCredentialValid, nowIso, plusHoursIso };
 registerMemoryTools(server, ctx);
 registerObsidianTools(server, ctx);
 registerTaskTools(server, ctx);

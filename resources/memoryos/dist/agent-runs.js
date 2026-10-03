@@ -290,7 +290,10 @@ export function createRunRegistry() {
 
         // ★ 暴露 run 对象本体给路由侧（abort/mcp 端点直接读 status/abortCtrl；
         //   getRun 此前误返回 runs.get(id) = run 对象，与 createRun 的 handle{run} 结构不一致）
-        return { run, onStep, finish, abort, subscribe, ev, evSince, list, setStepDiff, markRunning };
+        // ★ 修（2026-10-04 多 agent 协作联调）：ev 原为裸 3 参 ev(run,type,data)，但路由侧一律按 2 参
+        //   handle.ev(type,data) 调用（与 getRun 返回的包装版同款）→ run 内 task_done 成功回执一到就抛
+        //   「Cannot create property 'seq' on string 'task_done'」崩掉整个 run。统一成 2 参包装。
+        return { run, onStep, finish, abort, subscribe, ev: (type, data) => ev(run, type, data), evSince, list, setStepDiff, markRunning };
     }
 
     function getRun(id) {

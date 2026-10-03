@@ -4,7 +4,7 @@
  * 搬移口径：自 server.js 原 L892–L1951 逐字搬移（其中 stateReceipt / TxAbort+runTaskTx 已上移 server.js 共享层）；
  *   含状态机白名单、任务头解析、确定性验收门（GATE_PRESETS/runTaskGate）、BEGIN IMMEDIATE 事务包装、卡片投影。
  * 缩进说明：代码行统一加 4 空格；多行模板字面量内部行逐字保留（不改动字符串内容）。
- * 共享顶层名经 ctx 注入：db / AGENT / AGENT_FPATH / ENV_CRED / stateReceipt / runTaskTx / isCredentialValid / nowIso。
+ * 共享顶层名经 ctx 注入：db / AGENT / AGENT_FPATH / ENV_CRED / stateReceipt / TxAbort / runTaskTx / isCredentialValid / nowIso。
  * 门禁：npm test（smoke-task / smoke-p26-lifecycle / smoke-macp）+ npm run lint 全绿。
  */
 import { z } from "zod";
@@ -21,7 +21,7 @@ import { randomBytes } from "node:crypto";
 const execFileAsync = promisify(execFile);
 
 export function registerTaskTools(server, ctx) {
-    const { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, runTaskTx, isCredentialValid, nowIso } = ctx;
+    const { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, TxAbort, runTaskTx, isCredentialValid, nowIso } = ctx;
     /** ★ E-0 裁决落码（2026-09-19，附录 G）：持久状态集合 = {pending, in_progress, blocked, done, cancelled, merged}。
      *  相对旧 7 态取消 review/failed（存量头经 TASK_NORMALIZE 归一为 in_progress），新增 merged（task_supersede 产生，终态）；
      *  archived 为记忆轴终态（列归档时由 db.js syncTaskHeaderOnTerminal 同步进头，占一席但无 out-edge）。

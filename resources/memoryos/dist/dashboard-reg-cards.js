@@ -689,8 +689,13 @@ export function registerCards(app, ctx) {
                 .run(agent, lock, id);
             if (Number(info.changes) === 0)
                 throw new Error("认领竞争：卡片已不在 ready 或已被认领");
-            if (taskId)
+            if (taskId) {
                 dsp = createDispatch(db, { key: lock, memoryId: taskId, agent, leaseMinutes: 10 }); // 同任务旧尝试 → 自动 supersede 换代
+                // ★ 补链（2026-10-04 多 agent 协作联调）：ref 关联卡（from-memory 建的是 'reference'、import-legacy 无行）
+                //   缺 'dispatch' 关系 → run 内 task_done 的 syncTaskToCard 定位不到卡 → 卡留 running → 收口把
+                //   done 头经 E-0(review→in_progress) 投影回退。task_assign 建卡本就双写，此处幂等补齐同一口径。
+                db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(id, taskId);
+            }
             writeCardEvent(id, agent, "dispatch", "ready", "running", dsp
                 ? `一键派发（工作证 gen=${dsp.generation}${dsp.superseded ? `，取代 #${dsp.superseded}` : ""} · run 启动中）`
                 : "一键派发（无关联任务记忆，仅卡级认领 · run 启动中）");
