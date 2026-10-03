@@ -274,7 +274,6 @@
   /* ===== 概览 ===== */
   function renderAll() {
     const safe = (fn, name) => { try { fn(); } catch (e) { console.error('[renderAll] ' + name + ' failed:', e); } };
-    safe(renderSummary, 'renderSummary');
     safe(renderWriteHealth, 'renderWriteHealth');
     safe(renderUsageHealth, 'renderUsageHealth');
     safe(renderAllTable, 'renderAllTable');
@@ -288,40 +287,15 @@
     safe(bindModal, 'bindModal');
     safe(bindZombies, 'bindZombies');
     safe(bindAudit, 'bindAudit');
-    window.EChartsLoaded.when(drawOverviewCharts);
+    safe(updateMemoryBadges, 'updateMemoryBadges');
+    safe(renderMemoryInsights, 'renderMemoryInsights');
+    safe(renderWriteCadence, 'renderWriteCadence');
+    safe(loadProspective, 'loadProspective');
   }
 
-  function renderSummary() {
-    const s = S.summary;
-    const active = s.statusRows.find(r => r.status === 'active')?.c ?? 0;
-    const cards = [
-      { cls: 'cyan', label: '记忆总量', val: fmtNum(s.total), sub: `${s.statusRows.length} 种状态`, route: 'all' },
-      { cls: 'green', label: '活跃可检索', val: fmtNum(active), sub: 'eff > 0.15 阈值', route: 'all' },
-      { cls: 'purple', label: '最低活跃 eff', val: s.minActiveEff == null ? '—' : Number(s.minActiveEff).toFixed(3), sub: 'active 记忆', route: 'all' },
-      { cls: 'orange', label: '僵尸候选', val: fmtNum(S.zombies.length), sub: '闲置超期 0 命中', route: 'zombies' },
-    ];
-    $('#page-summary .stat-grid').innerHTML = cards.map((c, i) =>
-      `<div class="stat-card ${c.cls}" data-route="${c.route}"><div class="stat-icon">${c.cls === 'cyan' ? '📚' : c.cls === 'green' ? '✅' : c.cls === 'purple' ? '📊' : '💤'}</div><div class="stat-label">${c.label}</div><div class="stat-value" data-target="${typeof c.val === 'number' ? c.val : ''}" data-index="${i}">${c.val}</div><div class="stat-trend">${c.sub}</div></div>`).join('');
-    $$('#page-summary .stat-card[data-route]').forEach(card => card.onclick = () => navigate(card.dataset.route));
-    // 数字滚动动画
-    $$('#page-summary .stat-value[data-target]').forEach(el => {
-      const target = parseInt(el.dataset.target);
-      if (!isNaN(target) && target > 0) {
-        setTimeout(() => animateNumber(el, target), 100 + parseInt(el.dataset.index) * 100);
-      }
-    });
-
-    const total = s.total || 1;
-    $('#page-summary .status-bars').innerHTML = (s.statusRows.length ? s.statusRows : [{ status: 'active', c: 0 }]).map(r =>
-      `<div class="status-bar-row"><div class="status-bar-label"><span class="sdot" style="background:${statusColor(r.status)}"></span>${statusCN(r.status)}</div>
-       <div class="status-bar-track"><div class="status-bar-fill" style="width:${(r.c / total * 100).toFixed(1)}%;background:${statusColor(r.status)}"></div></div>
-       <div class="status-bar-count">${fmtNum(r.c)}</div></div>`).join('');
-    // ★ P6：类别分布环形图 + 前瞻到期（sector_distribution 来自 /api/summary；等 ECharts 加载再画）
-    if (window.EChartsLoaded && window.EChartsLoaded.when) window.EChartsLoaded.when(() => drawSectorChart(s.sector_distribution));
-    else drawSectorChart(s.sector_distribution);
-    loadProspective();
-    // 侧栏徽标
-    $$('.nav-item .nav-badge').forEach(b => b.remove());
+  /* ★ Slice-C2：原 renderSummary 内的「热词云 + eff 质量分布」两块逻辑独立出来，
+     目标容器已迁到记忆中心·高价值子视图。 */
+  function renderMemoryInsights() {
     // 热词云
     const wc = $('#wordCloud');
     if (wc) {
@@ -370,53 +344,14 @@
       `).join('');
       ehl.innerHTML = bins.slice(0, -1).map(b => `<div style="flex:1;text-align:center;font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">${b.toFixed(1)}</div>`).join('');
     }
-    // 写入活跃度热力图（最近12周，每周7天）
-    const hm = $('#heatmap');
-    if (hm) {
-      const weeks = 12;
-      const days = 7;
-      const today = new Date();
-      const startDate = new Date(today);
-      startDate.setDate(today.getDate() - weeks * days + 1);
-      // 统计每天的写入数量
-      const dayCounts = {};
-      S.memories.forEach(m => {
-        if (!m.created_at) return;
-        const d = new Date(m.created_at);
-        const key = d.toISOString().slice(0, 10);
-        dayCounts[key] = (dayCounts[key] || 0) + 1;
-      });
-      const maxCount = Math.max(...Object.values(dayCounts), 1);
-      // 按周列渲染
-      let html = '';
-      for (let w = 0; w < weeks; w++) {
-        html += '<div style="display:flex;flex-direction:column;gap:3px">';
-        for (let d = 0; d < days; d++) {
-          const date = new Date(startDate);
-          date.setDate(startDate.getDate() + w * days + d);
-          const key = date.toISOString().slice(0, 10);
-          const count = dayCounts[key] || 0;
-          const intensity = count > 0 ? Math.max(0.1, count / maxCount) : 0;
-          const bg = count > 0 ? `rgba(65,187,200,${intensity})` : 'rgba(0,0,0,0.04)';
-          const title = `${key}: ${count} 条记忆`;
-          html += `<div style="width:14px;height:14px;background:${bg};border-radius:3px;cursor:pointer;transition:all 0.15s" title="${title}" onmouseover="this.style.transform='scale(1.3)'" onmouseout="this.style.transform='scale(1)'"></div>`;
-        }
-        html += '</div>';
-      }
-      // 月份标签
-      const monthLabels = [];
-      let lastMonth = -1;
-      for (let w = 0; w < weeks; w++) {
-        const date = new Date(startDate);
-        date.setDate(startDate.getDate() + w * days);
-        const month = date.getMonth();
-        if (month !== lastMonth) {
-          monthLabels.push({ week: w, label: (month + 1) + '月' });
-          lastMonth = month;
-        }
-      }
-      hm.innerHTML = html;
-    }
+
+  }
+  /* ★ 热力图（12 周 × 7 天）压缩成一行文案，避免为一句统计量维护 45 行 DOM 计算 */
+  function renderWriteCadence() {
+    const el = $('#writeCadence'); if (!el) return;
+    const days = new Set();
+    (S.memories || []).forEach(m => { if (m.created_at) days.add(new Date(m.created_at).toISOString().slice(0, 10)); });
+    el.textContent = days.size ? `近 12 周有 ${days.size} 天写入` : '近 12 周暂无写入';
   }
 
   /* 主动写入健康横幅：距上次主动写入天数 + 近 30 天次数；按钮复用「写入记忆」弹窗 */
@@ -472,31 +407,8 @@
     $('#usageHealthText').textContent = txt;
   }
 
-  function drawOverviewCharts() {
-    if (!window.echarts) return;
-    try {
-      const tc = echarts.init(document.getElementById('trendChart'));
-      const days = S.trend.map(t => t.day.slice(5));
-      tc.setOption(chartBase({
-        legend: { data: ['写入', '返回', '引用'], textStyle: { color: '#64748b' }, top: 0, right: 0 },
-        grid: { left: 40, right: 16, top: 36, bottom: 28 },
-        xAxis: { type: 'category', data: days, axisLabel: { color: '#94a3b8' }, axisLine: { lineStyle: { color: 'rgba(0,0,0,0.08)' } } },
-        series: [
-          { name: '写入', type: 'line', smooth: true, data: S.trend.map(t => t.write), itemStyle: { color: '#06b6d4' }, areaStyle: { color: 'rgba(6,182,212,0.08)' } },
-          { name: '返回', type: 'line', smooth: true, data: S.trend.map(t => t.returned), itemStyle: { color: '#a855f7' } },
-          { name: '引用', type: 'line', smooth: true, data: S.trend.map(t => t.cited), itemStyle: { color: '#10b981' } },
-        ],
-      }));
-      const byType = {}; S.memories.forEach(m => byType[m.type] = (byType[m.type] || 0) + 1);
-      const pc = echarts.init(document.getElementById('typeChart'));
-      pc.setOption({
-        tooltip: { backgroundColor: 'rgba(255,255,255,0.96)', textStyle: { color: '#1e293b', fontSize: 12 }, borderColor: 'rgba(0,0,0,0.08)', borderWidth: 1 },
-        legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#64748b' } },
-        series: [{ type: 'pie', radius: ['45%', '70%'], center: ['35%', '50%'], label: { show: false }, itemStyle: { borderColor: '#fff', borderWidth: 3 },
-          data: Object.entries(byType).map(([name, v]) => ({ name: typeCN(name), value: v, itemStyle: { color: typeColor(name) } })) }],
-      });
-    } catch (e) { console.error('overview charts', e); }
-  }
+
+
   const chartText = { color: '#64748b', fontFamily: "'Noto Sans SC', sans-serif" };
   function chartBase(extra) {
     return Object.assign({ tooltip: { backgroundColor: 'rgba(255,255,255,0.96)', textStyle: { color: '#1e293b', fontSize: 12 }, borderColor: 'rgba(0,0,0,0.08)', borderWidth: 1 },
@@ -810,7 +722,7 @@
     $('#modalBody').innerHTML = `
       <div class="detail-content-box" style="border-left-color:${typeColor(m.type)}">${renderContent(m.content)}</div>
       <div class="detail-grid">
-        ${pair('ID', '#' + m.id, true)}${pair('类型', typeCN(m.type), false, `<span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span>`)}
+        ${pair('编号', '#' + m.id, true)}${pair('类型', typeCN(m.type), false, `<span class="type-tag ${esc(m.type)}">${typeCN(m.type)}</span>`)}
         ${pair('状态', '', false, `<span class="status-pill ${esc(m.status)}"><span class="sdot"></span>${statusCN(m.status)}</span>`)}
         ${pair('来源工具', esc(m.agent), true)}${pair('文件路径', esc(m.agent_fpath) || '—', true)}
         ${pair('项目', esc(m.project))}${pair('置信度', (m.confidence || 0).toFixed(2), true)}
@@ -1000,7 +912,7 @@
       const sc = echarts.init(el);
       sc.setOption(Object.assign(chartBase({}), {
         grid: { left: 50, right: 30, top: 20, bottom: 40 },
-        xAxis: { name: 'eff', min: 0, max: 1, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(0,0,0,0.05)' } }, nameTextStyle: { color: '#64748b' } },
+        xAxis: { name: '有效置信', min: 0, max: 1, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(0,0,0,0.05)' } }, nameTextStyle: { color: '#64748b' } },
         series: [{ type: 'scatter', data: S.top.map(m => [m.confidence || 0, m.cited, m.content.slice(0, 30)]), symbolSize: 12, itemStyle: { color: 'rgba(6,182,212,0.7)', shadowBlur: 10, shadowColor: 'rgba(6,182,212,0.3)' } }],
       }));
     } catch (e) { console.error('scatter', e); }
@@ -1046,7 +958,7 @@
       $('#crossMatrix').innerHTML = '<div class="cross-header">写入方 → 引用方 <span class="text-muted">（事件类型）</span></div>' +
         rows.map(r => `<div class="cross-row"><span class="cross-path"><span class="agent-tag">${esc(r.writer_agent)}</span> → <span class="agent-tag">${esc(r.reader_agent)}</span> <span class="text-muted" style="font-size:11px">(${esc(r.event)})</span></span><span class="cross-count">${r.n}</span></div>`).join('');
     } else {
-      $('#crossMatrix').innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-title">暂无跨工具复用</div><div class="empty-desc">还没有 AI Agent 引用其他工具写入的记忆，随着使用会逐渐出现</div></div>';
+      $('#crossMatrix').innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-title">暂无跨工具复用</div><div class="empty-desc">还没有 AI 智能体引用其他工具写入的记忆，随着使用会逐渐出现</div></div>';
     }
     window.EChartsLoaded.when(() => {
       if (!window.echarts) return;
@@ -1103,8 +1015,8 @@
   }
 
   /* ===== 路由 ===== */
-  const PAGE_TITLES = { summary: ['概览', 'MemoryOS Dashboard'], all: ['全部记忆', '全量记忆库'], top: ['高价值 TOP', '引用与曝光排行'], zombies: ['待归档·僵尸', '闲置记忆治理'], arbitrate: ['仲裁队列', '冲突记忆裁决'], trend: ['趋势', '时间序列分析'], cross: ['跨工具', 'Writer × Reader 复用'], audit: ['审计', '治理留痕'], connect: ['工具连接', '扫描 & 接入 AI Agent'], agent: ['Agent', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'], runs: ['执行中心', 'Agent 执行过程 · 工具调用 · 审批 · 产物 · 会话'], rules: ['规则管理', 'AI Agent 协同约束'], ingest: ['采集消化', '读取记忆 · 对话 · 规则并提炼入库'], governance: ['治理中心', '成本治理 · 门控 · 进化验证 · 凭据 · A2A 协议'], obsidian: ['笔记', 'vault 笔记 ↔ 共享记忆库 · 双向链接图谱'], skills: ['技能同步', '中央技能库 ↔ 多 Agent 分发'], graph: ['知识图谱', '笔记 · 记忆 · 卡片统一图'], tasks: ['任务看板', '卡片工作流 · CAS 认领 + 依赖提升'] };
-  function navigate(route) {
+  const PAGE_TITLES = { govern: ['连接与治理', '工具接入 · 跨工具复用 · 治理与健康'], memory: ['记忆中心', '全量记忆 · 价值 · 治理 · 采集'], agent: ['智能体', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'],rules: ['规则管理', 'AI 智能体协同约束'], obsidian: ['笔记', '仓库笔记库 · 笔记×记忆×卡片统一图谱'], skills: ['技能同步', '中央技能库 ↔ 多智能体分发'],tasks: ['任务看板', '卡片工作流 · 智能体执行过程'] };
+  function navigate(route, sub) {
     $$('.nav-item').forEach(n => {
       const on = n.dataset.route === route;
       n.classList.toggle('active', on);
@@ -1118,28 +1030,96 @@
     // ★ P2-⑤ a11y：全局唯一 h1 同步当前页名（屏幕阅读器按标题导航才有意义）
     const _a11yH1 = document.getElementById('a11yPageH1');
     if (_a11yH1) _a11yH1.textContent = t + ' - MemoryOS';
-    location.hash = route;
-    if (route === 'trend') window.EChartsLoaded.when(drawTrendCharts);
-    if (route === 'top') window.EChartsLoaded.when(drawTopScatter);
-    if (route === 'cross') window.EChartsLoaded.when(drawCrossCharts);
-    if (route === 'connect' && autoScanConnect) autoScanConnect();
+    const _first = (PAGE_VIEWS[route] || [])[0];
+    location.hash = (sub && _first && sub !== _first) ? route + '/' + sub : route;
+    /* ★ Slice-B：记忆中心子视图分发（图表/初始化按当前子视图懒加载） */
+    if (route === 'memory') applyMemoryView(sub || 'all', true, 'page-memory');
+    if (route === 'govern') applyMemoryView(sub || 'connect', true, 'page-govern');
+    if (route === 'obsidian') applyMemoryView(sub || 'vault', true, 'page-obsidian');
+    if (route === 'memory' && (sub || memoryView) === 'trend') window.EChartsLoaded.when(drawTrendCharts);
+    if (route === 'memory' && (sub || memoryView) === 'top') window.EChartsLoaded.when(drawTopScatter);
     if (route === 'agent' && initAgent) initAgent();
-    if (route === 'runs' && initRuns) initRuns();
     if (route === 'rules' && initRules) initRules();
-    if (route === 'ingest' && initIngest) initIngest();
-    if (route === 'governance' && initGovernance) initGovernance();
+
     if (route === 'obsidian' && initObsidian) initObsidian();
     if (route === 'skills' && initSkills) initSkills();
-    if (route === 'graph' && initGraph) initGraph();
+    if (route === 'tasks') applyMemoryView(sub || 'cards', true, 'page-tasks');
     if (route === 'tasks' && initTasks) initTasks();
     /* ★ 实时看板：进任务看板开卡片 SSE（变更即重画当前视图），离开即关 */
     if (route === 'tasks') _cardsStreamStart(); else _cardsStreamStop();
     // ★ UI2.0：入场动画结束后统一重算图表尺寸，修正 ECharts 在容器尺寸未稳定时初始化导致的挤压/只显首点
     setTimeout(() => { try { resizeAllCharts(); } catch { /* ignore */ } }, 340);
   }
+  /* ★ Slice-B：记忆中心子视图 */
+  let memoryView = 'all';
+  let obsidianView = 'vault';
+  const MEMORY_VIEWS = ['all', 'top', 'zombies', 'arbitrate', 'trend', 'ingest', 'audit'];
+  const GOVERN_VIEWS = ['connect', 'cross', 'govern'];
+  const OBSIDIAN_VIEWS = ['vault', 'unified'];
+  const TASK_VIEWS = ['cards', 'runs'];
+  /* 页面 -> 子视图白名单；子视图懒加载映射（等价于原按路由分发） */
+  const PAGE_VIEWS = { memory: MEMORY_VIEWS, govern: GOVERN_VIEWS, obsidian: OBSIDIAN_VIEWS, tasks: TASK_VIEWS };
+  const VIEW_HOOKS = {
+    top:       () => window.EChartsLoaded.when(drawTopScatter),
+    trend:     () => window.EChartsLoaded.when(drawTrendCharts),
+    cross:     () => window.EChartsLoaded.when(drawCrossCharts),
+    zombies:   () => safe(renderZombies, 'renderZombies'),
+    audit:     () => safe(renderAudit, 'renderAudit'),
+    top_:      null,
+    ingest:    () => { if (typeof initIngest === 'function') initIngest(); },
+    connect:   () => { if (autoScanConnect) autoScanConnect(); },
+    govern:    () => { if (typeof initGovernance === 'function') initGovernance(); },
+    unified:   () => { if (typeof initGraph === 'function') initGraph(); },
+    runs:      () => { if (typeof initRuns === 'function') initRuns(); },
+  };
+  function applyMemoryView(view, silent, pageId) {
+    const pid = pageId || 'page-memory';
+    const allowed = PAGE_VIEWS[String(pid).replace(/^page-/, '')] || MEMORY_VIEWS;
+    if (!allowed.includes(view)) view = allowed[0];
+    if (pid === 'page-memory') memoryView = view; else if (pid === 'page-obsidian') obsidianView = view;
+    const root = document.getElementById(pid);
+    if (root) {
+      root.querySelectorAll('.subview').forEach(v => v.classList.toggle('on', v.dataset.view === view));
+      root.querySelectorAll('.subtab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
+    }
+    const hook = VIEW_HOOKS[view]; if (hook) { try { hook(); } catch (e) { console.error('[subview] ' + view + ' init failed:', e); } }
+    updateMemoryBadges();
+    if (!silent) { try { resizeAllCharts(); } catch { /* ignore */ } }
+    setTimeout(() => { try { resizeAllCharts(); } catch { /* ignore */ } }, 340);
+  }
+  function updateMemoryBadges() {
+    const zN = (S && Array.isArray(S.zombies)) ? S.zombies.length : 0;
+    const z = document.getElementById('zombiesBadge');
+    if (z) { z.textContent = zN ? String(zN) : ''; z.style.display = zN ? '' : 'none'; }
+    const aN = (S && Array.isArray(S.arbitrate)) ? S.arbitrate.length : 0;
+    const a = document.getElementById('arbitrateBadge');
+    if (a) { a.textContent = aN ? String(aN) : ''; a.style.display = aN ? '' : 'none'; }
+  }
+  function bindMemorySubnav() {
+    document.querySelectorAll('.subnav').forEach(nav => {
+      if (nav.dataset.bound) return;
+      nav.dataset.bound = '1';
+      const pageId = nav.closest('.page') ? nav.closest('.page').id : 'page-memory';
+      const route = String(pageId).replace(/^page-/, '');
+      nav.querySelectorAll('.subtab').forEach(btn => {
+        btn.onclick = () => {
+          const v = btn.dataset.view;
+          applyMemoryView(v, false, pageId);
+          if (location.hash.slice(1).split('/')[0] !== route) location.hash = v === PAGE_VIEWS[route][0] ? route : route + '/' + v;
+        };
+      });
+    });
+  }
+
   function bindNav() {
     $$('.nav-item').forEach(item => item.onclick = () => navigate(item.dataset.route));
-    window.addEventListener('hashchange', () => { const r = location.hash.slice(1) || 'agent'; if (PAGE_TITLES[r]) navigate(r); });
+    window.addEventListener('hashchange', () => {
+      const raw = location.hash.slice(1) || 'agent';
+      if (location.hash.slice(1).split('/')[0] === 'graph') { location.hash = 'obsidian/unified'; return; }
+      if (location.hash.slice(1).split('/')[0] === 'runs') { location.hash = 'tasks/runs'; return; }
+      const seg = raw.split('/');
+      if (PAGE_TITLES[seg[0]]) navigate(seg[0], seg[1]);
+    });
     // 顶部导航栏鼠标滚轮横向滚动
     const navScroll = document.querySelector('.global-nav-scroll');
     if (navScroll) {
@@ -1337,7 +1317,7 @@
          <td><span class="status-pill ${t.connected ? 'active' : 'archived'}"><span class="sdot"></span>${t.connected ? '已连接' : '未连接'}</span>${evidenceHtml(t)}</td>
          <td>${dbHtml(t)}</td>
          <td>${connectAction(t)}</td></tr>`).join('')
-        : '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">点击「开始扫描」发现本机已安装的 AI Agent</td></tr>';
+        : '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">点击「开始扫描」发现本机已安装的 AI 智能体</td></tr>';
       $$('#toolTableBody [data-connect]').forEach(btn => btn.onclick = () => showConnectGuide(btn.dataset.connect));
       renderDbAlert();
       renderCarriers();
@@ -1402,7 +1382,7 @@
       const lg = $('#scanLog'); if (lg) lg.innerHTML = '';
       const bar = $('#scanBar'); let p = 0;
       const setAuto = (s) => { const e = $('#scanStatus'); if (e) e.textContent = s; };
-      const iv = setInterval(() => { p = Math.min(p + 30, 90); if (bar) bar.style.width = p + '%'; set('#scanPercent', p + '%'); setAuto('正在探测本机 Agent…'); }, 300);
+      const iv = setInterval(() => { p = Math.min(p + 30, 90); if (bar) bar.style.width = p + '%'; set('#scanPercent', p + '%'); setAuto('正在探测本机智能体…'); }, 300);
       fetch('/api/scan-agents').then(r => r.json()).then(r => {
         clearInterval(iv);
         scanned = r.agents || [];
@@ -1547,7 +1527,7 @@
        <td class="mono" style="font-size:12px">${Number(m.confidence || 0).toFixed(2)}</td>
        <td class="mono text-secondary" style="font-size:12px">${fmtDate(m.created_at)}</td>
        <td><div style="display:flex;gap:6px"><button class="btn-ghost rule-inject" data-rid="${m.id}" title="${m.inject ? '已强制注入：除内置 8 条门禁外，本条也常驻所有智能体约束文件（点击取消）' : '点击强制注入：本条常驻所有智能体约束文件（自动同步）'}" style="padding:4px 10px;font-size:12px;${m.inject ? 'color:var(--success);border-color:rgba(16,185,129,0.35)' : ''}">${m.inject ? '注入✓' : '注入'}</button><button class="btn-ghost rule-edit" data-rid="${m.id}" style="padding:4px 10px;font-size:12px">编辑</button><button class="btn-ghost rule-del" data-rid="${m.id}" style="padding:4px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.3)">删除</button></div></td></tr>`).join('')
-      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📏</div><div class="empty-title">暂无规则</div><div class="empty-desc">还没有创建 AI Agent 协同约束规则，点击右上角"新建规则"开始</div></div></td></tr>';
+      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📏</div><div class="empty-title">暂无规则</div><div class="empty-desc">还没有创建 AI 智能体协同约束规则，点击右上角"新建规则"开始</div></div></td></tr>';
     $$('#ruleTableBody tr[data-id]').forEach(tr => tr.onclick = () => openDetail(Number(tr.dataset.id), ruleRows));
     $$('#ruleTableBody .rule-edit').forEach(b => b.onclick = e => { e.stopPropagation(); openEdit(Number(b.dataset.rid), 'rule'); });
     $$('#ruleTableBody .rule-del').forEach(b => b.onclick = e => { e.stopPropagation(); delRule(Number(b.dataset.rid)); });
@@ -1639,7 +1619,7 @@
     const body = $('#ingestSourceBody');
     if (!body) return;
     if (!sources.length) {
-      body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📥</div><div class="empty-title">尚未探测到可采集的来源</div><div class="empty-desc">采集地址由系统自动分配，无需手动配置；装了对应 AI Agent 后其记忆目录会自动出现</div></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📥</div><div class="empty-title">尚未探测到可采集的来源</div><div class="empty-desc">采集地址由系统自动分配，无需手动配置；装了对应 AI 智能体后其记忆目录会自动出现</div></div></td></tr>';
       return;
     }
     body.innerHTML = sources.map((s, i) => {
@@ -1935,8 +1915,8 @@
     const v = await askForm({
       title: '签发治理凭据',
       fields: [
-        { key: 'agent', label: '为哪个 agent 签发？', value: 'zcode', required: true },
-        { key: 'scope', label: '权限 scope（read/write/admin）', value: 'read' },
+        { key: 'agent', label: '为哪个智能体签发？', value: 'zcode', required: true },
+        { key: 'scope', label: '权限作用域（read/write/admin）', value: 'read' },
         { key: 'ttl', label: '短生命周期小时数（0.1–24）', value: '1' },
       ],
       okText: '签发',
@@ -1973,12 +1953,12 @@
        <td><a href="#all" data-action="focus-mem-search" style="color:var(--accent-cyan)">#${r.memory_id}</a></td>
        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.note_hash)}</td>
        <td class="mono" style="font-size:11px;color:var(--text-secondary)">${esc((r.created_at || '').slice(0, 19).replace('T', ' '))}</td></tr>`).join('')
-      : '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">暂无已导入笔记</div><div class="empty-desc">选择 Obsidian vault 后点击"导入笔记"开始同步</div></div></td></tr>';
+      : '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">暂无已导入笔记</div><div class="empty-desc">选择 Obsidian 仓库后点击"导入笔记"开始同步</div></div></td></tr>';
   }
   async function loadObsidianStatus() {
     const vault = currentVault();
     const badge = $('#obsidianStatusBadge');
-    if (!vault) { if (badge) badge.textContent = '选择 vault 后查看'; return; }
+    if (!vault) { if (badge) badge.textContent = '选择仓库后查看'; return; }
     const r = await fetch('/api/obsidian/status?vault=' + encodeURIComponent(vault)).then(x => x.json()).catch(e => ({ error: e.message }));
     if (r.error) { if (badge) badge.textContent = '加载失败：' + r.error; return; }
     if (badge) badge.textContent = `笔记 ${r.noteFiles} · 已导入 ${r.imported} · 待导入 ${r.pending} · 库中 obsidian 记忆 ${r.memoriesFromObsidian}`;
@@ -2020,11 +2000,11 @@
   }
   async function runObsidianImport() {
     const vault = currentVault();
-    if (!vault) { toast('请先选择或输入 Obsidian vault 路径'); return; }
+    if (!vault) { toast('请先选择或输入 Obsidian 仓库路径'); return; }
     const dryRun = $('#obsidianDryRun').checked;
     const btn = $('#obsidianImportBtn');
     btn.disabled = true; btn.style.opacity = '0.6';
-    obsidianProgressStart(dryRun ? '正在预演导入（不落库）…' : '正在扫描 vault 并增量导入…（大 vault 首次可能需要数分钟）');
+    obsidianProgressStart(dryRun ? '正在预演导入（不落库）…' : '正在扫描仓库并增量导入…（大仓库首次可能需要数分钟）');
     try {
       const r = await fetch('/api/obsidian/import', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2043,7 +2023,7 @@
   }
   async function runObsidianExport() {
     const vault = currentVault();
-    if (!vault) { toast('请先选择或输入 Obsidian vault 路径'); return; }
+    if (!vault) { toast('请先选择或输入 Obsidian 仓库路径'); return; }
     const btn = $('#obsidianExportBtn');
     btn.disabled = true; btn.style.opacity = '0.6';
     obsidianProgressStart('正在导出 active 记忆到 vault/MemoryOS 导出/…');
@@ -2117,11 +2097,11 @@
     const cnt = $('#notesRailCount');
     if (cnt) cnt.textContent = vault ? `${rows.length} / ${NOTE_ALL.length}` : String(rows.length);
     if (!NOTE_ALL.length) {
-      box.innerHTML = '<div class="notes-empty"><span class="big">📓</span>还没有索引到笔记<br>选好 vault 后点右上角「导入笔记」</div>';
+      box.innerHTML = '<div class="notes-empty"><span class="big">📓</span>还没有索引到笔记<br>选好仓库后点右上角「导入笔记」</div>';
       return;
     }
     if (!rows.length) {
-      box.innerHTML = `<div class="notes-empty">${q ? '没有匹配的笔记' : '当前 vault 下还没有笔记<br>（列表显示的是已索引笔记，可切到「全部」范围或先导入）'}</div>`;
+      box.innerHTML = `<div class="notes-empty">${q ? '没有匹配的笔记' : '当前仓库下还没有笔记<br>（列表显示的是已索引笔记，可切到「全部」范围或先导入）'}</div>`;
       return;
     }
     box.innerHTML = rows.map(n => `
@@ -2173,10 +2153,10 @@
     if (stats) stats.textContent = `${nodes.length} 笔记 · ${edges.length} 链接`;
     if (!nodes.length) {
       if (!NOTE_ALL.length) setGraphEmpty(true, (vault
-        ? '这个 vault 还没有索引到笔记<br>点右上角「<b>导入笔记</b>」，笔记与 [[双向链接]] 会在这里结成图谱'
-        : '先在上方选择 / 粘贴 vault 路径，再点右上角「<b>导入笔记</b>」'));
+        ? '这个仓库还没有索引到笔记<br>点右上角「<b>导入笔记</b>」，笔记与 [[双向链接]] 会在这里结成图谱'
+        : '先在上方选择 / 粘贴仓库路径，再点右上角「<b>导入笔记</b>」'));
       else setGraphEmpty(true, scope === 'vault'
-        ? '当前 vault 还没有已索引笔记<br>可切换右上范围到「全部笔记」，或先点「导入笔记」'
+        ? '当前仓库还没有已索引笔记<br>可切换右上范围到「全部笔记」，或先点「导入笔记」'
         : '还没有可画的笔记节点');
       if (!window.echarts) return;
       if (!NOTE_GRAPH_CHART) { try { NOTE_GRAPH_CHART = echarts.init(el); } catch { return; } }
@@ -2293,7 +2273,7 @@
     const bodyHtml = (res.body != null && res.body !== '')
       ? `<div class="notes-body">${renderNoteBody(res.body)}</div>`
       : `<div class="notes-body" style="color:var(--text-muted)">${res.from === 'none'
-        ? '这条笔记还没有对应的记忆正文（可能尚未导入，或记忆已被合并）。可在「编辑」标签页里重写，保存会写入 vault 的 MemoryOS 写入/ 目录。'
+        ? '这条笔记还没有对应的记忆正文（可能尚未导入，或记忆已被合并）。可在「编辑」标签页里重写，保存会写入仓库的 MemoryOS 写入/ 目录。'
         : '正文读取失败，可在「编辑」标签页里重写后保存。'}</div>`;
     box.innerHTML = `
       <div class="notes-detail-title">${esc(note.title)}</div>
@@ -2309,7 +2289,7 @@
         <button class="btn-ghost" id="noteDetailLinksBtn" style="padding:5px 12px;font-size:12px">反向链接</button>
         ${(res.body != null && res.body !== '') ? `<button class="btn-ghost" id="noteDetailPutBtn" style="padding:5px 12px;font-size:12px" title="编辑原文件，保存写回并同步更新对应记忆；若文件在外部被改过会自动留副本">编辑此笔记</button>` : ''}
         <button class="btn-ghost" id="noteDetailEditBtn" style="padding:5px 12px;font-size:12px" title="把正文复制到编辑器，保存时写成一条新笔记（不覆盖原文件）">另存为新笔记</button>
-        <button class="btn-ghost" id="noteDetailDelBtn" style="padding:5px 12px;font-size:12px;color:var(--error)" title="移入 vault 的 .trash（可找回），相关链接退化为未解析">删除</button>
+        <button class="btn-ghost" id="noteDetailDelBtn" style="padding:5px 12px;font-size:12px;color:var(--error)" title="移入仓库的 .trash（可找回），相关链接退化为未解析">删除</button>
       </div>`;
     const lb = $('#noteDetailLinksBtn');
     if (lb) lb.onclick = () => switchNoteTab('links');
@@ -2336,7 +2316,7 @@
       if (b) b.value = res.body || '';
       if (ty) { ty.disabled = false; ty.value = 'experience'; }
       if (p) p.style.display = 'none';
-      if (h) { h.className = 'form-hint'; h.textContent = '已复制到编辑器；保存会作为新笔记写入 vault（不覆盖原文件）'; }
+      if (h) { h.className = 'form-hint'; h.textContent = '已复制到编辑器；保存会作为新笔记写入仓库（不覆盖原文件）'; }
     };
     const pb = $('#noteDetailPutBtn');
     if (pb) pb.onclick = () => {
@@ -2406,7 +2386,7 @@
   function renderVaultChips() {
     const box = $('#noteVaultChips'); if (!box) return;
     const cur = currentVault();
-    if (!NOTE_VAULTS.length) { box.innerHTML = '<span class="text-muted" style="font-size:11px">未探测到 vault，可直接粘贴绝对路径</span>'; return; }
+    if (!NOTE_VAULTS.length) { box.innerHTML = '<span class="text-muted" style="font-size:11px">未探测到仓库，可直接粘贴绝对路径</span>'; return; }
     box.innerHTML = '<span class="text-muted" style="font-size:11px">已探测</span>' + NOTE_VAULTS.map(v =>
       `<span class="notes-vchip${samePath(v.path, cur) ? ' on' : ''}" data-path="${esc(v.path)}" title="${esc(v.path)}">${esc(v.name)}</span>`).join('');
     $$('#noteVaultChips .notes-vchip').forEach(el => el.onclick = () => {
@@ -2454,7 +2434,7 @@
         if (t) { t.value = ''; t.readOnly = false; t.focus(); }
         if (b) b.value = '';
         if (ty) { ty.disabled = false; ty.value = 'experience'; }
-        if (h) { h.className = 'form-hint'; h.textContent = '新笔记：填类型、标题与正文，点「保存笔记」写入所选 vault 的 MemoryOS 写入/ 目录，并转成对应类型的记忆'; }
+        if (h) { h.className = 'form-hint'; h.textContent = '新笔记：填类型、标题与正文，点「保存笔记」写入所选仓库的 MemoryOS 写入/ 目录，并转成对应类型的记忆'; }
         if (p) p.style.display = 'none';
       };
     }
@@ -2515,7 +2495,7 @@
     if (d.detected && detBox) {
       const supported = d.detected.filter(a => a.supported).length;
       const connected = d.detected.filter(a => a.connected).length;
-      if (detBadge) detBadge.textContent = '检测到 ' + d.detected.length + ' 个 Agent / ' + connected + ' 已连接 / ' + supported + ' 支持技能分发';
+      if (detBadge) detBadge.textContent = '检测到 ' + d.detected.length + ' 个智能体 / ' + connected + ' 已连接 / ' + supported + ' 支持技能分发';
       detBox.innerHTML = d.detected.map(a => {
         let status, color;
         if (a.supported && a.alreadyTarget) { status = '✓ 已在分发目标'; color = 'var(--success)'; }
@@ -2591,6 +2571,19 @@
     cancelled: { label: '已取消', color: '#64748b' },
     merged: { label: '已合并', color: '#a855f7' },
     archived: { label: '已归档', color: '#64748b' },
+  };
+  /* ★ D-5：节点状态文字色对照表 [亮色, 暗色]。状态色（圆点/描边/强调）保持原色相，
+     只有 10px 小字换到同色系高对比档，解决 in_progress 2.43:1 / blocked 2.15:1。
+     查表未命中时回退原状态色，不影响新状态接入。 */
+  const NODE_TEXT_COLOR = {
+    '#94a3b8': ['#5b6b7d', '#cbd5e1'],
+    '#06b6d4': ['#0e7490', '#67e8f9'],
+    '#f59e0b': ['#a16207', '#fcd34d'],
+    '#10b981': ['#047857', '#6ee7b7'],
+    '#22c55e': ['#15803d', '#86efac'],
+    '#64748b': ['#475569', '#94a3b8'],
+    '#a855f7': ['#7e22ce', '#d8b4fe'],
+    '#ef4444': ['#b91c1c', '#fca5a5'],
   };
   const TASK_ORDER = ['pending', 'in_progress', 'blocked', 'done', 'cancelled', 'merged', 'archived']; // ★ E-0 六持久态 + archived（review/failed 已取消）
   let _taskAll = []; // 任务看板全量（供详情弹窗查询）
@@ -2671,7 +2664,7 @@
     $('#modalBody').innerHTML = `
       <div class="detail-content-box" style="border-left-color:${meta.color}">${renderContent(t.body || '—')}</div>
       <div class="detail-grid">
-        ${pair('ID', idStr, true)}
+        ${pair('编号', idStr, true)}
         ${pair('状态', '', false, `<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:${meta.color};display:inline-block"></span>${esc(meta.label)}</span>`)}
         ${pair('接收方', esc(t.assignee) || '未分配', true)}
         ${pair('提交方', esc(t.submittedBy) || '—', true)}
@@ -2933,7 +2926,7 @@
     const hint = $('#planHint'); hint.style.display = 'none';
     const body = override || planFormPayload();
     if (!body.content && !body.path) {
-      hint.textContent = '请选择计划文件，或粘贴计划 JSON';
+      hint.textContent = '请选择计划文件，或粘贴计划备份内容';
       hint.style.display = 'block';
       return false;
     }
@@ -2953,7 +2946,7 @@
   async function importPlan() {
     const hint = $('#planHint'); hint.style.display = 'none';
     const body = planFormPayload();
-    if (!body.content && !body.path) { hint.textContent = '请选择计划文件，或粘贴计划 JSON'; hint.style.display = 'block'; return; }
+    if (!body.content && !body.path) { hint.textContent = '请选择计划文件，或粘贴计划备份内容'; hint.style.display = 'block'; return; }
     const btn = $('#planImportBtn'); btn.disabled = true; btn.style.opacity = '0.6';
     try {
       const r = await fetch('/api/plans/import', {
@@ -3120,10 +3113,10 @@
     // 主题
     if (s.theme === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
-      const tt = $('#themeToggle'); if (tt) tt.textContent = '☀️';
+      const tt = $('#themeToggle'); if (tt) tt.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     } else {
       document.documentElement.removeAttribute('data-theme');
-      const tt = $('#themeToggle'); if (tt) tt.textContent = '🌙';
+      const tt = $('#themeToggle'); if (tt) tt.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     }
     // 字体大小
     document.documentElement.setAttribute('data-font-size', s.fontSize);
@@ -3149,7 +3142,7 @@
     { id: 'audit', name: '审计日志', desc: '查看治理操作审计记录', icon: '📋', action: () => navigate('audit') },
     { id: 'settings', name: '打开设置', desc: '调整外观和数据设置', icon: '⚙️', shortcut: 'Ctrl+,', action: () => $('#settingsModal')?.classList.add('show') },
     { id: 'theme', name: '切换主题', desc: '在亮色/暗色主题间切换', icon: '🎨', action: () => { const s = loadSettings(); s.theme = s.theme === 'dark' ? 'light' : 'dark'; saveSettings(s); applySettings(s); } },
-    { id: 'export', name: '导出全部数据', desc: '导出所有记忆为 JSON 备份', icon: '💾', shortcut: 'Ctrl+E', action: () => $('#exportAllBtn')?.click() },
+    { id: 'export', name: '导出全部数据', desc: '导出所有记忆为备份文件', icon: '💾', shortcut: 'Ctrl+E', action: () => $('#exportAllBtn')?.click() },
     { id: 'shortcuts', name: '快捷键帮助', desc: '查看所有可用快捷键', icon: '⌨️', shortcut: '?', action: () => $('#shortcutsHelp')?.classList.add('show') },
     { id: 'reload', name: '重新加载', desc: '刷新页面重新加载数据', icon: '🔄', action: () => location.reload() },
   ];
@@ -3320,8 +3313,11 @@
     const container = $('#filterTags');
     if (!container) return;
     const tags = [];
-    if (currentStatus !== 'all') tags.push({ type: 'status', value: currentStatus, label: '状态: ' + currentStatus });
-    if (currentType !== 'all') tags.push({ type: 'type', value: currentType, label: '类型: ' + currentType });
+    // 协议值→中文展示映射（筛选标签只显示中文，data-value 仍为协议值，删除匹配逻辑不受影响）
+    const STATUS_ZH = { triage: '待分流', todo: '待办', ready: '可认领', running: '执行中', review: '待验收', done: '已完成', failed: '失败', cancelled: '已取消', blocked: '受阻', archived: '已归档' };
+    const TYPE_ZH = { memory: '记忆', rule: '规则', convo: '对话', experience: '经验', decision: '决策', pitfall: '踩坑', convention: '约定' };
+    if (currentStatus !== 'all') tags.push({ type: 'status', value: currentStatus, label: '状态: ' + (STATUS_ZH[currentStatus] ?? currentStatus) });
+    if (currentType !== 'all') tags.push({ type: 'type', value: currentType, label: '类型: ' + (TYPE_ZH[currentType] ?? currentType) });
     if (tags.length) {
       container.style.display = 'flex';
       container.innerHTML = tags.map(t => `
@@ -3956,7 +3952,7 @@
       insert += `\n\`\`\`html\n${p.html}\n\`\`\`\n\`\`\`css\n${cssText(p)}\n\`\`\``;
       const input = $('#agentInput');
       if (input) { input.value = (input.value ? input.value.replace(/\s*$/, '\n') : '') + insert + '\n'; input.focus(); }
-      toast('已附到 Agent 输入框');
+      toast('已附到智能体输入框');
     };
     const poll = async () => {
       try {
@@ -3983,7 +3979,7 @@
     drawer.onclick = (e) => { if (e.target === drawer) close(); };
     $('#designOpenBtn').onclick = async () => {
       const url = ($('#designUrl')?.value || '').trim();
-      if (!url) { toast('请输入 URL（https:// 或 file:///）'); return; }
+      if (!url) { toast('请输入地址（https:// 或 file:///）'); return; }
       const res = await fetch('/api/design/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { toast(j.error || `打开失败（HTTP ${res.status}）`); return; }
@@ -3992,7 +3988,7 @@
     };
     $('#designNavBtn').onclick = async () => {
       const url = ($('#designUrl')?.value || '').trim();
-      if (!url) { toast('请输入新 URL'); return; }
+      if (!url) { toast('请输入新地址'); return; }
       const res = await fetch('/api/design/navigate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { toast(j.error || `换页失败（HTTP ${res.status}）`); return; }
@@ -4032,23 +4028,8 @@
   const SECTOR_COLOR_P6 = { working: '#94a3b8', episodic: '#38bdf8', semantic: '#34d399', procedural: '#a78bfa', meta: '#fbbf24', social: '#f472b6', user: '#22d3ee', prospective: '#fb923c', affective: '#f87171', secret: '#64748b' };
   const SECTOR_CN_P6 = { working: '工作', episodic: '情景', semantic: '语义', procedural: '程序', meta: '元记忆', social: '协作', user: '用户', prospective: '前瞻', affective: '情感' };
 
-  function drawSectorChart(dist) {
-    const el = $('#sectorChart'); if (!el || !window.echarts || !Array.isArray(dist)) return;
-    const data = dist.filter(d => d.count > 0);
-    if (!data.length) { el.innerHTML = '<div style="text-align:center;padding:50px;color:var(--text-muted);font-size:12px">暂无类别数据</div>'; return; }
-    const chart = echarts.init(el);
-    chart.setOption({
-      tooltip: { trigger: 'item', formatter: p => `${SECTOR_CN_P6[p.name] || p.name}：${p.value} 条（${p.percent}%）` },
-      legend: { bottom: 0, textStyle: { color: '#94a3b8', fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-      series: [{
-        type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], avoidLabelOverlap: true,
-        itemStyle: { borderColor: 'transparent', borderWidth: 0 },
-        label: { show: false },
-        data: data.map(d => ({ name: d.sector, value: d.count, itemStyle: { color: SECTOR_COLOR_P6[d.sector] || '#64748b' } })),
-        emphasis: { label: { show: true, fontSize: 13, fontWeight: 600 } },
-      }],
-    });
-  }
+
+
 
   async function loadProspective() {
     const list = $('#prospectiveList'); if (!list) return;
@@ -4086,7 +4067,7 @@
     if (seq !== _graphSeq) return; // 已有更新的请求，丢弃本次（防交错 clear/setOption 破坏渲染）
     if (!data) { el.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-muted)">图谱数据加载失败</div>'; return; }
     const banner = $('#graphBanner');
-    if (banner) { banner.style.display = data.truncated ? 'block' : 'none'; if (data.truncated) banner.textContent = '图已截断（节点>200），请用 scope / 筛选收窄'; }
+    if (banner) { banner.style.display = data.truncated ? 'block' : 'none'; if (data.truncated) banner.textContent = '图已截断（节点>200），请用作用域 / 筛选收窄'; }
     const catMap = { note: '笔记', memory: '记忆', card: '卡片' };
     const nodes = (data.nodes || []).map(n => ({
       id: n.id, name: n.label, category: n.kind,
@@ -4594,6 +4575,11 @@
       button.style.left = position.x + 'px';
       button.style.top = position.y + 'px';
       button.style.setProperty('--node-color', status.color);
+      const _ntc = NODE_TEXT_COLOR[status.color] || null;
+      if (_ntc) {
+        button.style.setProperty('--node-color-text', _ntc[0]);
+        button.style.setProperty('--node-color-text-dark', _ntc[1]);
+      }
       button.title = `#${node.id} ${node.title}`;
       button.setAttribute('aria-label', `打开卡片 #${node.id} ${node.title}`);
       // 辅助卡样式（虚线小卡）；注意 classList.add 不接受空串，非 aux 不加类
@@ -4610,7 +4596,7 @@
         </span>
         <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">+</span>
         ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
-          <span class="task-map-qbtn" data-q="agent" title="交给 Agent 干（自动填好任务说明）">🚀</span>
+          <span class="task-map-qbtn" data-q="agent" title="交给智能体干（自动填好任务说明）">🚀</span>
           <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
           <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>
         </span>` : ''}`;
@@ -4820,10 +4806,10 @@
     let tries = 0;
     const fill = () => {
       const input = $('#agentInput');
-      if (!input) { if (++tries < 20) setTimeout(fill, 300); else toast('Agent 输入框未就绪，请手动到 Agent 页'); return; }
+      if (!input) { if (++tries < 20) setTimeout(fill, 300); else toast('智能体输入框未就绪，请手动到智能体页'); return; }
       input.value = prompt;
       input.focus();
-      toast('已填入 Agent 输入框 —— 检查后回车发送');
+      toast('已填入智能体输入框 —— 检查后回车发送');
     };
     setTimeout(fill, 350);
   }
@@ -5207,7 +5193,7 @@
       </div>
       <div id="cardTabBody"></div>
       <div class="cw-actions">
-        <button class="btn-primary" id="cardAgentBtn" title="跳到 Agent 页并预填本卡任务说明（不自动发送，你过目后回车）">🚀 交给 Agent</button>
+        <button class="btn-primary" id="cardAgentBtn" title="跳到智能体页并预填本卡任务说明（不自动发送，你过目后回车）">🚀 交给智能体</button>
         <button class="btn-ghost" id="cardTermBtn" title="打开准终端，并把工作目录切到本卡的工作区">⌨ 终端</button>
         <button class="btn-ghost" id="cardDesignBtn" title="打开 Design Mode：去真实浏览器点元素，抓 HTML+CSS+截图">🎯 拾取</button>
         <button class="btn-ghost" id="cardClaimBtn" style="padding:6px 14px;font-size:12px">✔ 认领</button>
@@ -5225,7 +5211,7 @@
     const renderBody = () => {
       bodyBox.innerHTML = `
         <div class="detail-grid">
-          ${pair('ID', '#' + card.id, true)}
+          ${pair('编号', '#' + card.id, true)}
           ${pair('状态', '', false, `<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:${meta[2]};display:inline-block"></span>${esc(meta[1])}</span>`)}
           ${pair('认领人', esc(card.assignee) || '未分配', true)}
           ${pair('类型', esc(card.kind), true)}
@@ -5340,7 +5326,7 @@
         form.className = 'wb-ann-form';
         form.innerHTML = `
           <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">批注 ${esc(file)}:${line}（${side ? '新行' : '旧行'}）</div>
-          <textarea aria-label="行级批注内容" placeholder="写给 Agent 的意见（存入卡片评论，可一键回传）"></textarea>
+          <textarea aria-label="行级批注内容" placeholder="写给智能体的意见（存入卡片评论，可一键回传）"></textarea>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
             <button class="btn-ghost" data-wb-cancel style="padding:4px 12px;font-size:11px">取消</button>
             <button class="btn-primary" data-wb-ok style="padding:4px 12px;font-size:11px">提交批注</button>
@@ -5432,10 +5418,10 @@
         </div>
         <div class="wb-gh-form">
           <input id="wbGhRepo" placeholder="owner/repo（如 stablyai/orca）" value="${esc(cfg.repo || '')}" aria-label="GitHub 仓库 owner/repo" style="flex:1 1 200px" autocomplete="off" spellcheck="false">
-          <input id="wbGhToken" type="password" placeholder="${cfg.tokenSet ? '已存密文 token（留空不改）' : 'token（可选，公开仓库可空）'}" aria-label="GitHub token" style="flex:1 1 180px" autocomplete="off">
+          <input id="wbGhToken" type="password" placeholder="${cfg.tokenSet ? '已存密文 token（留空不改）' : 'token（可选，公开仓库可空）'}" aria-label="GitHub 令牌" style="flex:1 1 180px" autocomplete="off">
           <button class="btn-primary" id="wbGhSave" style="padding:5px 14px;font-size:11px">保存配置</button>
           ${cfg.tokenSet ? `<button class="btn-ghost" id="wbGhClearTok" style="padding:5px 10px;font-size:11px">清除 token</button>` : ''}
-          <div class="wb-gh-meta">明文 token 不落盘（DPAPI 密文）${cfg.canProtect ? '' : '；当前非 Windows，只能用环境变量 GITHUB_TOKEN 注入'}${st && st.repo ? `；默认分支 ${esc(st.repo.default_branch)} · open issues ${st.repo.open_issues_count} · 最近推送 ${esc(st.repo.pushed_at || '-')}` : ''}</div>
+          <div class="wb-gh-meta">明文 token 不落盘（DPAPI 密文）${cfg.canProtect ? '' : '；当前非 Windows，只能用环境变量 GITHUB_TOKEN 注入'}${st && st.repo ? `；默认分支 ${esc(st.repo.default_branch)} · 未关闭 Issue ${st.repo.open_issues_count} · 最近推送 ${esc(st.repo.pushed_at || '-')}` : ''}</div>
         </div>
         <div class="wb-gh-form" style="align-items:flex-start">
           ${linked ? `
@@ -5449,10 +5435,10 @@
           `}
         </div>
         ${cfg.repo ? `
-          <div class="wb-gh-list"><b style="font-size:11px">Open Issues</b>
+          <div class="wb-gh-list"><b style="font-size:11px">未关闭 Issues</b>
             ${issues.length ? issues.map((it) => `<div class="wb-gh-item"><span class="wb-gh-no">#${it.number}</span><a href="${esc(it.html_url)}" target="_blank" rel="noopener">${esc(it.title)}</a></div>`).join('') : '<div class="wb-gh-empty">无（或网络/权限不可用）</div>'}
           </div>
-          <div class="wb-gh-list"><b style="font-size:11px">Open PRs</b>
+          <div class="wb-gh-list"><b style="font-size:11px">未关闭 PR</b>
             ${pulls.length ? pulls.map((it) => `<div class="wb-gh-item"><span class="wb-gh-no">#${it.number}</span><a href="${esc(it.html_url)}" target="_blank" rel="noopener">${esc(it.title)}</a><span class="wb-gh-no">${esc(it.head || '?')}→${esc(it.base || '?')}</span></div>`).join('') : '<div class="wb-gh-empty">无（或网络/权限不可用）</div>'}
           </div>
           <div class="wb-gh-form">
@@ -5572,7 +5558,7 @@
           <span class="mono" style="color:var(--text-muted)">${esc(mine.branch || '')}${mine.detached ? '（detached）' : ''}</span>
           <span style="flex:1"></span>
           <button class="btn-ghost" id="wbRefreshBtn" style="padding:5px 12px;font-size:12px">刷新变更</button>
-          <button class="btn-ghost" id="wbSendBackBtn" style="padding:5px 12px;font-size:12px" title="把行级批注汇总为一条卡片评论，供 Agent 下轮读取">回传批注给 Agent</button>
+          <button class="btn-ghost" id="wbSendBackBtn" style="padding:5px 12px;font-size:12px" title="把行级批注汇总为一条卡片评论，供智能体下轮读取">回传批注给智能体</button>
           <button class="btn-danger" id="wbRemoveBtn" style="padding:5px 12px;font-size:12px">清理工作区</button>
         </div>
         <div id="wbFiles" style="margin-top:10px;font-size:11px"></div>
@@ -5586,7 +5572,7 @@
         const res = await fetch(`/api/cards/${id}/comment`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: `【diff 批注回传 · ${mine.name}】\n${lines}`, author: 'human:dashboard' }) });
         const j = await res.json().catch(() => ({}));
         if (!res.ok) { toast(j.error || '回传失败'); return; }
-        toast(`已回传 ${_wbAnns.length} 条批注（Agent 下轮可见评论）`);
+        toast(`已回传 ${_wbAnns.length} 条批注（智能体下轮可见评论）`);
       };
       $('#wbRemoveBtn').onclick = async () => {
         const v = await askForm({
@@ -5849,7 +5835,7 @@
   async function saveNote() {
     const vault = currentVault();
     const hint = $('#noteHint');
-    if (!vault) { hint.textContent = '请先在上方选择 / 输入 vault 路径'; hint.className = 'form-hint err'; return; }
+    if (!vault) { hint.textContent = '请先在上方选择 / 输入仓库路径'; hint.className = 'form-hint err'; return; }
     const title = $('#noteTitle').value.trim();
     const content = $('#noteBody').value.trim();
     if (!title) { hint.textContent = '标题不能为空'; hint.className = 'form-hint err'; return; }
@@ -5906,7 +5892,7 @@
     const isUser = role === 'user';
     const wrap = document.createElement('div');
     wrap.style.cssText = `display:flex;flex-direction:column;gap:5px;align-items:${isUser ? 'flex-end' : 'flex-start'}`;
-    wrap.innerHTML = `<div style="font-size:11px;color:var(--text-muted)">${isUser ? '我' : 'Agent'}</div>
+    wrap.innerHTML = `<div style="font-size:11px;color:var(--text-muted)">${isUser ? '我' : '智能体'}</div>
       <div style="max-width:86%;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.85;white-space:pre-wrap;word-break:break-word;${isUser
         ? 'background:rgba(65,187,200,0.12);border:1px solid rgba(65,187,200,0.25);color:var(--text-primary)'
         : 'background:rgba(255,255,255,0.72);border:1px solid rgba(15,23,42,0.08);color:var(--text-primary)'}">${html}</div>`;
@@ -6051,7 +6037,7 @@
     if (meta) meta.textContent = '';
     // 「在执行中心查看」跳转
     const openBtn = $('#agentRunLiveOpen');
-    if (openBtn) openBtn.onclick = () => { location.hash = 'runs'; };
+    if (openBtn) openBtn.onclick = () => { location.hash = 'tasks/runs'; };
     // 手动刷新按钮
     const refreshBtn = $('#agentRunLiveRefresh');
     if (refreshBtn) refreshBtn.onclick = () => {
@@ -6406,7 +6392,7 @@
           const txt = await file.text();
           insert += `\n内容（${file.name}，${file.size}B）：\n\`\`\`\n${txt}\n\`\`\``;
         } else if (isText) {
-          insert += `（大文本未内联，可先分片或让 Agent 提示用户查看）`;
+          insert += `（大文本未内联，可先分片或让智能体提示用户查看）`;
         }
         if (input) { input.value = (input.value ? input.value.replace(/\s*$/, '\n') : '') + insert + '\n'; input.focus(); }
         toast(`已附加 ${file.name}（${j.size}B）`);
@@ -6493,7 +6479,7 @@
     ]},
     { domain: '⑧ 多智能体', btns: [
       { label: '接入向导', kind: 'real', act: '_agentCockpitConnectGuide' },
-      { label: 'Agent 清单', kind: 'real', act: '_agentCockpitAgents' },
+      { label: '智能体清单', kind: 'real', act: '_agentCockpitAgents' },
       { label: '子智能体', kind: 'stub', why: '架构不支持：单 agent 内核，无 spawn/并行控制' },
       { label: '并行数', kind: 'real', act: '_agentCockpitParallelism', hint: '同时运行的 run 上限（超出自动排队）' },
       { label: '终止子 agent', kind: 'stub', why: '架构不支持：单 agent 内核' },
@@ -6569,7 +6555,7 @@
       _cockpitDownload(payload, `memoryos-conversation-${new Date().toISOString().slice(0, 10)}.json`);
       toast('对话已导出', 2000);
     },
-    _agentCockpitNav: (arg) => { location.hash = arg || 'runs'; },
+    _agentCockpitNav: (arg) => { location.hash = arg || 'tasks/runs'; },
     _agentCockpitCard: async (arg) => {
       /* ★ P4：原实现只弹提示 + 跳看板（点了没反应的假动作）。改为真执行 ——
          选卡（多数情况只有 1 张候选，直接干）→ 真调 POST /api/cards/:id/status（带 expected_from CAS）。 */
@@ -6589,7 +6575,7 @@
       let target = pool[0];
       if (pool.length > 1) {
         const hint = pool.slice(0, 6).map(c => `#${c.id} ${String(c.title || '').slice(0, 16)}`).join(' ｜ ');
-        const v = await askForm({ title: `${ACT.label} —— 有 ${pool.length} 张候选`, okText: '执行', fields: [{ key: 'id', label: `候选（改填别的 ID 也行）：${hint}`, required: true, value: String(pool[0].id), placeholder: '卡片 ID' }] });
+        const v = await askForm({ title: `${ACT.label} —— 有 ${pool.length} 张候选`, okText: '执行', fields: [{ key: 'id', label: `候选（改填别的编号也行）：${hint}`, required: true, value: String(pool[0].id), placeholder: '卡片编号' }] });
         if (!v) return;
         const id = Number(v.id);
         target = pool.find(c => Number(c.id) === id) || null;
@@ -6631,7 +6617,7 @@
     },
     _agentCockpitDeny: () => {
       // 本地即时拒绝当前被门禁拦截的写操作（不依赖审批端点；诚实标注）
-      toast('已标记拒绝：agent 将基于只读信息收尾（审批三键真实生效需单独立项）', 4200);
+      toast('已标记拒绝：智能体将基于只读信息收尾（审批三键真实生效需单独立项）', 4200);
     },
     _agentCockpitAudit: async () => {
       const a = await fetch('/api/audit').then(r => r.json()).catch(() => ({ rows: [] }));
@@ -6667,12 +6653,12 @@
     },
     _agentCockpitConnectGuide: async () => {
       location.hash = 'connect';
-      toast('接入向导在「工具连接」页（点各 agent 的 connect 出配置预览）', 3600);
+      toast('接入向导在「工具连接」页（点各智能体的 connect 出配置预览）', 3600);
     },
     _agentCockpitAgents: async () => {
       const a = await fetch('/api/agents').then(r => r.json()).catch(() => ({ agents: [] }));
       const list = a.agents || [];
-      toast(list.length ? `本机 agent ${list.length} 个：${list.map(x => x.id).join(', ')}` : '未检测到本机 agent', 5000);
+      toast(list.length ? `本机智能体 ${list.length} 个：${list.map(x => x.id).join(', ')}` : '未检测到本机智能体', 5000);
     },
     _agentCockpitHealth: async () => {
       const h = await Promise.all(['write-health', 'usage-health', 'daemon-health', 'health'].map(p => fetch('/api/' + p).then(r => r.json()).catch(() => ({}))));
@@ -6775,7 +6761,7 @@
       const n = Math.floor(Number(v.n));
       if (!(n >= 1 && n <= 8)) { toast('须为 1–8 的整数', 2600); return; }
       const r = await fetch('/api/agent/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ maxConcurrent: n }) }).then(x => x.json()).catch(() => ({}));
-      toast(r.ok ? `并行数已设为 ${n}（当前 running ${t.running ?? 0} / queued ${t.queued ?? 0}）` : '设置失败：' + (r.error || ''), 4000);
+      toast(r.ok ? `并行数已设为 ${n}（当前执行中 ${t.running ?? 0} / 排队 ${t.queued ?? 0}）` : '设置失败：' + (r.error || ''), 4000);
     },
     _agentCockpitCallChain: async () => {
       const runs = await fetch('/api/agent/runs').then(r => r.json()).catch(() => ({ runs: [] }));
@@ -7152,7 +7138,7 @@
     if (!board) return;
     board.innerHTML = '';
     if (!runs.length) {
-      board.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「Agent」页发一条指令（带会话）即在此实时展开。</div>';
+      board.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「智能体」页发一条指令（带会话）即在此实时展开。</div>';
       return;
     }
     for (const r of runs.slice(0, 12)) {
@@ -7320,6 +7306,78 @@
     if (_runsEventSource) { _runsEventSource.close(); _runsEventSource = null; }
     if (_runsPollTimer) { clearInterval(_runsPollTimer); _runsPollTimer = null; }
   }
+  /* ===== Slice D：界面 pictograph 统一为单色 SVG =====
+     做法：一张映射表 + 文本节点清扫，静态 HTML 与动态渲染统一覆盖；
+     只扫界面语言层，跳过用户数据正文（记忆内容 / 笔记正文 / 终端日志 / 时间线正文）避免内容失真。
+     回滚：window.__MOS_PICTOGRAPH = false 即停止；已替换的节点在窗口内不可逆（刷新即还原）。 */
+  window.__MOS_PICTOGRAPH = true;
+  const PICTO_ICONS = {"★":{"b":"<path d=\"M12 2.6l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.5l-5.8 3.05 1.1-6.5-4.7-4.6 6.5-.95z\"/>","s":true},"⭐":{"b":"<path d=\"M12 2.6l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.5l-5.8 3.05 1.1-6.5-4.7-4.6 6.5-.95z\"/>","s":true},"✓":{"b":"<path d=\"M20 6.5L9 17.5 4 12.5\"/>","s":false},"✔":{"b":"<path d=\"M20 6.5L9 17.5 4 12.5\"/>","s":false},"✅":{"b":"<path d=\"M21 11.1V12a9 9 0 1 1-5.3-8.2\"/><path d=\"M22 4L12 14.01l-3-3\"/>","s":false},"✕":{"b":"<path d=\"M18 6L6 18M6 6l12 12\"/>","s":false},"✗":{"b":"<path d=\"M18 6L6 18M6 6l12 12\"/>","s":false},"✖":{"b":"<path d=\"M18 6L6 18M6 6l12 12\"/>","s":false},"⚠":{"b":"<path d=\"M10.3 3.9L2.1 17.9A2 2 0 0 0 3.8 21h16.4a2 2 0 0 0 1.7-3.1L13.7 3.9a2 2 0 0 0-3.4 0z\"/><path d=\"M12 9v4.5\"/><circle cx=\"12\" cy=\"17.2\" r=\".6\"/>","s":false},"⛔":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M5.6 5.6l12.8 12.8\"/>","s":false},"🚫":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M5.6 5.6l12.8 12.8\"/>","s":false},"❌":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M15 9l-6 6M9 9l6 6\"/>","s":false},"🟢":{"b":"<circle cx=\"12\" cy=\"12\" r=\"8.5\"/>","s":true},"✎":{"b":"<path d=\"M17 3.5a2.83 2.83 0 1 1 4 4L7.5 21 2 22.5 3.5 17z\"/><path d=\"M15 5.5l4 4\"/>","s":false},"✏":{"b":"<path d=\"M17 3.5a2.83 2.83 0 1 1 4 4L7.5 21 2 22.5 3.5 17z\"/><path d=\"M15 5.5l4 4\"/>","s":false},"✍":{"b":"<path d=\"M17 3.5a2.83 2.83 0 1 1 4 4L7.5 21 2 22.5 3.5 17z\"/>","s":false},"🖐":{"b":"<path d=\"M18 11V6.5a1.5 1.5 0 0 0-3 0V11\"/><path d=\"M15 10.5V4.5a1.5 1.5 0 0 0-3 0V11\"/><path d=\"M12 10.5V6a1.5 1.5 0 0 0-3 0v8\"/><path d=\"M18 8.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.2a6 6 0 0 1-4.3-1.8L4 14.5a1.6 1.6 0 0 1 2.3-2.2L9 15V4a1.5 1.5 0 0 1 3 0\"/>","s":false},"🗑":{"b":"<path d=\"M3 6h18\"/><path d=\"M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6\"/><path d=\"M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6\"/><path d=\"M10 11v6M14 11v6\"/>","s":false},"📦":{"b":"<path d=\"M21 8.2v7.6a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4a2 2 0 0 1-1-1.7V8.2a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4a2 2 0 0 1 1 1.7z\"/><path d=\"M3.3 7.3L12 12.2l8.7-4.9\"/><path d=\"M12 22V12.2\"/>","s":false},"📋":{"b":"<path d=\"M9 4.5H7.5A1.5 1.5 0 0 0 6 6v13.5A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H15\"/><rect x=\"9\" y=\"2.5\" width=\"6\" height=\"4\" rx=\"1\"/><path d=\"M8.5 11h7M8.5 15h5\"/>","s":false},"🔧":{"b":"<path d=\"M14.2 6.2a4.5 4.5 0 0 0 5.9 5.9l-8 8a2.7 2.7 0 0 1-3.8-3.8z\"/><path d=\"M6.5 3.5L9 6 6 9l-2.5-2.5a3.5 3.5 0 0 0 3-3z\"/>","s":false},"🔗":{"b":"<path d=\"M9.5 14.5l5-5\"/><path d=\"M11 6.5l1.8-1.8a3.8 3.8 0 0 1 5.4 5.4L16.4 12\"/><path d=\"M13 17.5l-1.8 1.8a3.8 3.8 0 0 1-5.4-5.4L7.6 12\"/>","s":false},"📎":{"b":"<path d=\"M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.3-2.3l8.1-8.1\"/>","s":false},"👁":{"b":"<path d=\"M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>","s":false},"🎯":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><circle cx=\"12\" cy=\"12\" r=\"5\"/><circle cx=\"12\" cy=\"12\" r=\"1.4\"/>","s":false},"🚀":{"b":"<path d=\"M5 15l-2 6 6-2\"/><path d=\"M12.5 3.5c3.5-1 6-1 6-1s0 2.5-1 6l-6 6-4-4z\"/><circle cx=\"14.5\" cy=\"9.5\" r=\"1.6\"/><path d=\"M9 15l-3.5 3.5M6 18l-2.5 2.5\"/>","s":false},"⚡":{"b":"<path d=\"M13.5 2L4 13.5h6L10.5 22 20 10.5h-6z\"/>","s":false},"🔍":{"b":"<circle cx=\"11\" cy=\"11\" r=\"7.5\"/><path d=\"M20.5 20.5l-4.2-4.2\"/>","s":false},"📝":{"b":"<path d=\"M12 20.5h9\"/><path d=\"M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z\"/>","s":false},"💭":{"b":"<path d=\"M20.5 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 20.5 12z\"/>","s":false},"🔌":{"b":"<path d=\"M9 2.5v6M15 2.5v6\"/><path d=\"M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0z\"/><path d=\"M12 17v4.5\"/>","s":false},"📓":{"b":"<path d=\"M5 3.5A1.5 1.5 0 0 1 6.5 2H19v20H6.5A1.5 1.5 0 0 1 5 20.5z\"/><path d=\"M9 2v20M12 7h4M12 11h4\"/>","s":false},"📄":{"b":"<path d=\"M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z\"/><path d=\"M14 2.5V8h5.5\"/><path d=\"M8.5 13h7M8.5 17h5\"/>","s":false},"🗺":{"b":"<path d=\"M9 4.5L3 6.8v13L9 17.5l6 2.3 6-2.3v-13L15 6.8z\"/><path d=\"M9 4.5v13M15 6.8v13\"/>","s":false},"📂":{"b":"<path d=\"M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.5h8.8A1.5 1.5 0 0 1 21 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z\"/>","s":false},"📊":{"b":"<path d=\"M3 3.5v17.5h18\"/><rect x=\"6\" y=\"12\" width=\"3.5\" height=\"6\"/><rect x=\"12\" y=\"8\" width=\"3.5\" height=\"10\"/><rect x=\"18\" y=\"4.5\" width=\"3.5\" height=\"13.5\"/>","s":false},"📈":{"b":"<path d=\"M3 3.5v17.5h18\"/><path d=\"M6.5 15l4-4.5 3.5 3L20 7\"/>","s":false},"💤":{"b":"<path d=\"M20.5 14.5A8.5 8.5 0 0 1 8 12.8 7 7 0 0 0 3.5 12a6.5 6.5 0 1 0 17 2.5z\"/><path d=\"M9.5 7.5h4M8 10.5h3\"/>","s":false},"📚":{"b":"<path d=\"M12 6.5v15\"/><path d=\"M3 4.5h5a2.5 2.5 0 0 1 2 2.4V21a2 2 0 0 0-1.6-1H3z\"/><path d=\"M21 4.5h-5a2.5 2.5 0 0 0-2 2.4V21a2 2 0 0 1 1.6-1H21z\"/>","s":false},"⚙":{"b":"<path d=\"M4 7h10M18 7h2M4 17h4M12 17h8\"/><circle cx=\"16\" cy=\"7\" r=\"2.4\"/><circle cx=\"10\" cy=\"17\" r=\"2.4\"/>","s":false},"🎨":{"b":"<path d=\"M12 2.5a9.5 9.5 0 0 0 0 19c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.6 0-.8.7-1.4 1.6-1.4h1.8A5.3 5.3 0 0 0 21.5 10C21.5 5.8 17.2 2.5 12 2.5z\"/><circle cx=\"7.5\" cy=\"11\" r=\"1.1\"/><circle cx=\"11\" cy=\"7\" r=\"1.1\"/><circle cx=\"15.5\" cy=\"8.5\" r=\"1.1\"/>","s":false},"💾":{"b":"<path d=\"M5 3.5h11l3 3v14H5z\"/><rect x=\"8\" y=\"12.5\" width=\"8\" height=\"6\"/>","s":false},"🔄":{"b":"<path d=\"M20.5 11.5a8.5 8.5 0 0 0-14.8-4.6L2 10.5\"/><path d=\"M2 4.5v6h6\"/><path d=\"M3.5 12.5a8.5 8.5 0 0 0 14.8 4.6L22 13.5\"/><path d=\"M22 19.5v-6h-6\"/>","s":false},"✂":{"b":"<circle cx=\"6\" cy=\"6\" r=\"2.5\"/><circle cx=\"6\" cy=\"18\" r=\"2.5\"/><path d=\"M8 7.5L20 18M8 16.5L20 6\"/>","s":false},"💡":{"b":"<path d=\"M9 18h6\"/><path d=\"M10 21.5h4\"/><path d=\"M12 2.5a6.5 6.5 0 0 0-3.8 11.8c.6.5.8 1 .8 1.7h6c0-.7.2-1.2.8-1.7A6.5 6.5 0 0 0 12 2.5z\"/>","s":false},"📏":{"b":"<path d=\"M3 15.5l6-6M9 9.5l5.5 5.5\"/><rect x=\"12\" y=\"3\" width=\"9\" height=\"6\" rx=\"1.5\" transform=\"rotate(45 16.5 6)\"/><rect x=\"12\" y=\"15\" width=\"9\" height=\"6\" rx=\"1.5\" transform=\"rotate(45 16.5 18)\"/>","s":false},"🐙":{"b":"<path d=\"M12 2.5a7.5 7.5 0 0 0-7.5 7.5v.8a4 4 0 0 0 1 2.6l1.3 1.7v4.4a2 2 0 0 0 2 2h6.4a2 2 0 0 0 2-2v-4.4l1.3-1.7a4 4 0 0 0 1-2.6v-.8A7.5 7.5 0 0 0 12 2.5z\"/><path d=\"M12 8.5v3M9 10h6\"/>","s":false},"✨":{"b":"<path d=\"M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z\"/><path d=\"M19 16.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z\"/>","s":false},"⚑":{"b":"<path d=\"M5 21.5V3.5\"/><path d=\"M5 4.5h11l-2 3.5 2 3.5H5z\"/>","s":false},"📥":{"b":"<path d=\"M12 3.5v11\"/><path d=\"M7.5 10.5L12 15l4.5-4.5\"/><path d=\"M4 17.5v1.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5\"/>","s":false},"🔵":{"b":"<circle cx=\"12\" cy=\"12\" r=\"8.5\"/>","s":true},"➡":{"b":"<path d=\"M4 12h15\"/><path d=\"M13.5 6.5L19 12l-5.5 5.5\"/>","s":false},"🏃":{"b":"<circle cx=\"15\" cy=\"4.5\" r=\"1.8\"/><path d=\"M12.5 21.5l1.8-5.4-3-2.6 1-4.5 3.7 2.5 2.5 2.5\"/><path d=\"M11.3 9l-3.6 1.2-2 3\"/><path d=\"M14.3 16.1l3.4 1.4 1.3 4\"/>","s":false},"🌐":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18\"/><path d=\"M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z\"/>","s":false},"💬":{"b":"<path d=\"M20.5 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 20.5 12z\"/>","s":false},"🕒":{"b":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5.2l3.4 2\"/>","s":false},"📜":{"b":"<path d=\"M6 3.5h11a2 2 0 0 1 2 2v13a2 2 0 0 0 2 2H8a2 2 0 0 1-2-2z\"/><path d=\"M9 8h6M9 12h6M9 16h4\"/>","s":false},"⬇":{"b":"<path d=\"M12 4v11\"/><path d=\"M7.5 10.5L12 15l4.5-4.5\"/><path d=\"M4.5 19.5h15\"/>","s":false},"🧠":{"b":"<path d=\"M9.5 3.5A2.5 2.5 0 0 0 7 6a2.5 2.5 0 0 0-2 3.5A2.5 2.5 0 0 0 5.5 15a2.5 2.5 0 0 0 4 2.5V3.5z\"/><path d=\"M14.5 3.5A2.5 2.5 0 0 1 17 6a2.5 2.5 0 0 1 2 3.5a2.5 2.5 0 0 1-.5 5.5a2.5 2.5 0 0 1-4 2.5V3.5z\"/><path d=\"M12 3.5v17\"/>","s":false},"📡":{"b":"<circle cx=\"12\" cy=\"16.5\" r=\"2\"/><path d=\"M8.8 13.2a4.5 4.5 0 0 1 0 6.6M15.2 13.2a4.5 4.5 0 0 0 0 6.6\"/><path d=\"M5.8 9.8a8.8 8.8 0 0 1 0 12.4M18.2 9.8a8.8 8.8 0 0 0 0 12.4\"/>","s":false},"🤖":{"b":"<rect x=\"4\" y=\"8\" width=\"16\" height=\"11\" rx=\"2.5\"/><path d=\"M12 4.5V8\"/><circle cx=\"12\" cy=\"4\" r=\"1.4\"/><circle cx=\"9\" cy=\"13\" r=\"1.2\"/><circle cx=\"15\" cy=\"13\" r=\"1.2\"/><path d=\"M9.5 16.2h5\"/>","s":false},"☀":{"b":"<circle cx=\"12\" cy=\"12\" r=\"4.2\"/><path d=\"M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6\"/>","s":false},"🌙":{"b":"<path d=\"M20.5 14.3A8.8 8.8 0 0 1 9.7 3.5a8.8 8.8 0 1 0 10.8 10.8z\"/>","s":false}};
+  const PICTO_RE = new RegExp("[★⭐✓✔✅✕✗✖⚠⛔🚫❌🟢✎✏✍🖐🗑📦📋🔧🔗📎👁🎯🚀⚡🔍📝💭🔌📓📄🗺📂📊📈💤📚⚙🎨💾🔄✂💡📏🐙✨⚑📥🔵➡🏃🌐💬🕒📜⬇🧠📡🤖☀🌙]", "gu");
+  /* 明确不扫的容器：用户数据与机器输出 */
+  const PICTO_SKIP_SEL = '.memory-content,.notes-tabpane,.notes-hint,pre,code,.run-timeline,.sessionMessages,.stat-value,#noteDetail,.row-content,.log-body,.audit-text';
+  function _pictoSvg(ch) {
+    const it = PICTO_ICONS[ch];
+    if (!it) return null;
+    const cls = it.s ? " class=\"ic ic-solid\"" : " class=\"ic\"";
+    return "<svg" + cls + " viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\" data-picto-ch=\"" + ch + "\">" + it.b + "</svg>";
+  }
+  function _pictoInSkipped(node) {
+    for (let p = node.parentElement; p; p = p.parentElement) { if (p.matches && p.matches(PICTO_SKIP_SEL)) return true; }
+    return false;
+  }
+  function sweepPictographs(root) {
+    if (window.__MOS_PICTOGRAPH === false) return 0;
+    const scope = root || document.body;
+    if (!scope || !scope.createTreeWalker) return 0;
+    const walker = scope.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        if (!n.nodeValue || !n.nodeValue.match(PICTO_RE)) return NodeFilter.FILTER_REJECT;
+        if (_pictoInSkipped(n)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    PICTO_RE.lastIndex = 0;
+    const hits = [];
+    let n;
+    while ((n = walker.nextNode())) hits.push(n);
+    let done = 0;
+    for (const t of hits) {
+      const txt = t.nodeValue;
+      if (!txt.match(PICTO_RE)) continue;
+      PICTO_RE.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0, m, local = 0;
+      while ((m = PICTO_RE.exec(txt))) {
+        const svg = _pictoSvg(m[1]);
+        if (!svg) continue;
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        const span = document.createElement("span");
+        span.innerHTML = svg;
+        frag.appendChild(span.firstChild);
+        last = m.index + 1;
+        local++;
+        done++;
+      }
+      if (!local) continue;
+      if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+      t.parentNode.replaceChild(frag, t);
+    }
+    return done;
+  }
+  function initPictographs() {
+    const run = () => { try { return sweepPictographs(document.body); } catch (e) { return 0; } };
+    run();
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run, { once: true });
+    setTimeout(run, 1200); setTimeout(run, 3000);
+    /* 动态渲染兜底：节流 400ms 的 MutationObserver，覆盖 innerHTML 注入的按钮/徽标/空态 */
+    let timer = null;
+    const obs = new MutationObserver(() => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; if (window.__MOS_PICTOGRAPH !== false) run(); }, 400);
+    });
+    if (document.body) obs.observe(document.body, { childList: true, subtree: true });
+  }
+
   async function initRuns() {
     runsInited = true;
     _runsCloseSse();
@@ -7331,7 +7389,7 @@
     // 审批占位弹窗接线
     _runsBindApproval();
     // 离页清流
-    const onPageLeave = () => { if (location.hash.slice(1) !== 'runs') _runsCloseSse(); };
+    const onPageLeave = () => { const h = location.hash.slice(1); if (h !== 'tasks/runs' && h !== 'tasks') _runsCloseSse(); };
     window.addEventListener('hashchange', onPageLeave);
   }
   /* 路由切走 runs 页时关闭 SSE/轮询（防多页同连）。
@@ -7355,7 +7413,7 @@
         }
         const d = await fetch('/api/agent/sessions/' + encodeURIComponent(s.session_key)).then(r => r.json()).catch(() => null);
         const box = $('#sessionMessages');
-        if (d && d.messages) box.textContent = d.messages.map(m => (m.role === 'user' ? '我：' : 'Agent：') + m.content).join('\n') || '（空）';
+        if (d && d.messages) box.textContent = d.messages.map(m => (m.role === 'user' ? '我：' : '智能体：') + m.content).join('\n') || '（空）';
       };
       wrap.appendChild(chip);
     }
@@ -7404,6 +7462,7 @@
   initContextMenu();
   initErrorBoundary();
   initExport();
+  bindMemorySubnav();
   initRowExpand();
   loadFilterState();
   initCommandPalette();
@@ -7420,10 +7479,14 @@
   initSkills();
   initTasks();
   initGraph();
+  initPictographs();
   initLoadError();
   initDaemonHealth();
   load().then(() => {
     // 工具连接页列数修正
-    const t = PAGE_TITLES[location.hash.slice(1) || 'agent']; if (t) navigate(location.hash.slice(1) || 'agent');
+    if (location.hash.slice(1).split('/')[0] === 'graph') location.hash = 'obsidian/unified';
+    if (location.hash.slice(1).split('/')[0] === 'runs') location.hash = 'tasks/runs';
+    const _seg = (location.hash.slice(1) || 'agent').split('/');
+    if (PAGE_TITLES[_seg[0]]) navigate(_seg[0], _seg[1]);
   }).catch(e => console.error('load failed', e));
 })();
