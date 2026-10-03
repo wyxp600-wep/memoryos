@@ -3728,6 +3728,137 @@
 
   bindNav(); bindSearch(); bindModal();
   initSettings();
+  /* ===== ★ Orca 融合 P2（2026-10-03 CLAIM §5）：准终端抽屉（exec_run 流式版 SSE，无 pty）=====
+   * 与后端 dashboard-reg-term.js 配套：argv 数组 + 白名单 + cwd 白名单 + killTree（安全口径同 MCP exec_run）。
+   * 分屏 = 双 pane 并排（窄屏 CSS 自动纵向堆叠）；每 pane 独立 cwd/历史/停止。 */
+  function initTerm() {
+    const drawer = $('#termDrawer');
+    if (!drawer) return;
+    const T = { es: [null, null], runId: [null, null], hist: [[], []], hi: [0, 0], split: false, inited: false };
+    const paneEl = (i) => drawer.querySelector(`.term-pane[data-pane="${i + 1}"]`);
+    const append = (i, text, cls) => {
+      const out = paneEl(i)?.querySelector('.term-out');
+      if (!out) return;
+      if (cls) { const s = document.createElement('span'); s.className = cls; s.textContent = text; out.appendChild(s); }
+      else out.appendChild(document.createTextNode(text));
+      while (out.childNodes.length > 4000) out.removeChild(out.firstChild); // DOM 上限：防长跑输出撑爆页面
+      out.scrollTop = out.scrollHeight;
+    };
+    // 客户端分词（引号内成一段）→ argv 交后端白名单校验；准终端无管道/重定向
+    const splitCmd = (s) => {
+      const out = []; let cur = '', q = null;
+      for (const ch of s) {
+        if (q) { if (ch === q) q = null; else cur += ch; }
+        else if (ch === '"' || ch === "'") q = ch;
+        else if (ch === ' ') { if (cur) { out.push(cur); cur = ''; } }
+        else cur += ch;
+      }
+      if (cur) out.push(cur);
+      return out;
+    };
+    const idle = (i) => {
+      const el = paneEl(i);
+      el.querySelector('.term-run').hidden = false;
+      el.querySelector('.term-stop').hidden = true;
+      const inp = el.querySelector('.term-input');
+      inp.disabled = false;
+      return inp;
+    };
+    const stop = (i, quiet) => {
+      const es = T.es[i], rid = T.runId[i];
+      if (es) es.close(); // 断开 SSE → 服务端 req close → killTree（双保险再补一次显式 kill）
+      T.es[i] = null; T.runId[i] = null;
+      if (rid) fetch('/api/exec/kill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: rid }) }).catch(() => {});
+      if (!quiet) append(i, '\n[已停止]\n', 't-dim');
+      idle(i);
+    };
+    const run = (i) => {
+      const el = paneEl(i);
+      const input = el.querySelector('.term-input');
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      if (T.es[i]) stop(i, true);
+      const argv = splitCmd(cmd);
+      if (!argv.length) return;
+      const cwd = el.querySelector('.term-cwd').value || '.';
+      const h = T.hist[i];
+      if (h[h.length - 1] !== cmd) h.push(cmd);
+      T.hi[i] = h.length;
+      input.value = '';
+      append(i, `\n$ ${cmd}\n`, 't-dim');
+      el.querySelector('.term-run').hidden = true;
+      el.querySelector('.term-stop').hidden = false;
+      input.disabled = true;
+      const es = new EventSource(`/api/exec/stream?argv=${encodeURIComponent(JSON.stringify(argv))}&cwd=${encodeURIComponent(cwd)}`);
+      T.es[i] = es; T.runId[i] = null;
+      const done = () => { try { es.close(); } catch { /* 已关 */ } T.es[i] = null; idle(i); };
+      es.addEventListener('start', (e) => { try { T.runId[i] = JSON.parse(e.data).runId; } catch { /* 空 */ } });
+      es.addEventListener('out', (e) => { try { append(i, JSON.parse(e.data).s); } catch { /* 空 */ } });
+      es.addEventListener('err', (e) => { try { append(i, JSON.parse(e.data).s, 't-err'); } catch { /* 空 */ } });
+      es.addEventListener('trunc', () => append(i, '\n[输出超上限，后续不再回传]\n', 't-dim'));
+      es.addEventListener('exit', (e) => {
+        let d = {}; try { d = JSON.parse(e.data); } catch { /* 空 */ }
+        const bad = d.timedOut || d.error || (d.code !== 0 && d.code !== null);
+        append(i, `\n[exit ${d.timedOut ? 'TIMEOUT' : (d.error ? 'ERROR' : d.code)}${d.error ? ' ' + d.error : ''} · ${d.ms ?? '?'}ms]\n`, bad ? 't-err' : 't-dim');
+        done(); // ★ 必须先关 EventSource：否则连接关闭会触发其自动重连，把同一条命令再执行一遍
+      });
+      es.onerror = () => { append(i, '\n[连接中断]\n', 't-err'); done(); };
+    };
+    const initPane = (i) => {
+      const el = paneEl(i);
+      if (!el || el.dataset.wired) return;
+      el.dataset.wired = '1';
+      const input = el.querySelector('.term-input');
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); run(i); }
+        else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const h = T.hist[i];
+          if (!h.length) return;
+          e.preventDefault();
+          T.hi[i] = e.key === 'ArrowUp' ? Math.max(0, T.hi[i] - 1) : Math.min(h.length, T.hi[i] + 1);
+          input.value = T.hi[i] >= h.length ? '' : h[T.hi[i]];
+        }
+      });
+      el.querySelector('.term-run').onclick = () => run(i);
+      el.querySelector('.term-stop').onclick = () => stop(i);
+      el.querySelector('.term-clear').onclick = () => { el.querySelector('.term-out').textContent = ''; };
+    };
+    // cwd 下拉：主工作区 + 全部 worktree（相对工作区路径，后端 resolveInside 校验）
+    const loadCwd = () => fetch('/api/worktrees').then((r) => r.json()).then((j) => {
+      const items = (j && j.items) || [];
+      [0, 1].forEach((i) => {
+        const sel = paneEl(i)?.querySelector('.term-cwd');
+        if (!sel) return;
+        sel.innerHTML = '';
+        items.forEach((w) => {
+          const o = document.createElement('option');
+          o.value = w.main ? '.' : `.worktrees/${w.name}`;
+          o.textContent = (w.main ? '主工作区 · ' : 'worktree · ') + w.name;
+          sel.appendChild(o);
+        });
+        if (!sel.options.length) { const o = document.createElement('option'); o.value = '.'; o.textContent = '工作区根'; sel.appendChild(o); }
+      });
+    }).catch(() => {});
+    const stopAll = () => [0, 1].forEach((i) => { if (T.es[i]) stop(i, true); });
+    const open = () => {
+      drawer.classList.add('show');
+      if (!T.inited) { T.inited = true; initPane(0); initPane(1); loadCwd(); }
+      paneEl(0).querySelector('.term-input').focus();
+    };
+    const close = () => { stopAll(); drawer.classList.remove('show'); };
+    const tb = $('#termBtn');
+    if (tb) tb.onclick = open;
+    $('#termClose').onclick = close;
+    drawer.onclick = (e) => { if (e.target === drawer) close(); };
+    $('#termSplitBtn').onclick = () => {
+      T.split = !T.split;
+      paneEl(1).hidden = !T.split;
+      const b = $('#termSplitBtn');
+      b.textContent = T.split ? '单屏' : '分屏';
+      b.setAttribute('aria-pressed', String(T.split));
+    };
+  }
+  initTerm(); // ★ Orca 融合 P2：准终端
   initTheme();
   initRipple();
   initKeyboard();
@@ -5011,6 +5142,136 @@
       }
       wbRenderDiff();
     };
+    /* ★ Orca 融合 P2（2026-10-03 CLAIM §5）：工作区 Tab 的 GitHub 区块
+     * 读侧全功能：配置（owner/repo + token 走 DPAPI 密文）+ 仓库状态 + open issues/PR 列表 + 本卡关联 issue/PR 状态回显；
+     * 写侧降级：建 PR 端点存在，但工作区无 origin 远端时后端 409 → 这里显示引导（本仓真实路径）。 */
+    const _wbRenderGithub = async (box, fcard) => {
+      const host = document.createElement('div');
+      host.id = 'wbGh';
+      host.className = 'wb-gh';
+      host.innerHTML = `<div class="wb-gh-empty">加载 GitHub…</div>`;
+      box.appendChild(host);
+      let cm = {};
+      // ★ P2 修复：详情接口 meta 经 readCardMeta 已是**对象**（创建流也有字符串形态）——原 JSON.parse(对象) 恒抛错 → cm={}
+      //   导致 meta.worktree（P0 关联快取）与 meta.github（P2 关联）在 UI 永远读不到（P1 靠 workspace_kind 兜底掩盖）。
+      try { cm = typeof fcard.meta === 'string' ? JSON.parse(fcard.meta || '{}') : (fcard.meta && typeof fcard.meta === 'object' ? fcard.meta : {}); } catch { cm = {}; }
+      const gh0 = (cm.github && cm.github.ref) ? cm.github : null;
+      let cfg = null;
+      try { cfg = await fetch('/api/github/config').then((x) => x.json()); } catch { /* 内核未响应 */ }
+      if (!cfg || !cfg.ok) { host.innerHTML = `<div class="wb-gh-title">🐙 GitHub</div><div class="wb-gh-empty" style="color:#ef4444">内核未响应</div>`; return; }
+      let st = null, issues = [], pulls = [], ghState = null;
+      if (cfg.repo) {
+        const [r1, r2, r3] = await Promise.all([
+          fetch('/api/github/status').then((x) => x.json()).catch(() => ({})),
+          fetch('/api/github/issues?per_page=8').then((x) => x.json()).catch(() => ({})),
+          fetch('/api/github/pulls?per_page=8').then((x) => x.json()).catch(() => ({})),
+        ]);
+        st = (r1 && r1.ok) ? r1 : null;
+        issues = (r2 && r2.items) || [];
+        pulls = (r3 && r3.items) || [];
+      }
+      if (gh0) ghState = await fetch(`/api/github/card/${id}/state`).then((x) => x.json()).catch(() => null);
+      const linked = (ghState && ghState.linked) ? ghState.github : gh0;
+      const badge = (s) => `<span class="wb-gh-badge ${s === 'open' ? 'ok' : (s ? 'warn' : '')}">${esc(s || '状态未知')}</span>`;
+      host.innerHTML = `
+        <div class="wb-gh-title">🐙 GitHub
+          <span class="wb-gh-badge ${cfg.repo ? 'ok' : 'warn'}">${cfg.repo ? esc(cfg.repo) : '未配置仓库'}</span>
+          <span class="wb-gh-badge ${cfg.remote && cfg.remote.exists ? 'ok' : 'warn'}">origin ${cfg.remote && cfg.remote.exists ? '✓' : '✗ 写侧降级'}</span>
+          <span class="wb-gh-badge ${cfg.tokenSet ? 'ok' : ''}">token ${esc(cfg.tokenSource)}</span>
+        </div>
+        <div class="wb-gh-form">
+          <input id="wbGhRepo" placeholder="owner/repo（如 stablyai/orca）" value="${esc(cfg.repo || '')}" aria-label="GitHub 仓库 owner/repo" style="flex:1 1 200px" autocomplete="off" spellcheck="false">
+          <input id="wbGhToken" type="password" placeholder="${cfg.tokenSet ? '已存密文 token（留空不改）' : 'token（可选，公开仓库可空）'}" aria-label="GitHub token" style="flex:1 1 180px" autocomplete="off">
+          <button class="btn-primary" id="wbGhSave" style="padding:5px 14px;font-size:11px">保存配置</button>
+          ${cfg.tokenSet ? `<button class="btn-ghost" id="wbGhClearTok" style="padding:5px 10px;font-size:11px">清除 token</button>` : ''}
+          <div class="wb-gh-meta">明文 token 不落盘（DPAPI 密文）${cfg.canProtect ? '' : '；当前非 Windows，只能用环境变量 GITHUB_TOKEN 注入'}${st && st.repo ? `；默认分支 ${esc(st.repo.default_branch)} · open issues ${st.repo.open_issues_count} · 最近推送 ${esc(st.repo.pushed_at || '-')}` : ''}</div>
+        </div>
+        <div class="wb-gh-form" style="align-items:flex-start">
+          ${linked ? `
+            <span style="font-size:11px;line-height:26px">本卡关联：<a href="${esc(linked.url)}" target="_blank" rel="noopener">${esc(linked.ref)}</a> ${badge(linked.state)}</span>
+            <button class="btn-ghost" id="wbGhRefresh" style="padding:4px 10px;font-size:11px">刷新状态</button>
+            <button class="btn-ghost" id="wbGhUnlink" style="padding:4px 10px;font-size:11px">解除关联</button>
+            ${ghState && ghState.stale ? `<div class="wb-gh-meta" style="color:#f59e0b">状态刷新失败：${esc(ghState.error || '网络/权限问题')}（显示最后已知态）</div>` : ''}
+          ` : `
+            <input id="wbGhLinkUrl" placeholder="粘贴 issue/PR 链接关联到本卡，例：https://github.com/owner/repo/issues/1" aria-label="GitHub issue 或 PR 链接" style="flex:1 1 300px" autocomplete="off" spellcheck="false">
+            <button class="btn-ghost" id="wbGhLink" style="padding:4px 12px;font-size:11px">关联本卡</button>
+          `}
+        </div>
+        ${cfg.repo ? `
+          <div class="wb-gh-list"><b style="font-size:11px">Open Issues</b>
+            ${issues.length ? issues.map((it) => `<div class="wb-gh-item"><span class="wb-gh-no">#${it.number}</span><a href="${esc(it.html_url)}" target="_blank" rel="noopener">${esc(it.title)}</a></div>`).join('') : '<div class="wb-gh-empty">无（或网络/权限不可用）</div>'}
+          </div>
+          <div class="wb-gh-list"><b style="font-size:11px">Open PRs</b>
+            ${pulls.length ? pulls.map((it) => `<div class="wb-gh-item"><span class="wb-gh-no">#${it.number}</span><a href="${esc(it.html_url)}" target="_blank" rel="noopener">${esc(it.title)}</a><span class="wb-gh-no">${esc(it.head || '?')}→${esc(it.base || '?')}</span></div>`).join('') : '<div class="wb-gh-empty">无（或网络/权限不可用）</div>'}
+          </div>
+          <div class="wb-gh-form">
+            <input id="wbGhPrHead" placeholder="head 分支（本地已存在）" aria-label="PR head 分支" style="flex:1 1 150px" autocomplete="off" spellcheck="false">
+            <input id="wbGhPrTitle" placeholder="PR 标题（留空用分支名）" aria-label="PR 标题" style="flex:1 1 150px" autocomplete="off">
+            <button class="btn-primary" id="wbGhPrBtn" style="padding:5px 14px;font-size:11px">创建 PR</button>
+            <div class="wb-gh-meta" id="wbGhPrHint"></div>
+          </div>
+        ` : `<div class="wb-gh-empty">填写 owner/repo 保存后：展示 open issues / PR 列表、可把 issue/PR 关联到本卡（读侧）。</div>`}
+      `;
+      const j2 = (res) => res.json().catch(() => ({}));
+      const rerender = () => renderWorkspace();
+      const save = $('#wbGhSave');
+      if (save) save.onclick = async () => {
+        const body = { repo: $('#wbGhRepo').value.trim() };
+        const tok = $('#wbGhToken').value.trim();
+        if (tok) body.token = tok;
+        const res = await fetch('/api/github/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await j2(res);
+        if (!res.ok) { toast(j.error || '保存失败'); return; }
+        toast('GitHub 配置已保存');
+        rerender();
+      };
+      const clearTok = $('#wbGhClearTok');
+      if (clearTok) clearTok.onclick = async () => {
+        const res = await fetch('/api/github/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clearToken: true }) });
+        const j = await j2(res);
+        if (!res.ok) { toast(j.error || '清除失败'); return; }
+        toast('已清除 token');
+        rerender();
+      };
+      const link = $('#wbGhLink');
+      if (link) link.onclick = async () => {
+        const url = $('#wbGhLinkUrl').value.trim();
+        if (!url) { toast('先粘贴 issue/PR 链接'); return; }
+        const res = await fetch('/api/github/card', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cardId: id, url }) });
+        const j = await j2(res);
+        if (!res.ok) { toast(j.error || '关联失败'); return; }
+        toast('已关联到本卡');
+        rerender();
+      };
+      const unlink = $('#wbGhUnlink');
+      if (unlink) unlink.onclick = async () => {
+        const res = await fetch('/api/github/card', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cardId: id, url: '' }) });
+        const j = await j2(res);
+        if (!res.ok) { toast(j.error || '解除失败'); return; }
+        toast('已解除关联');
+        rerender();
+      };
+      const refresh = $('#wbGhRefresh');
+      if (refresh) refresh.onclick = () => rerender();
+      const prBtn = $('#wbGhPrBtn');
+      if (prBtn) prBtn.onclick = async () => {
+        const head = $('#wbGhPrHead').value.trim();
+        if (!head) { toast('填写 head 分支'); return; }
+        const title = $('#wbGhPrTitle').value.trim();
+        const res = await fetch('/api/github/pr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ head, title }) });
+        const j = await j2(res);
+        const hint = $('#wbGhPrHint');
+        if (!res.ok) {
+          const msg = [j.error, j.hint].filter(Boolean).join(' —— ');
+          if (hint) hint.innerHTML = `<span style="color:#f59e0b">${esc(msg)}</span>`;
+          toast(j.error || '创建 PR 失败');
+          return;
+        }
+        toast(`PR #${j.pr?.number} 已创建`);
+        if (j.pr?.html_url) window.open(j.pr.html_url, '_blank', 'noopener');
+        rerender();
+      };
+    };
     const renderWorkspace = async () => {
       bodyBox.innerHTML = `<div style="padding:14px 0;color:var(--text-muted);font-size:12px">加载工作区…</div>`;
       // ★ 每次重取卡片：闭包里的 card 是打开弹窗时的快照 —— 创建/清理 worktree 后其 meta/workspace 已变，用旧快照会渲染错态
@@ -5023,7 +5284,9 @@
         wtItems = r0.items; policy = r0.policy || '';
       } catch { bodyBox.innerHTML = `<div style="padding:14px 0;color:#ef4444;font-size:12px">内核未响应</div>`; return; }
       let cm = {};
-      try { cm = JSON.parse(fcard.meta || '{}'); } catch { cm = {}; }
+      // ★ P2 修复：详情接口 meta 经 readCardMeta 已是**对象**（创建流也有字符串形态）——原 JSON.parse(对象) 恒抛错 → cm={}
+      //   导致 meta.worktree（P0 关联快取）与 meta.github（P2 关联）在 UI 永远读不到（P1 靠 workspace_kind 兜底掩盖）。
+      try { cm = typeof fcard.meta === 'string' ? JSON.parse(fcard.meta || '{}') : (fcard.meta && typeof fcard.meta === 'object' ? fcard.meta : {}); } catch { cm = {}; }
       const want = cm.worktree || (fcard.workspace_kind === 'worktree' && fcard.workspace ? String(fcard.workspace).split(/[\\/]/).pop() : '');
       const mine = wtItems.find(w => w.name === want) || null;
       _wbCh = null; _wbFileFilter = ''; _wbRows = [];
@@ -5049,6 +5312,7 @@
           toast(`已创建 ${j.name}（${j.branch}）`);
           renderWorkspace();
         };
+        _wbRenderGithub(bodyBox, fcard); // ★ P2：无 worktree 分支同样显示 GitHub 区块
         return;
       }
       bodyBox.innerHTML = `
@@ -5087,6 +5351,7 @@
         renderWorkspace();
       };
       _wbLoadChanges(mine.name);
+      _wbRenderGithub(bodyBox, fcard); // ★ P2：GitHub 区块（配置/关联/列表/建 PR 降级）
     };
     const showTab = (k) => {
       _cardTab = k;

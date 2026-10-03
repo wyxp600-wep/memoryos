@@ -3319,6 +3319,56 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .wb-files-chip.on { border-color: rgba(65,187,200,0.5); color: var(--accent-cyan); background: rgba(65,187,200,0.12); }
   .wb-files-chip .wb-badge { color: #f59e0b; }
 
+  /* ===== Orca 融合 P2：准终端抽屉 + 工作区 Tab GitHub 区块（2026-10-03 CLAIM §5）===== */
+  .term-modal { width: min(1100px, 95vw) !important; }
+  .term-hint { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
+  .term-panes { display: flex; gap: 10px; }
+  .term-pane { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .term-pane[hidden] { display: none; }
+  .term-pane-head { display: flex; gap: 8px; align-items: center; font-size: 11px; }
+  .term-pane-title { color: var(--accent-cyan); font-weight: 600; flex: none; }
+  .term-cwd {
+    flex: 1; min-width: 0; padding: 4px 8px; font-size: 11px; border-radius: 6px;
+    border: 1px solid var(--border-glass); background: var(--bg-card); color: var(--text-primary); outline: none;
+  }
+  .term-cwd:focus-visible { border-color: var(--accent-cyan); }
+  .term-out {
+    margin: 0; height: min(46vh, 400px); overflow: auto; padding: 10px 12px;
+    background: #0b0d10; color: #c9d1d9; border: 1px solid var(--border-glass); border-radius: 8px;
+    font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .term-out .t-err { color: #fca5a5; }
+  .term-out .t-dim { color: #8b949e; }
+  .term-input-row { display: flex; gap: 6px; }
+  .term-input-row [hidden] { display: none !important; }
+  .term-input {
+    flex: 1; min-width: 0; padding: 7px 10px; font-size: 12px; border-radius: 6px;
+    border: 1px solid var(--border-glass); background: var(--bg-card); color: var(--text-primary);
+    font-family: Consolas, monospace; outline: none;
+  }
+  .term-input:focus-visible { border-color: var(--accent-cyan); }
+  .term-foot { margin-top: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+  @media (max-width: 768px) { .term-panes { flex-direction: column; } .term-out { height: 34vh; } }
+  .wb-gh { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border-glass); font-size: 12px; }
+  .wb-gh-title { font-weight: 600; color: var(--text-primary); margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .wb-gh-badge { font-size: 10px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-glass); color: var(--text-muted); font-weight: 400; }
+  .wb-gh-badge.ok { color: #10b981; border-color: rgba(16,185,129,0.4); }
+  .wb-gh-badge.warn { color: #f59e0b; border-color: rgba(245,158,11,0.4); }
+  .wb-gh-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .wb-gh-form input {
+    padding: 5px 9px; font-size: 11px; border-radius: 6px; border: 1px solid var(--border-glass);
+    background: var(--bg-card); color: var(--text-primary); outline: none; min-width: 0;
+  }
+  .wb-gh-form input:focus-visible { border-color: var(--accent-cyan); }
+  .wb-gh-meta { flex-basis: 100%; color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+  .wb-gh-list { margin: 4px 0 8px; }
+  .wb-gh-item { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 11px; min-width: 0; }
+  .wb-gh-item a { color: var(--text-primary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wb-gh-item a:hover { color: var(--accent-cyan); text-decoration: underline; }
+  .wb-gh-item .wb-gh-no { flex: none; color: var(--text-muted); font-family: Consolas, monospace; font-size: 10px; }
+  .wb-gh-empty { color: var(--text-muted); font-size: 11px; padding: 2px 0 6px; }
+
   /* ===== 更多功能面板 ===== */
   .more-panel {
     display: none; position: fixed; z-index: 9999;
@@ -3532,6 +3582,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <button class="btn-primary nav-icon-btn" id="createMemoryBtn" title="写入记忆"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
       <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
+      <button class="theme-toggle" id="termBtn" title="准终端">⌨</button>
     </div>
   </header>
 
@@ -4954,6 +5005,46 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="shortcut-help-item"><kbd>Ctrl</kbd>+<kbd>,</kbd><span>打开设置</span></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ===== Orca 融合 P2：准终端抽屉（exec_run 流式版 SSE，无 pty；2026-10-03 CLAIM §5） ===== -->
+<div class="modal-overlay" id="termDrawer">
+  <div class="modal term-modal">
+    <div class="modal-header">
+      <div class="modal-title">⌨ 准终端<span class="term-hint">argv 模式 · 白名单 npm/npx/node/git · 无管道/重定向</span></div>
+      <button class="btn-ghost" id="termSplitBtn" style="padding:4px 12px;font-size:12px" aria-pressed="false">分屏</button>
+      <button class="modal-close" id="termClose" aria-label="关闭终端">×</button>
+    </div>
+    <div class="term-panes" id="termPanes">
+      <div class="term-pane" data-pane="1">
+        <div class="term-pane-head">
+          <span class="term-pane-title">Pane 1</span>
+          <select class="term-cwd" aria-label="Pane 1 工作目录"></select>
+          <button class="btn-ghost term-clear" style="padding:3px 9px;font-size:11px">清空</button>
+        </div>
+        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="Pane 1 输出"></pre>
+        <div class="term-input-row">
+          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="Pane 1 命令输入" autocomplete="off" spellcheck="false">
+          <button class="btn-primary term-run" style="padding:6px 16px;font-size:12px">执行</button>
+          <button class="btn-danger term-stop" style="padding:6px 14px;font-size:12px" hidden>停止</button>
+        </div>
+      </div>
+      <div class="term-pane" data-pane="2" hidden>
+        <div class="term-pane-head">
+          <span class="term-pane-title">Pane 2</span>
+          <select class="term-cwd" aria-label="Pane 2 工作目录"></select>
+          <button class="btn-ghost term-clear" style="padding:3px 9px;font-size:11px">清空</button>
+        </div>
+        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="Pane 2 输出"></pre>
+        <div class="term-input-row">
+          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="Pane 2 命令输入" autocomplete="off" spellcheck="false">
+          <button class="btn-primary term-run" style="padding:6px 16px;font-size:12px">执行</button>
+          <button class="btn-danger term-stop" style="padding:6px 14px;font-size:12px" hidden>停止</button>
+        </div>
+      </div>
+    </div>
+    <div class="term-foot">准终端 ≠ 完整 shell：以参数数组执行（防注入），不支持管道/重定向/全屏 TUI。超时（上限 10 分钟）、点击停止或关闭抽屉都会杀掉整棵进程树；白名单可由 MEMORYOS_EXEC_ALLOW 扩展。</div>
   </div>
 </div>
 

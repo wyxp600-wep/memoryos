@@ -1,7 +1,7 @@
 /**
  * workbench-ui-walk.mjs — Orca 融合 P0+P1 前端自走查（真实 Chrome headless，CDP，零新增依赖）
  *
- * 覆盖（2026-10-03 CLAIM §5，对应 dashboard-reg-workbench.js + app.js 工作区 Tab）：
+ * 覆盖（2026-10-03 CLAIM §5；P0+P1 对应 dashboard-reg-workbench.js，P2 对应 dashboard-reg-term.js / dashboard-reg-github.js）：
  *   W1 P0 附件上传：拖拽 drop 事件 → /api/artifacts/upload → 输入框内联插入（≤64KB 文本全文内联）
  *   W2 P1 卡片「工作区」Tab：无 worktree 时展示共享优先 policy + 创建按钮
  *   W3 创建 worktree 并关联卡片（走真实 API，种子卡）
@@ -9,9 +9,21 @@
  *   W5 行级批注：点 ✎ → 表单 → 提交 → 行下 .wb-ann 徽标出现 + API 落库
  *   W6 回传批注给 Agent：汇总为卡片评论（POST /api/cards/:id/comment）
  *   W7 清理 worktree：清理按钮 → askForm → DELETE → 卡片关联归位
+ *   W8 空体 DELETE（带 json content-type）容错回归
+ *   W9 P2 准终端抽屉打开 + cwd 下拉加载
+ *   W10 终端真执行 git --version（SSE 流式输出 + [exit 0]）
+ *   W11/W12 后端安全口径：非白名单 400 / cwd 越界 400
+ *   W13 分屏切换（Pane 2 显隐）
+ *   W14 GitHub 区块渲染（配置字段齐全）
+ *   W15 保存 owner/repo → 状态徽标回显（temp config 隔离）
+ *   W16 issue 关联本卡 → ref + 状态徽标回显
+ *   W17 建 PR 写侧降级：本仓无 origin → 409 no-remote hint 展示
  *   CDP 0 未捕获异常（与 a11y 门禁同口径）
  *
- * 用法：node outputs/workbench-ui-walk.mjs        （自起 temp 实例 + temp 库，不碰生产内核/生产库）
+ * 隔离要点：本机 shell 注入 MEMORYOS_DATA_DIR=生产目录 → 必须在启动时覆盖到临时目录，
+ *   否则 W15 的 repo/token 会写进**生产 config.json**（P2 首跑实际踩中，见 CLAIM §4）。
+ *
+ * 用法：node outputs/workbench-ui-walk.mjs        （自起 temp 实例 + temp 库，不碰生产内核/生产库/生产 config）
  *       可用 CHROME_BIN 指定 Chrome；产物仅打印，不写基线。
  * 退出码：0 全过；1 有 FAIL 或执行异常。
  */
@@ -41,6 +53,9 @@ const rec = (name, ok, extra = '') => { R.push({ name, ok }); console.log((ok ? 
 
 let ws, app, db;
 const WS = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-db-'));
+// ★ P2 隔离：本机 shell 常驻 MEMORYOS_DATA_DIR=生产目录（dataDirOf 优先级高于 MEMORY_DB 反推），
+//   不覆盖则本脚本的 artifacts / config（W15 的 repo+token）会写进生产目录。钉到临时目录。
+process.env.MEMORYOS_DATA_DIR = path.join(WS, 'data');
 let cardId = 0;
 const H = { 'content-type': 'application/json', 'x-memory-token': TOKEN };
 let chrome = null;
@@ -203,6 +218,85 @@ try {
     const rSeedDel = await fetch('http://127.0.0.1:' + PORT + '/api/worktrees/wb-walk-1?force=1', { method: 'DELETE', headers: H });
     const seedTxt = await rSeedDel.text();
     rec('W8 空体 DELETE（带 json content-type）不再 400（dashboard 容错 parser）', rSeedDel.status === 200, 'HTTP ' + rSeedDel.status + ' ' + seedTxt.slice(0, 100));
+
+    /* ══ P2 · W9~W13：准终端（dashboard-reg-term.js + termDrawer）══ */
+    // W9：顶栏 ⌨ 打开抽屉 + cwd 下拉加载
+    await ev(`(function(){var b=document.getElementById('termBtn');if(b)b.click();return 1})()`);
+    await sleep(900);
+    const termOpen = await ev(`!!document.querySelector('#termDrawer.show')`);
+    rec('W9 顶栏 ⌨ 打开准终端抽屉', termOpen === true);
+    const cwdOpts = await ev(`(function(){var s=document.querySelector('#termDrawer .term-pane[data-pane="1"] .term-cwd');return s?s.options.length:0})()`);
+    rec('W9b cwd 下拉加载（主工作区 + worktree）', Number(cwdOpts) >= 1, 'options=' + cwdOpts);
+
+    // W10：真执行 git --version（EventSource 流式 → 输出区出 [exit 0]）
+    await ev(`(function(){var i=document.querySelector('#termDrawer .term-pane[data-pane="1"] .term-input');if(!i)return 0;i.value='git --version';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1})()`);
+    let termOut = '';
+    for (let i = 0; i < 24; i++) {
+        await sleep(500);
+        termOut = await ev(`(function(){var o=document.querySelector('#termDrawer .term-pane[data-pane="1"] .term-out');return o?o.textContent:''})()`);
+        if (termOut.includes('[exit')) break;
+    }
+    rec('W10 终端执行 git --version：SSE 流式输出 + [exit 0]', termOut.includes('$ git --version') && termOut.includes('git version') && termOut.includes('[exit 0'), termOut.replace(/\s+/g, ' ').slice(0, 160));
+
+    // W11/W12：后端安全口径（直测 API，断言错误体）
+    const rDeny = await fetch('http://127.0.0.1:' + PORT + '/api/exec/stream?argv=' + encodeURIComponent(JSON.stringify(['powershell', '-Command', 'x'])), { headers: H });
+    const denyTxt = await rDeny.text();
+    rec('W11 非白名单命令 → 400（execAllowlist）', rDeny.status === 400 && denyTxt.includes('允许清单'), 'HTTP ' + rDeny.status);
+    const rEsc = await fetch('http://127.0.0.1:' + PORT + '/api/exec/stream?argv=' + encodeURIComponent(JSON.stringify(['git', 'status'])) + '&cwd=' + encodeURIComponent('../../..'), { headers: H });
+    rec('W12 cwd 越界 → 400（resolveInside）', rEsc.status === 400, 'HTTP ' + rEsc.status);
+
+    // W13：分屏切换 → Pane 2 显隐；随后关抽屉（停流）
+    await ev(`(function(){var b=document.getElementById('termSplitBtn');if(b)b.click();return 1})()`);
+    await sleep(500);
+    const pane2 = await ev(`(function(){var p=document.querySelector('#termDrawer .term-pane[data-pane="2"]');return p?!p.hidden:false})()`);
+    rec('W13 分屏切换显示 Pane 2', pane2 === true, 'pane2hidden=' + pane2);
+    await ev(`(function(){var b=document.getElementById('termClose');if(b)b.click();return 1})()`);
+    await sleep(400);
+    const termClosed = await ev(`!document.querySelector('#termDrawer.show')`);
+    rec('W13b 关闭抽屉', termClosed === true);
+
+    /* ══ P2 · W14~W17：GitHub 区块（dashboard-reg-github.js + wbGh）══ */
+    // W14：详情弹窗仍在工作区 Tab → GitHub 区块已随 renderWorkspace 追加
+    const ghBox = await ev(`(function(){var g=document.getElementById('wbGh');return g?'ok':'no'})()`);
+    rec('W14 工作区 Tab 渲染 GitHub 区块', ghBox === 'ok', String(ghBox));
+    const ghFields = await ev(`(function(){return !!(document.getElementById('wbGhRepo')&&document.getElementById('wbGhSave'))})()`);
+    rec('W14b 配置字段（owner/repo + 保存）存在', ghFields === true);
+
+    // W15：保存 owner/repo → 徽标回显（写入隔离 temp config；轮询等网络型 rerender）
+    await ev(`(function(){var i=document.getElementById('wbGhRepo');if(!i)return 0;i.value='stablyai/orca';document.getElementById('wbGhSave').click();return 1})()`);
+    let ghTxt = '';
+    for (let i = 0; i < 30; i++) {
+        await sleep(500);
+        ghTxt = await ev(`(function(){var g=document.getElementById('wbGh');return g?g.textContent:''})()`);
+        if (ghTxt.includes('stablyai/orca')) break;
+    }
+    rec('W15 保存 repo 后状态徽标回显', ghTxt.includes('stablyai/orca') && ghTxt.includes('token'), ghTxt.replace(/\s+/g, ' ').slice(0, 160));
+
+    // W16：issue 关联本卡 → ref + 状态徽标
+    await ev(`(function(){var i=document.getElementById('wbGhLinkUrl');if(!i)return 'no-input';i.value='https://github.com/stablyai/orca/issues/1';document.getElementById('wbGhLink').click();return 'ok'})()`);
+    let linkedTxt = '';
+    for (let i = 0; i < 24; i++) {
+        await sleep(500);
+        linkedTxt = await ev(`(function(){var g=document.getElementById('wbGh');return g?g.textContent:''})()`);
+        if (linkedTxt.includes('stablyai/orca#1')) break;
+    }
+    rec('W16 关联 issue 后回显 ref + 状态徽标', linkedTxt.includes('stablyai/orca#1') && linkedTxt.includes('本卡关联'), linkedTxt.replace(/\s+/g, ' ').slice(0, 160));
+    const ghMeta = JSON.parse((db.prepare(`SELECT meta FROM cards WHERE id=?`).get(cardId).meta) || '{}');
+    rec('W16b meta.github 落库', ghMeta.github?.number === 1 && ghMeta.github?.kind === 'issue', JSON.stringify(ghMeta.github || null));
+
+    // W17：建 PR 写侧降级（本仓无 origin → 409 no-remote hint）
+    await ev(`(function(){var h=document.getElementById('wbGhPrHead');if(!h)return 'no-head';h.value='main';document.getElementById('wbGhPrBtn').click();return 'ok'})()`);
+    let prHint = '';
+    for (let i = 0; i < 16; i++) {
+        await sleep(500);
+        prHint = await ev(`(function(){var el=document.getElementById('wbGhPrHint');return el?el.textContent:''})()`);
+        if (prHint) break;
+    }
+    rec('W17 建 PR 无远端 → 409 降级引导（no-remote hint）', prHint.includes('远端') || prHint.includes('remote add origin'), prHint.replace(/\s+/g, ' ').slice(0, 180));
+
+    // P2 隔离收尾：解除关联 + 清 repo/token（temp config 目录随 WS 一并删除）
+    await api('POST', '/api/github/card', { cardId, url: '' });
+    await api('POST', '/api/github/config', { repo: '', clearToken: true });
 
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
