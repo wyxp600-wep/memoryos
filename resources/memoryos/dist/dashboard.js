@@ -41,6 +41,7 @@ import { registerWorkbench } from "./dashboard-reg-workbench.js";
 import { registerTerm } from "./dashboard-reg-term.js";       // Orca 融合 P2：准终端（exec_run 流式版 SSE）
 import { registerGithub } from "./dashboard-reg-github.js";   // Orca 融合 P2：GitHub 读侧全功能/写侧降级
 import { registerDesign } from "./dashboard-reg-design.js";   // Orca 融合 P3：Design Mode（CDP 元素拾取，零新依赖）
+import { registerCliExec } from "./dashboard-reg-cliexec.js"; // 节点画布 P2：CLI 直控执行器（headless 智能体 + SSE 终端）
 const DEFAULT_PORT = 8787;
 /** 人工/编辑/新建允许的 type（含规则页 rule） */
 const ALLOWED_TYPES = ["decision", "experience", "pitfall", "convention", "rule"];
@@ -297,6 +298,7 @@ export function buildApp(db, opts = {}) {
     registerTerm(app, ctx);      // Orca 融合 P2：准终端分屏（SSE 流式执行，exec_run 同安全口径）
     registerGithub(app, ctx);    // Orca 融合 P2：GitHub 集成（读侧全功能 + 写侧 no-remote 降级）
     registerDesign(app, ctx);    // Orca 融合 P3：Design Mode（真实 Chromium 点选元素 → HTML/CSS/裁剪截图进 prompt）
+    registerCliExec(app, ctx);   // 节点画布 P2：CLI 直控执行器（channel='cli' 的智能体卡走本机 CLI）
 
     return app;
 }

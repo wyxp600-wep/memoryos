@@ -724,6 +724,7 @@ export function registerCards(app, ctx) {
         const lock = randomBytes(12).toString("hex");
         let dsp = null;
         let dispatchEdgeId = null; // 节点画布：本次派发写下的边（连线派发时返回给前端）
+        const agentCardId = Number(b.agent_card_id) || 0; // 节点画布：目标智能体卡（0=未指定；tx 内校验存在性）
         txBegin(); // 认领 + 建工作证一笔事务：任一步失败整笔回滚（事件先入队、COMMIT 后推）
         try {
             const info = db
@@ -742,7 +743,6 @@ export function registerCards(app, ctx) {
             }
             // ★ 节点画布（D3/D11 连线派发）：任务卡→智能体卡派发边锚定本次工作证；同对旧 active 边翻 superseded。
             //   与认领/工作证同一事务：目标卡校验失败整笔回滚，不留半截边。
-            const agentCardId = Number(b.agent_card_id) || 0;
             if (agentCardId) {
                 if (!db.prepare(`SELECT id FROM cards WHERE id=? AND kind='agent'`).get(agentCardId))
                     throw new Error("目标智能体卡不存在（须为智能体类型投影卡）");
@@ -779,13 +779,27 @@ export function registerCards(app, ctx) {
             `正文：${String(c.body ?? "").trim().slice(0, 2500) || "（空卡：先自行调研再给可执行结论）"}`,
             `要求：① 先查上下文（memory_search/memory_read，或 task_next 看全局任务）再动手；② 结论须可验收，不确定处显式标注不确定性；③ 中途不要改卡片状态（由系统按 run 终态自动收口）。`,
         ].join("\n");
+        // ★ P2 通道分流：智能体卡 channel='cli' → CLI 直控执行器；'cdp' → 未开通（P3）；缺省 queue → 内部 agent run
+        const agentProfile = agentCardId ? profileOfCard(db.prepare(`SELECT * FROM cards WHERE id=?`).get(agentCardId)) : null;
+        const channel = agentProfile ? String(agentProfile.channel) : "queue";
+        if (channel === "cdp")
+            return reply.code(503).send({ ok: false, error: "CDP 驾驶通道尚未开通（P3 规划中），请先把该智能体卡切到队列通道" });
         let started;
         try {
-            started = await ctx.startAgentRun({
-                message, allowWrites: true, title: `🚀 ${String(c.title ?? "卡片派发").slice(0, 50)}`,
-                taskHint: taskId ?? undefined,
-                cardDispatch: { cardId: id, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, actor: agent },
-            });
+            if (channel === "cli") {
+                if (typeof ctx.startCliRun !== "function")
+                    return reply.code(503).send({ ok: false, error: "CLI 直控执行器未就绪" });
+                started = await ctx.startCliRun({
+                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
+                });
+            }
+            else {
+                started = await ctx.startAgentRun({
+                    message, allowWrites: true, title: `🚀 ${String(c.title ?? "卡片派发").slice(0, 50)}`,
+                    taskHint: taskId ?? undefined,
+                    cardDispatch: { cardId: id, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, actor: agent },
+                });
+            }
         }
         catch (e) {
             // 起 run 失败 → 回滚认领 + 释放工作证（不留半开状态，卡片回到可派发）
@@ -806,6 +820,7 @@ export function registerCards(app, ctx) {
         return reply.code(202).send({
             ok: true, id, runId: started.runId, status: started.status, cap: started.cap ?? null,
             queueAhead: started.queueAhead ?? null, agent, assignee: agent, taskId,
+            channel, executor: channel === "cli", queued: !!started.queued,
             dispatch: dsp ? { id: dsp.id, key: lock, generation: dsp.generation, superseded: dsp.superseded ?? null } : null,
             edgeId: dispatchEdgeId, // 节点画布：本次连线派发写下的边
         });

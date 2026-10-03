@@ -120,11 +120,47 @@ try {
 
     // 10. 档案删除连带投影卡
     r = await j(null, "GET", "/api/agent-profiles");
-    const pid = r.body.profiles[0].id;
-    r = await j(null, "DELETE", `/api/agent-profiles/${pid}`);
+    const pid2 = r.body.profiles[0].id;
+    r = await j(null, "DELETE", `/api/agent-profiles/${pid2}`);
     ok("删除档案成功", r.body.ok);
     r = await j(null, "GET", "/api/cards/graph");
     ok("投影卡随之消失", !(r.body.nodes || []).some(n => n.kind === "agent"));
+
+    // ═══ 11. P2 CLI 直控执行器（launch_overrides 全覆盖 → fake CLI，无需真实智能体）═══
+    // fake 脚本落盘为文件（避免 -e 内嵌引号与 cmd 引号规则互相纠缠）
+    const fakePath = path.join(TMP, "fake-cli.js");
+    fs.writeFileSync(fakePath, 'console.log("步骤1：开始执行");\nconsole.log("中间输出");\nconsole.log("<<<HANDOFF>>>");\nconsole.log("交接内容甲：测试任务已完成");\nconsole.log("<</HANDOFF>>>");\n');
+    r = await j({
+        name: "直控测试智能体", channel: "cli", agent_key: "codex", workspace: TMP, concurrency: 1,
+        launch_overrides: { cmd: process.execPath, args: [fakePath], useStdin: true, timeoutMinutes: 1 },
+    }, "POST", "/api/agent-profiles");
+    ok("建 CLI 通道档案", r.body.ok && r.body.profile_id > 0, JSON.stringify(r.body));
+    const cliCardId = r.body.card_id;
+    r = await j({ title: "直控任务", kind: "task" }, "POST", "/api/cards");
+    const cliTaskId = r.body.id;
+    await j({ status: "todo" }, "POST", `/api/cards/${cliTaskId}/status`);
+    r = await j({ agent_card_id: cliCardId }, "POST", `/api/cards/${cliTaskId}/dispatch-agent`);
+    ok("CLI 派发返回 executor 标记", r.status === 202 && r.body.executor === true && !!r.body.runId, `status=${r.status} body=${JSON.stringify(r.body).slice(0, 150)}`);
+    await new Promise(res => setTimeout(res, 3500));
+    r = await j(null, "GET", `/api/cards/${cliTaskId}`);
+    ok("CLI 执行收口：任务卡 → review", r.body.card?.status === "review", JSON.stringify(r.body).slice(0, 120));
+    r = await j(null, "GET", `/api/cards/graph`);
+    const cliEdge = (r.body.edges || []).find(e => String(e.source_id) === String(cliTaskId));
+    ok("派发边随收口翻 completed", cliEdge?.status === "completed", JSON.stringify(cliEdge));
+    const cliHandoff = (r.body.nodes || []).find(n => n.kind === "handoff" && String(n.body || "").includes("交接内容甲"));
+    ok("分隔符协议解析出交接内容", !!cliHandoff, "未找到含交接内容的 handoff 卡");
+    r = await j(null, "GET", `/api/agent-cards/${cliCardId}/exec`);
+    ok("执行记录可查（done）", r.body.runs?.[0]?.status === "done", JSON.stringify(r.body).slice(0, 150));
+    r = await j(null, "POST", `/api/agent-cards/${cliCardId}/exec/stop`);
+    ok("无执行中任务时停止 404", r.status === 404, `status=${r.status}`);
+    // CDP 通道诚实降档
+    r = await j({ name: "驾驶卡", channel: "cdp" }, "POST", "/api/agent-profiles");
+    const cdpCard = r.body.card_id;
+    r = await j({ title: "直控任务2", kind: "task" }, "POST", "/api/cards");
+    const cdpTaskId = r.body.id;
+    await j({ status: "todo" }, "POST", `/api/cards/${cdpTaskId}/status`);
+    r = await j({ agent_card_id: cdpCard }, "POST", `/api/cards/${cdpTaskId}/dispatch-agent`);
+    ok("CDP 通道未开通诚实 503", r.status === 503, `status=${r.status}`);
 } catch (e) {
     failed++;
     console.error("测试执行异常:", e.message);

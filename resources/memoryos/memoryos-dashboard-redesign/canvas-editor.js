@@ -111,6 +111,10 @@
   background:#23402c;color:#9fe0b4;border:1px solid #3f7a50;cursor:crosshair;z-index:11}
 .nc-port:hover{background:#2c5636}
 .nc-port.out{right:6px}.nc-port.in{left:6px;background:#20304a;color:#9fc0ff;border-color:#3a5f9f}
+.nc-log{left:42%;right:auto;background:#20304a;color:#9fc0ff;border-color:#3a5f9f}
+.nc-log:hover{background:#2a3d5f}
+.nc-term{height:260px;overflow:auto;background:#0b0f16;font:11px/1.5 Consolas,monospace;
+  color:#c7d3e0;padding:8px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0}
 .nc-linking .nc-target{outline:2px solid #6aa9ff;outline-offset:3px;animation:ncPulse 1.2s infinite}
 @keyframes ncPulse{50%{outline-color:rgba(106,169,255,.4)}}
 .nc-invalid{animation:ncShake .4s}
@@ -274,7 +278,8 @@
               <div class="nc-sub">${sub.join(' ')}</div>
               ${t?.can_dispatch_out ? '<button class="nc-port out" title="发起派发连线">派发 ⟶</button>' : ''}
               ${t?.can_inject_out ? '<button class="nc-port out" title="发起前情注入连线">注入 ⟶</button>' : ''}
-              ${(t?.can_dispatch_in || t?.can_inject_in) ? '<span class="nc-port in">⟵ 入</span>' : ''}`;
+              ${(t?.can_dispatch_in || t?.can_inject_in) ? '<span class="nc-port in">⟵ 入</span>' : ''}
+              ${n.kind === 'agent' ? '<button class="nc-port nc-log" title="查看执行终端（实时输出）">⌨ 日志</button>' : ''}`;
             el.querySelector('.nc-title').textContent = n.title;
             el.querySelector('.nc-badge').onclick = e => { e.stopPropagation(); this.typeMenu(n, e); };
             el.querySelectorAll('.nc-port.out').forEach(p => {
@@ -283,6 +288,7 @@
                     this.enterLink(p.textContent.startsWith('派发') ? 'dispatch' : 'inject', n);
                 };
             });
+            el.querySelector('.nc-log')?.addEventListener('click', e => { e.stopPropagation(); this.termPopover(n); });
             el.addEventListener('pointerdown', e => this.startDrag(e, n));
             el.addEventListener('click', () => {
                 if (this.link) this.onLinkTarget(n);
@@ -451,8 +457,38 @@
             });
         }
 
-        /* ── 卡片详情编辑 ────────────────────────── */
-        editCard(n) {
+        /* ── 执行终端（SSE 直控流 + 手动停止）────── */
+        termPopover(n) {
+            this.closePops();
+            const pop = this.pop('left:80px;top:60px;width:600px');
+            pop.innerHTML = `
+              <h4>执行终端 · 卡片 #${n.id} <span class="nc-term-status" style="color:#7d8aa0;font-weight:400"></span></h4>
+              <pre class="nc-term"></pre>
+              <div class="nc-btns"><button class="nc-btn warn" act="stop">停止执行</button><button class="nc-btn" act="close">关闭</button></div>`;
+            const term = pop.querySelector('.nc-term');
+            const status = pop.querySelector('.nc-term-status');
+            const es = new EventSource(`/api/agent-cards/${n.id}/exec/stream`);
+            const scroll = () => { term.scrollTop = term.scrollHeight; };
+            es.addEventListener('line', e => {
+                const d = JSON.parse(e.data);
+                term.textContent += (d.stream === 'err' ? '[err] ' : '') + d.text + '\n';
+                if (term.textContent.length > 60000) term.textContent = term.textContent.slice(-40000);
+                scroll();
+            });
+            es.addEventListener('end', e => {
+                const d = JSON.parse(e.data);
+                status.textContent = d.status === 'done' ? '（已完成）' : '（已失败）';
+                es.close();
+            });
+            es.onerror = () => { status.textContent = '（无执行记录或流已断开）'; es.close(); };
+            pop.querySelector('[act="close"]').onclick = () => { es.close(); this.closePops(); };
+            pop.querySelector('[act="stop"]').onclick = async () => {
+                const res = await fetch(`/api/agent-cards/${n.id}/exec/stop`, { method: 'POST' }).then(x => x.json()).catch(() => ({}));
+                this.toast(res.ok ? '已发送停止指令' : (res.error || '停止失败'));
+            };
+        }
+
+        /* ── 卡片详情编辑 ────────────────────────── */        editCard(n) {
             this.closePops();
             const r = n.el.getBoundingClientRect();
             const left = Math.min(r.right + 8, innerWidth - 290);
