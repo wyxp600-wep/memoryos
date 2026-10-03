@@ -153,14 +153,23 @@ try {
     ok("执行记录可查（done）", r.body.runs?.[0]?.status === "done", JSON.stringify(r.body).slice(0, 150));
     r = await j(null, "POST", `/api/agent-cards/${cliCardId}/exec/stop`);
     ok("无执行中任务时停止 404", r.status === 404, `status=${r.status}`);
-    // CDP 通道诚实降档
-    r = await j({ name: "驾驶卡", channel: "cdp" }, "POST", "/api/agent-profiles");
+    // ═══ 12. P3 CDP 驾驶执行器（fake App：node 秒退 → CDP 端点未就绪 → 诚实失败收口）═══
+    r = await j({
+        name: "驾驶卡", channel: "cdp", agent_key: "codex",
+        launch_overrides: { exe: process.execPath, args: ["-e", "process.exit(0)"], cdpTimeoutMs: 2000 },
+    }, "POST", "/api/agent-profiles");
+    ok("建 CDP 通道档案", r.body.ok && r.body.profile_id > 0, JSON.stringify(r.body));
     const cdpCard = r.body.card_id;
-    r = await j({ title: "直控任务2", kind: "task" }, "POST", "/api/cards");
+    r = await j({ title: "驾驶任务", kind: "task" }, "POST", "/api/cards");
     const cdpTaskId = r.body.id;
     await j({ status: "todo" }, "POST", `/api/cards/${cdpTaskId}/status`);
     r = await j({ agent_card_id: cdpCard }, "POST", `/api/cards/${cdpTaskId}/dispatch-agent`);
-    ok("CDP 通道未开通诚实 503", r.status === 503, `status=${r.status}`);
+    ok("CDP 派发受理（202 + runId）", r.status === 202 && !!r.body.runId, `status=${r.status} body=${JSON.stringify(r.body).slice(0, 120)}`);
+    await new Promise(res => setTimeout(res, 5000));
+    r = await j(null, "GET", `/api/cards/${cdpTaskId}`);
+    ok("CDP 端点未就绪 → 诚实失败收口", r.body.card?.status === "failed", JSON.stringify(r.body).slice(0, 100));
+    r = await j(null, "GET", `/api/agent-cards/${cdpCard}/live/status`);
+    ok("驾驶会话记录可查（failed）", r.body.runs?.[0]?.status === "failed", JSON.stringify(r.body).slice(0, 120));
 } catch (e) {
     failed++;
     console.error("测试执行异常:", e.message);

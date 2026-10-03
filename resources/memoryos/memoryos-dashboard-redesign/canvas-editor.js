@@ -111,8 +111,11 @@
   background:#23402c;color:#9fe0b4;border:1px solid #3f7a50;cursor:crosshair;z-index:11}
 .nc-port:hover{background:#2c5636}
 .nc-port.out{right:6px}.nc-port.in{left:6px;background:#20304a;color:#9fc0ff;border-color:#3a5f9f}
-.nc-log{left:42%;right:auto;background:#20304a;color:#9fc0ff;border-color:#3a5f9f}
+.nc-log{left:24%;right:auto;background:#20304a;color:#9fc0ff;border-color:#3a5f9f}
 .nc-log:hover{background:#2a3d5f}
+.nc-livebtn{left:52%;right:auto;background:#2a2340;color:#c0a9ff;border-color:#5f3a9f}
+.nc-livebtn:hover{background:#3a2d5f}
+.nc-live{width:100%;border-radius:8px;background:#0b0f16;min-height:160px;display:block}
 .nc-term{height:260px;overflow:auto;background:#0b0f16;font:11px/1.5 Consolas,monospace;
   color:#c7d3e0;padding:8px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0}
 .nc-linking .nc-target{outline:2px solid #6aa9ff;outline-offset:3px;animation:ncPulse 1.2s infinite}
@@ -279,7 +282,7 @@
               ${t?.can_dispatch_out ? '<button class="nc-port out" title="发起派发连线">派发 ⟶</button>' : ''}
               ${t?.can_inject_out ? '<button class="nc-port out" title="发起前情注入连线">注入 ⟶</button>' : ''}
               ${(t?.can_dispatch_in || t?.can_inject_in) ? '<span class="nc-port in">⟵ 入</span>' : ''}
-              ${n.kind === 'agent' ? '<button class="nc-port nc-log" title="查看执行终端（实时输出）">⌨ 日志</button>' : ''}`;
+              ${n.kind === 'agent' ? '<button class="nc-port nc-log" title="查看执行终端（实时输出）">⌨ 日志</button><button class="nc-port nc-livebtn" title="驾驶直播（画面+输出）">📺 直播</button>' : ''}`;
             el.querySelector('.nc-title').textContent = n.title;
             el.querySelector('.nc-badge').onclick = e => { e.stopPropagation(); this.typeMenu(n, e); };
             el.querySelectorAll('.nc-port.out').forEach(p => {
@@ -289,6 +292,7 @@
                 };
             });
             el.querySelector('.nc-log')?.addEventListener('click', e => { e.stopPropagation(); this.termPopover(n); });
+            el.querySelector('.nc-livebtn')?.addEventListener('click', e => { e.stopPropagation(); this.livePopover(n); });
             el.addEventListener('pointerdown', e => this.startDrag(e, n));
             el.addEventListener('click', () => {
                 if (this.link) this.onLinkTarget(n);
@@ -485,6 +489,35 @@
             pop.querySelector('[act="stop"]').onclick = async () => {
                 const res = await fetch(`/api/agent-cards/${n.id}/exec/stop`, { method: 'POST' }).then(x => x.json()).catch(() => ({}));
                 this.toast(res.ok ? '已发送停止指令' : (res.error || '停止失败'));
+            };
+        }
+
+        /* ── 驾驶直播（CDP screencast 帧流 + 输出）──── */
+        livePopover(n) {
+            this.closePops();
+            const pop = this.pop('left:80px;top:50px;width:640px');
+            pop.innerHTML = `
+              <h4>驾驶直播 · 卡片 #${n.id} <span class="nc-term-status" style="color:#7d8aa0;font-weight:400"></span></h4>
+              <img class="nc-live" alt="等待直播画面…">
+              <pre class="nc-term" style="height:110px"></pre>
+              <div class="nc-btns"><button class="nc-btn warn" act="stop">断开驾驶</button><button class="nc-btn" act="close">关闭</button></div>`;
+            const img = pop.querySelector('.nc-live');
+            const term = pop.querySelector('.nc-term');
+            const status = pop.querySelector('.nc-term-status');
+            const es = new EventSource(`/api/agent-cards/${n.id}/live`);
+            es.addEventListener('frame', e => { img.src = 'data:image/jpeg;base64,' + JSON.parse(e.data).frame; });
+            es.addEventListener('line', e => {
+                const d = JSON.parse(e.data);
+                term.textContent += d.text + '\n';
+                if (term.textContent.length > 30000) term.textContent = term.textContent.slice(-20000);
+                term.scrollTop = term.scrollHeight;
+            });
+            es.addEventListener('end', e => { status.textContent = JSON.parse(e.data).status === 'done' ? '（会话结束）' : '（会话已收口）'; es.close(); });
+            es.onerror = () => { status.textContent = '（无驾驶会话或流已断开）'; es.close(); };
+            pop.querySelector('[act="close"]').onclick = () => { es.close(); this.closePops(); };
+            pop.querySelector('[act="stop"]').onclick = async () => {
+                const res = await fetch(`/api/agent-cards/${n.id}/live/stop`, { method: 'POST' }).then(x => x.json()).catch(() => ({}));
+                this.toast(res.ok ? '已断开驾驶连接（桌面应用未被关闭）' : (res.error || '操作失败'));
             };
         }
 

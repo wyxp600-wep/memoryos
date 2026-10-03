@@ -779,17 +779,22 @@ export function registerCards(app, ctx) {
             `正文：${String(c.body ?? "").trim().slice(0, 2500) || "（空卡：先自行调研再给可执行结论）"}`,
             `要求：① 先查上下文（memory_search/memory_read，或 task_next 看全局任务）再动手；② 结论须可验收，不确定处显式标注不确定性；③ 中途不要改卡片状态（由系统按 run 终态自动收口）。`,
         ].join("\n");
-        // ★ P2 通道分流：智能体卡 channel='cli' → CLI 直控执行器；'cdp' → 未开通（P3）；缺省 queue → 内部 agent run
+        // ★ P2/P3 通道分流：cli → CLI 直控执行器；cdp → CDP 驾驶执行器；queue → 内部 agent run
         const agentProfile = agentCardId ? profileOfCard(db.prepare(`SELECT * FROM cards WHERE id=?`).get(agentCardId)) : null;
         const channel = agentProfile ? String(agentProfile.channel) : "queue";
-        if (channel === "cdp")
-            return reply.code(503).send({ ok: false, error: "CDP 驾驶通道尚未开通（P3 规划中），请先把该智能体卡切到队列通道" });
         let started;
         try {
             if (channel === "cli") {
                 if (typeof ctx.startCliRun !== "function")
                     return reply.code(503).send({ ok: false, error: "CLI 直控执行器未就绪" });
                 started = await ctx.startCliRun({
+                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
+                });
+            }
+            else if (channel === "cdp") {
+                if (typeof ctx.startCdpRun !== "function")
+                    return reply.code(503).send({ ok: false, error: "CDP 驾驶执行器未就绪" });
+                started = await ctx.startCdpRun({
                     cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
                 });
             }
