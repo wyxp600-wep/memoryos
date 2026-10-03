@@ -29,6 +29,9 @@
  *   W26 P4 一键改状态真执行（✅ 完成 → done，再 🏃 恢复 running，不留脏状态）
  *   W27 P4 列式看板视图恢复（拖卡片改状态的入口；原 renderCards 拖拽段因入口被删而不可达）
  *   W28 P4 卡片一键唤起终端且目录自动切到 .worktrees/<本卡隔离区>
+ *   W29 A1 一键派发（后端链路）：准入 409 / ready 派发 202+assignee / run 终态自动收口+三清 / 再派发 409
+ *   W29e~g A1 工作证（dispatches）：关联任务建证 → key 与回执同源 → 终态 settled+outcome 必填
+ *   W30 A1 todo 卡自动提升 ready（promote 事件）再派发
  *   CDP 0 未捕获异常（与 a11y 门禁同口径）
  *
  * 隔离要点：本机 shell 注入 MEMORYOS_DATA_DIR=生产目录 → 必须在启动时覆盖到临时目录，
@@ -519,6 +522,94 @@ try {
     await ev(`(function(){var b=document.getElementById('termClose');if(b)b.click();return 1})()`);
     await sleep(400);
     await api('DELETE', '/api/worktrees/wb-walk-3?force=1');
+
+    /* ══ A1 · W29~W31：一键派发（卡片 → agent 推模式；2026-10-04 CLAIM §5）══
+     * 前端「🚀 派给 Agent」按钮因他人 Slice-C2 批次在制暂缓 → 本批只验后端链路（HTTP 断言），
+     * UI 按钮另批补。断言一律取「不变量 / 终态」，不取中间态（run 可能秒失败 → 收口先行）。 */
+    // W29a：派发准入 —— done 卡不可派发（CAS 只认 ready）
+    const w29Done = Number(db.prepare(`INSERT INTO cards (title,kind,board,status) VALUES ('wb-walk-A1-done','task','default','done')`).run().lastInsertRowid);
+    const r29a = await api('POST', `/api/cards/${w29Done}/dispatch-agent`, { agent: 'wb-agent' });
+    rec('W29a 派发准入：done 卡 → 409（需可认领 ready）', r29a.status === 409, 'HTTP ' + r29a.status);
+
+    // W29b：ready 卡一键派发 → 202 + runId + 卡进入派发链（assignee 落位）
+    const w29Ready = Number(db.prepare(`INSERT INTO cards (title,kind,board,status,body) VALUES ('wb-walk-A1-ready','task','default','ready','生成一句问候语')`).run().lastInsertRowid);
+    const r29b = await api('POST', `/api/cards/${w29Ready}/dispatch-agent`, { agent: 'wb-agent' });
+    const j29b = await r29b.json().catch(() => ({}));
+    let c29 = null;
+    if (r29b.status === 202)
+        c29 = (await (await api('GET', `/api/cards/${w29Ready}`)).json()).card;
+    rec('W29b ready 卡派发 → 202 + runId + assignee=wb-agent', r29b.status === 202 && !!j29b.runId && !!c29 && ['running', 'review', 'failed'].includes(c29.status) && c29.assignee === 'wb-agent',
+        `HTTP ${r29b.status} card=${c29?.status} assignee=${c29?.assignee}`);
+
+    // W29c：run 终态 → 卡片自动收口 + 锁/租约三清（LLM 不可用秒失败；LLM 可用则中止后验收口）
+    let run29 = null, final29 = null;
+    if (j29b.runId) {
+        for (let i = 0; i < 20; i++) {
+            run29 = await (await api('GET', `/api/agent/runs/${j29b.runId}`)).json();
+            if (run29.status && run29.status !== 'running' && run29.status !== 'queued') break;
+            await sleep(1000);
+        }
+        for (let i = 0; i < 8; i++) {
+            c29 = (await (await api('GET', `/api/cards/${w29Ready}`)).json()).card;
+            final29 = c29.status;
+            if (final29 !== 'running') break;
+            await sleep(1000);
+        }
+        if (final29 === 'running') { // LLM 可用且还在跑 → 中止，保证「收口链路」本身可验
+            await api('POST', `/api/agent/runs/${j29b.runId}/abort`, {});
+            for (let i = 0; i < 10 && final29 === 'running'; i++) {
+                await sleep(1000);
+                c29 = (await (await api('GET', `/api/cards/${w29Ready}`)).json()).card;
+                final29 = c29.status;
+            }
+        }
+    }
+    rec('W29c run 终态 → 卡片自动收口（review/failed）+ 锁/租约三清', ['review', 'failed'].includes(final29) && c29?.claim_lock == null && c29?.lease_expires_at == null,
+        `run=${run29?.status} card=${final29} lock=${c29?.claim_lock}`);
+
+    // W29d：收口后（非 ready）再派发 → 409
+    const r29d = await api('POST', `/api/cards/${w29Ready}/dispatch-agent`, { agent: 'wb-agent' });
+    rec('W29d 收口后非 ready 再派发 → 409', r29d.status === 409, 'HTTP ' + r29d.status);
+
+    // W29e~g：关联任务卡 → 工作证（dispatches 行）全链路：建证 → key 同源 → 终态 settled + outcome 必填
+    const w29Mem = Number(db.prepare(`INSERT INTO memories (content, type, agent, project, status) VALUES ('[status:ready][assignee:]\n# wb-walk A1 派发任务\n生成一句问候语', 'task', 'wb-agent', 'global', 'active')`).run().lastInsertRowid);
+    const w29Link = Number(db.prepare(`INSERT INTO cards (title,kind,board,status,body,ref_kind,ref_id) VALUES ('wb-walk-A1-linked','task','default','ready','生成一句问候语','memory',?)`).run(w29Mem).lastInsertRowid);
+    const r29e = await api('POST', `/api/cards/${w29Link}/dispatch-agent`, { agent: 'wb-agent' });
+    const j29e = await r29e.json().catch(() => ({}));
+    rec('W29e 关联任务卡派发 → 202 + taskId + 工作证 dispatch', r29e.status === 202 && j29e.taskId === w29Mem && !!j29e.dispatch?.id,
+        `HTTP ${r29e.status} taskId=${j29e.taskId} dispatch=${JSON.stringify(j29e.dispatch)}`);
+    if (r29e.status === 202) {
+        const dkey = db.prepare(`SELECT dispatch_key, agent FROM dispatches WHERE id=?`).get(j29e.dispatch.id);
+        rec('W29f 工作证库内 key=回执 key（与卡锁同源投影）', dkey?.dispatch_key === j29e.dispatch.key && dkey?.agent === 'wb-agent',
+            `key=${String(dkey?.dispatch_key).slice(0, 12)} agent=${dkey?.agent}`);
+        let run29e = null, card29e = null;
+        for (let i = 0; i < 20; i++) {
+            run29e = await (await api('GET', `/api/agent/runs/${j29e.runId}`)).json();
+            if (run29e.status && run29e.status !== 'running' && run29e.status !== 'queued') break;
+            await sleep(1000);
+        }
+        for (let i = 0; i < 8; i++) {
+            card29e = (await (await api('GET', `/api/cards/${w29Link}`)).json()).card;
+            if (card29e.status !== 'running') break;
+            await sleep(1000);
+        }
+        if (card29e.status === 'running') await api('POST', `/api/agent/runs/${j29e.runId}/abort`, {});
+        const dfin = db.prepare(`SELECT state, outcome, evidence FROM dispatches WHERE id=?`).get(j29e.dispatch.id);
+        rec('W29g run 终态 → 工作证 settled + outcome 必填（evidence 带 run 号）', dfin?.state === 'settled' && ['succeeded', 'failed'].includes(dfin?.outcome) && !!dfin?.evidence,
+            `state=${dfin?.state} outcome=${dfin?.outcome} ev=${String(dfin?.evidence).slice(0, 60)}`);
+    }
+    else {
+        rec('W29f 工作证库内 key=回执 key（与卡锁同源投影）', false, '跳过（W29e 非 202）');
+        rec('W29g run 终态 → 工作证 settled + outcome 必填（evidence 带 run 号）', false, '跳过（W29e 非 202）');
+    }
+
+    // W30：todo 卡派发 —— 依赖满足自动提升 ready（派发少一步手动流转）
+    const w30Id = Number(db.prepare(`INSERT INTO cards (title,kind,board,status) VALUES ('wb-walk-A1-todo','task','default','todo')`).run().lastInsertRowid);
+    const r30 = await api('POST', `/api/cards/${w30Id}/dispatch-agent`, { agent: 'wb-agent' });
+    const j30 = await r30.json().catch(() => ({}));
+    const promoted30 = db.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action='promote' AND from_status='todo' AND to_status='ready'`).get(w30Id).c;
+    rec('W30 todo 卡派发：自动提升 ready → 202 + promote 事件', r30.status === 202 && promoted30 >= 1, `HTTP ${r30.status} promote=${promoted30}`);
+    if (j30.runId) await api('POST', `/api/agent/runs/${j30.runId}/abort`, {});
 
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }

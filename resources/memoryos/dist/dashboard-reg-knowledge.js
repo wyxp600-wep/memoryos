@@ -8,7 +8,7 @@ import { resolveLlm, runAgent, buildSystemPrompt, callLlm } from "./agent-core.j
 import { unprotectSecret } from "./secret-store.js";
 import { createRunRegistry, readArtifact, extractArtifactPath, extractTaskHint, simpleDiff } from "./agent-runs.js";
 import { resolveInside } from "./exec-tools.js";
-import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit, updateMemory, logDaemon } from "./db.js";
+import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit, updateMemory, logDaemon, touchDispatchLease } from "./db.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -41,6 +41,41 @@ export function registerKnowledge(app, ctx) {
     }
     /** 工作区根（diff 快照的路径边界；与 server.js 执行面同口径） */
     const WORKSPACE_ROOT = path.resolve(process.env.MEMORYOS_WORKSPACE || path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", ".."));
+    /* ★ A1 一键派发：runId → cardDispatch 反查表 —— 中止「排队中」的派发 run 时 startRun 不会跑，
+     *  这里补收口，否则卡片永远停在 running。startRun 主路径收口后即删表项；上限 200 防长跑积压。 */
+    const dispatchRuns = new Map();
+    /** ★ A1 一键派发：把「起 run」的能力交给 cards 域复用（dashboard.js 先 registerCards 后
+     *  registerKnowledge，请求期两个挂载点均已就位）。与 POST /api/agent/runs 同一路径：
+     *  建 handle → 超并发排队 / 直接开跑；b.cardDispatch 存反查表供 abort 收口。 */
+    ctx.startAgentRun = async (b) => {
+        const message = String(b.message ?? "").trim();
+        if (!message)
+            throw new Error("message 不能为空");
+        if (message.length > 4000)
+            throw new Error("message 过长（上限 4000 字）");
+        let mcp;
+        try {
+            mcp = await getAgentMcp();
+        }
+        catch (e) {
+            ctx.resetAgentMcp();
+            throw new Error("MCP 工具面不可用：" + (e instanceof Error ? e.message : String(e)));
+        }
+        const cap = agentTuning().maxConcurrent;
+        const deferred = runs.runningCount() >= cap;
+        const handle = runs.createRun({ sessionId: b.sessionKey || undefined, title: b.title || message.slice(0, 60), taskHint: b.taskHint }, { deferred });
+        if (b.cardDispatch?.cardId) {
+            if (dispatchRuns.size > 200)
+                dispatchRuns.clear();
+            dispatchRuns.set(handle.run.id, b.cardDispatch);
+        }
+        if (deferred) {
+            runQueue.push({ handle, b });
+            return { runId: handle.run.id, status: "queued", queueAhead: runQueue.length - 1, cap };
+        }
+        startRun(handle, b, mcp).catch(() => { }); // 错误在 startRun 内 catch → finish("failed")
+        return { runId: handle.run.id, status: "running", cap };
+    };
     /** 解析 file_write 参数里的路径 → 工作区内真实路径（resolveInside 边界校验：越界/UNC 拒绝，防符号链接逃逸） */
     function safeSnapshotPath(p) {
         try { return resolveInside(WORKSPACE_ROOT, String(p || "")); }
@@ -99,6 +134,10 @@ export function registerKnowledge(app, ctx) {
         // 任务联动：用户消息里的「任务 #N」→ run 的 taskHint（呈现层 join 用，不自动 claim，B1）
         const taskHint = b.taskHint != null ? Number(b.taskHint) : extractTaskHint(message);
         handle.run.taskHint = taskHint ?? null;
+        // ★ A1 一键派发：本 run 绑定的卡片（无绑定 = 普通对话 run，下面三条派发逻辑全部不触发）
+        const cd = b.cardDispatch?.cardId ? b.cardDispatch : null;
+        let doneSeen = false; // agent 是否已自行 task_done（没做 → 终态前强制收尾轮补一枪）
+        let lastBeatAt = Date.now(); // 租约打卡节流（60s）：长跑 run 不被 reaper 误判掉线
         // 写文件类步骤的前后快照（diff 数据源在路由层注入；路径经 resolveInside 边界校验，越界不快照）
         // ★ 并行池：一轮可能含多个 file_write（L1 独占串行跑，但 tool_call 事件在前置门禁里先批量发）——
         //   快照按 FIFO 队列逐条配对（tool_result 按模型序到达，与创建序一致），单槽会被后一次覆盖而错配。
@@ -130,6 +169,20 @@ export function registerKnowledge(app, ctx) {
             if (s.type === "tool_result" && s.tool === "task_done" && s.ok && lastStep?.taskDone) {
                 handle.ev("task_done", { taskId: lastStep.taskDone });
             }
+            // ★ A1 派发 run 的两件小事：记下 agent 已收口 + 租约/工作证打卡（60s 节流，失败不阻断）
+            if (cd) {
+                if (s.type === "tool_result" && s.tool === "task_done" && s.ok)
+                    doneSeen = true;
+                if (Date.now() - lastBeatAt >= 60000) {
+                    lastBeatAt = Date.now();
+                    try {
+                        db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cd.cardId);
+                        if (cd.dispatchId)
+                            touchDispatchLease(db, cd.dispatchId, 10);
+                    }
+                    catch { /* 打卡失败不阻断 run */ }
+                }
+            }
         };
         try {
             // ★ A1：中止运行 —— 传 AbortSignal（agent-core 轮次间 + LLM fetch 可中断；
@@ -143,6 +196,20 @@ export function registerKnowledge(app, ctx) {
                 budgetTokens: tuning.tokenBudget,        // ★ 驾驶舱「预算上限」：超预算即中止本 run
                 stream: true,                            // ★ 批次①（2026-09-23）：各轮流式 answer_delta；cacheOn 时 runAgent 内自动降级非流式（互斥）
             });
+            // ★ A1 强制收尾轮（对标 dist/agent.js:216 CLI 同款）：绑定任务却忘了 task_done →
+            //   只给 task_done 一个工具补一枪（toolsFilter 最小权限）；收尾失败不覆盖主结果。
+            if (cd && cd.taskId && !doneSeen && allowWrites && !handle.run.abortCtrl.signal.aborted) {
+                try {
+                    await runAgent({
+                        llm, mcp,
+                        messages: [...messages, { role: "user", content: `现在只用 task_done 结项：调用 task_done(memory_id=${cd.taskId}, conclusion="<你上面给出的结论摘要，≤200字>", dispatch_key="${cd.dispatchKey}")。不要再调用其它工具。` }],
+                        maxSteps: 2, toolsFilter: ["task_done"],
+                        onStep, writeGate: () => true,
+                        signal: handle.run.abortCtrl.signal,
+                    });
+                }
+                catch (e) { console.error(`[dispatch] 强制收尾轮失败：${e instanceof Error ? e.message : e}`); }
+            }
             handle.finish("done", { answer: r.answer, usage: r.usage, estimatedTokens: r.estimatedTokens, cache: r.cache || null });
             // 会话持久化：把本轮 user/assistant 追加进 agent_sessions（写入方截断纪律）
             if (b.sessionKey) {
@@ -155,6 +222,20 @@ export function registerKnowledge(app, ctx) {
         }
         catch (e) {
             handle.finish("failed", { error: e instanceof Error ? e.message : String(e) });
+        }
+        // ★ A1 派发收口：run 终态 → 回写卡片状态机 + 结算工作证（幂等；收口异常不改 run 终态）
+        if (cd) {
+            dispatchRuns.delete(handle.run.id);
+            try {
+                const ok = handle.run.status === "done";
+                ctx.finalizeCardDispatch?.({
+                    ...cd, ok, runId: handle.run.id,
+                    detail: ok
+                        ? `一键派发完成（run ${handle.run.id}）`
+                        : `一键派发失败（run ${handle.run.id}）：${handle.run.error ?? "未知错误"}`,
+                });
+            }
+            catch (e) { console.error(`[dispatch] 收口失败：${e instanceof Error ? e.message : e}`); }
         }
         // 本轮 run 终态 → 空出并发位，启动排队的下一个（★ 驾驶舱「并行数」）
         await pumpQueue();
@@ -539,25 +620,19 @@ export function registerKnowledge(app, ctx) {
             return reply.code(400).send({ ok: false, error: "message 不能为空" });
         if (message.length > 4000)
             return reply.code(400).send({ ok: false, error: "message 过长（上限 4000 字）" });
-        let mcp;
+        // ★ A1：起 run 收敛到 ctx.startAgentRun 单一路径（派发端点与本端点同源，避免两处排队逻辑漂移）
+        let started;
         try {
-            mcp = await getAgentMcp();
+            started = await ctx.startAgentRun(b);
         }
         catch (e) {
-            ctx.resetAgentMcp();
-            return reply.code(503).send({ ok: false, error: "MCP 工具面不可用：" + (e instanceof Error ? e.message : String(e)) });
+            return reply.code(503).send({ ok: false, error: e instanceof Error ? e.message : String(e) });
         }
-        // ★ 驾驶舱「并行数」：超并发上限 → 以 queued 建入并排队（响应 202 + status="queued"，前端展示排队位）。
-        //   空位腾出（任一 run 终态 / abort）由 pumpQueue 依次 markRunning + 启动。
-        const cap = agentTuning().maxConcurrent;
-        const deferred = runs.runningCount() >= cap;
-        const handle = runs.createRun({ sessionId: b.sessionKey || undefined, title: b.title || message.slice(0, 60), taskHint: b.taskHint }, { deferred });
-        if (deferred) {
-            runQueue.push({ handle, b });
-            return reply.code(202).send({ ok: true, runId: handle.run.id, sessionKey: b.sessionKey || null, status: "queued", queueAhead: runQueue.length - 1, cap });
-        }
-        startRun(handle, b, mcp); // 后台跑，不 await；错误在 startRun 内 catch → finish("failed")
-        return reply.code(202).send({ ok: true, runId: handle.run.id, sessionKey: b.sessionKey || null, status: "running", cap });
+        return reply.code(202).send({
+            ok: true, runId: started.runId, sessionKey: b.sessionKey || null, status: started.status,
+            ...(started.status === "queued" ? { queueAhead: started.queueAhead } : {}),
+            cap: started.cap,
+        });
     });
     /** run 列表（活动 + 终态，内存保留最近 50） */
     app.get("/api/agent/runs", async () => {
@@ -703,6 +778,13 @@ export function registerKnowledge(app, ctx) {
             const qi = runQueue.findIndex((x) => x.handle.run.id === h.run.id);
             if (qi !== -1)
                 runQueue.splice(qi, 1);
+            // ★ A1：排队中的派发 run 被中止 → startRun 永远不会跑，这里补收口（否则卡片永远 running）
+            const cdQ = dispatchRuns.get(h.run.id);
+            if (cdQ) {
+                dispatchRuns.delete(h.run.id);
+                try { ctx.finalizeCardDispatch?.({ ...cdQ, ok: false, runId: h.run.id, detail: `派发 run 排队中被中止（${h.run.status}）` }); }
+                catch { /* 收口失败不影响中止响应 */ }
+            }
         }
         await pumpQueue();   // running 被中止 → 空出并发位
         return { ok: true, runId: h.run.id, status: "aborted" };

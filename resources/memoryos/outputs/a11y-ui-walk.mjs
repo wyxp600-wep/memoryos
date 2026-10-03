@@ -240,7 +240,14 @@ try {
     rec('键盘可达：Tab 聚焦导航项 + Enter 真实切页', focused === 'tasks' && tasksActive === true, 'focused=' + focused + ' page-tasks.active=' + tasksActive);
 
     // —— 真实键盘交互：数据行的行内主操作 → Enter 打开详情（行本身不进 Tab，故必须验这个按钮） ——
-    await ev(`(function(){var n=document.querySelector('.nav-item[data-route="all"]');if(n)n.click();return 1})()`);
+    // ★ 切页自适应（2026-10-04）：旧结构路由为独立导航项「all」；Slice-C2 页面合并后「all」降为
+    //   记忆中心（memory）子视图、导航项不存在 → 先点旧导航项、缺失则回退 memory 导航 / hash 兜底，
+    //   两种结构都能到达 #allTableBody 所在页（断言本体不变，只修「到达页面」这一步）。
+    await ev(`(function(){
+      var n=document.querySelector('.nav-item[data-route="all"]')||document.querySelector('.nav-item[data-route="memory"]');
+      if(n){n.click();return 'nav:'+n.getAttribute('data-route')}
+      location.hash='#memory';return 'hash:memory'
+    })()`);
     await sleep(2200);
     const rowFocus = await ev(`(function(){var b=document.querySelector('#allTableBody tr[data-id] .row-open');if(!b)return 'missing';b.focus();return String(document.activeElement.className||'')})()`);
     await pressEnter();

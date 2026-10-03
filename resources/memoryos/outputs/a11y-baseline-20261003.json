@@ -1,6 +1,6 @@
 {
   "meta": {
-    "at": "2026-10-03T13:59:48.678Z",
+    "at": "2026-10-03T17:00:21.377Z",
     "dashPort": 8787,
     "node": "v24.18.1",
     "chrome": "default"
@@ -34,7 +34,7 @@
     {
       "name": "P1-1 有 landmark（main+nav）",
       "ok": true,
-      "extra": "main=2 nav=1"
+      "extra": "main=2 nav=3"
     },
     {
       "name": "P1-1 有标题层级（≥1 个 h1）",
@@ -85,7 +85,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -113,7 +113,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -129,625 +129,625 @@
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-rule",
+          "cls": "row-pitfall",
           "route": "",
-          "text": "01 - **门禁Fail-Closed**：writeGa"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "02 - **git中文路径Bug**：`git commi"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "03 - **Generation单调递增**：任务新dis"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "04 - **Dispatch句柄兼容**：句柄必须保持纯h"
+          "text": "01 【结论】MemoryOS 前端对比度修复必须「亮色+暗"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "05 Orca融合P3落地要点（Design Mode CD"
+          "text": "02 【结论】MemoryOS 仪表盘「页面合并」改造已从 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "03 Orca agent hooks 依赖环境变量（ORC"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "04 【用户沟通硬约定：只用中文 + 小白也能看懂的语言】用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "05 【P4 看板交互简化批（一个卡片=一个工作台）已提交】"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "06 - **门禁Fail-Closed**：writeGa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "07 - **git中文路径Bug**：`git commi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "08 - **Generation单调递增**：任务新dis"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "09 - **Dispatch句柄兼容**：句柄必须保持纯h"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "06 Orca 融合 P2 落地要点（准终端分屏 + Git"
+          "text": "10 Orca融合P3落地要点（Design Mode CD"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "07 门禁 exit=13（mcp/p26-lifecycl"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "08 npm test 中 mcp/p26-lifecycl"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "09 Orca 融合 P0+P1 已落地（2026-10-0"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "10 MemoryOS 批次F1（2026-10-03，提交"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "11 MemoryOS 批次C3/C4（2026-10-03"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "12 存在一批untracked排障脚本需用户确认后处理 r"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "13 AI Vault核心契约包括status索引账本、四态"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "14 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "15 每日复盘自动化在代理未监听时会静默502失败 自动化静"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "16 resources\\memoryos\\data\\mem"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "17 [session_id: 6ac0056f817199"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "18 [session_id: 6ac0056f817199"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "19 [session_id: 6abfacf4817199"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "20 The user presented four cat"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "21 [session_id: 6abfacf4817199"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "22 - `git commit -F`命令在包含中文的路径"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "23 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "24 - 敏感配置文件`resources/memoryos"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "25 - Memory entry #3370 (parti"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "26 - Modifying AGENTS.md direc"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "27 - For all modifications, fo"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "28 - Do not write sensitive cr"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "29 - The project has two simil"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "30 - Read memory by &#39;task所"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "31 - After task completion, th"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "32 - Irreversible operations m"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "33 - Modifications must not cr"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "34 - All AI entries must autom"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "35 - AGENTS.md is a synchroniz"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "36 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
+          "text": "11 Orca 融合 P2 落地要点（准终端分屏 + Git"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "37 【2026-10-02 深夜 手机 agent 写不入"
+          "text": "12 门禁 exit=13（mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "38 zcode存储状态中session数据库的迁移状态以l"
+          "text": "13 npm test 中 mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "39 AI Vault核心契约包括status索引账本、四态"
+          "text": "14 Orca 融合 P0+P1 已落地（2026-10-0"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "40 - **表述方式（2026-10-02 用户原话\"以后"
+          "text": "15 MemoryOS 批次F1（2026-10-03，提交"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "41 AI Vault核心契约包括status索引账本、四态"
+          "text": "16 MemoryOS 批次C3/C4（2026-10-03"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "42 Orca采用ratchet（基线只减不增）技术 建议从"
+          "text": "17 存在一批untracked排障脚本需用户确认后处理 r"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "43 - 上轮交接中提到的“AI vault search "
+          "text": "18 AI Vault核心契约包括status索引账本、四态"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "44 【2026-10-02 晚 手机端 agent 写记忆"
+          "text": "19 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "45 [session_id: 6abfacf4817199"
+          "text": "20 每日复盘自动化在代理未监听时会静默502失败 自动化静"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "46 - CLAIM.md分区表定位为“例外处置”而非“人人"
+          "text": "21 resources\\memoryos\\data\\mem"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "47 - 默认共享工作区，仅在发生具体冲突时创建worktr"
+          "text": "22 [session_id: 6ac0056f817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "48 - 当liveness/ownership/capab"
+          "text": "23 [session_id: 6ac0056f817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "49 - 编排层安全底线：禁止新开端口绕过现有问题；多AI协"
+          "text": "24 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "50 - 会话终止不导致在制品失效 — 依据Orca原文“L"
+          "text": "25 The user presented four cat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "51 - 初版createDispatch采用&#39;有a"
+          "text": "26 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "52 - 未提交的在制品需按CLAIM分区规则处置，避免冲突"
+          "text": "27 - `git commit -F`命令在包含中文的路径"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "53 - 改动生效需在普通终端执行`node resourc"
+          "text": "28 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "54 - generation值取任务历史最大generat"
+          "text": "29 - 敏感配置文件`resources/memoryos"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "55 - Dispatch句柄采用纯hex形态，保留`lea"
+          "text": "30 - Memory entry #3370 (parti"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "56 - 新增dispatches表及索引会改变空库page"
+          "text": "31 - Modifying AGENTS.md direc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "57 - 结构化回执必须包含可执行的next_action，"
+          "text": "32 - For all modifications, fo"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "58 - 租约到期只标记stale，不回收、不释放；回收必须"
+          "text": "33 - Do not write sensitive cr"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "59 - 写权限的唯一定义：调用方必须持有该任务的activ"
+          "text": "34 - The project has two simil"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "60 - 一个任务同时只能有一个active的Dispatc"
+          "text": "35 - Read memory by &#39;task所"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "36 - After task completion, th"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "37 - Irreversible operations m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "38 - Modifications must not cr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "39 - All AI entries must autom"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "40 - AGENTS.md is a synchroniz"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "61 - **移动端密钥隔离**：Termux/非 Wind"
+          "text": "41 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "42 【2026-10-02 深夜 手机 agent 写不入"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "43 zcode存储状态中session数据库的迁移状态以l"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "44 AI Vault核心契约包括status索引账本、四态"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "45 - **表述方式（2026-10-02 用户原话\"以后"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "46 AI Vault核心契约包括status索引账本、四态"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "47 Orca采用ratchet（基线只减不增）技术 建议从"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "48 - 上轮交接中提到的“AI vault search "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "49 【2026-10-02 晚 手机端 agent 写记忆"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "50 [session_id: 6abfacf4817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "51 - CLAIM.md分区表定位为“例外处置”而非“人人"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "52 - 默认共享工作区，仅在发生具体冲突时创建worktr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "53 - 当liveness/ownership/capab"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "54 - 编排层安全底线：禁止新开端口绕过现有问题；多AI协"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "55 - 会话终止不导致在制品失效 — 依据Orca原文“L"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "56 - 初版createDispatch采用&#39;有a"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "57 - 未提交的在制品需按CLAIM分区规则处置，避免冲突"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "58 - 改动生效需在普通终端执行`node resourc"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "59 - generation值取任务历史最大generat"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "60 - Dispatch句柄采用纯hex形态，保留`lea"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "61 - 新增dispatches表及索引会改变空库page"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "62 - 结构化回执必须包含可执行的next_action，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "63 - 租约到期只标记stale，不回收、不释放；回收必须"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "64 - 写权限的唯一定义：调用方必须持有该任务的activ"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "65 - 一个任务同时只能有一个active的Dispatc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "62 - **门禁抖动重试**：`npm test` 中 m"
+          "text": "66 - **移动端密钥隔离**：Termux/非 Wind"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "63 - **工具空转熔断**：调用 MCP 工具（如 me"
+          "text": "67 - **门禁抖动重试**：`npm test` 中 m"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "64 - **沙箱EPERM降级**：Windows DSH"
+          "text": "68 - **工具空转熔断**：调用 MCP 工具（如 me"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "69 - **沙箱EPERM降级**：Windows DSH"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "65 【2026-10-02 晚 手机端 LLM/agent"
+          "text": "70 【2026-10-02 晚 手机端 LLM/agent"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "66 [experience] 2026-10-02 删除功"
+          "text": "71 [experience] 2026-10-02 删除功"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "67 删除自检正文经验 已拒绝 human:dashboar"
+          "text": "72 删除自检正文经验 已拒绝 human:dashboar"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "68 Orca采用ratchet（基线只减不增）技术 建议从"
+          "text": "73 Orca采用ratchet（基线只减不增）技术 建议从"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "69 Orca采用ratchet（基线只减不增）技术 建议从"
+          "text": "74 Orca采用ratchet（基线只减不增）技术 建议从"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "70 [session_id: 6abfacf4817199"
+          "text": "75 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "71 [decision] 2026-10-02 笔记→记忆"
+          "text": "76 [decision] 2026-10-02 笔记→记忆"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "72 记忆联动自检：PUT 编辑后的新正文 v2决策 已拒绝"
+          "text": "77 记忆联动自检：PUT 编辑后的新正文 v2决策 已拒绝"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "73 测试经验 已拒绝 human:dashboard 1."
+          "text": "78 测试经验 已拒绝 human:dashboard 1."
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "74 [decision] 2026-10-02 笔记→记忆"
+          "text": "79 [decision] 2026-10-02 笔记→记忆"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "75 类型贯通自检：这条应为 decision 类型决策 已"
+          "text": "80 类型贯通自检：这条应为 decision 类型决策 已"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "76 [decision] 2026-10-02 笔记页批次"
+          "text": "81 [decision] 2026-10-02 笔记页批次"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "77 按钮自检初始正文 [[知识库]]经验 已拒绝 huma"
+          "text": "82 按钮自检初始正文 [[知识库]]经验 已拒绝 huma"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "78 [decision] 2026-10-02 笔记页\"按"
+          "text": "83 [decision] 2026-10-02 笔记页\"按"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "79 【2026-10-02 手机独立版（本地内核）+ 手机"
+          "text": "84 【2026-10-02 手机独立版（本地内核）+ 手机"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "80 【2026-10-02 手机版真机交付完成】小米 23"
+          "text": "85 【2026-10-02 手机版真机交付完成】小米 23"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "81 F50看门狗执行disable/enable AMD "
+          "text": "86 F50看门狗执行disable/enable AMD "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "82 【门禁 mcp/p26-lifecycle 间歇FAI"
+          "text": "87 【门禁 mcp/p26-lifecycle 间歇FAI"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "83 【2026-10-02 手机版安卓 App 交付】架构"
+          "text": "88 【2026-10-02 手机版安卓 App 交付】架构"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "84 【壳打不开根因：仓库根被打了 Low 完整性标签 → "
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "85 [task][assignee:dsh][status"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "86 当处理 MemoryOS 任务时，应优先检查 task"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "87 [task][assignee:dsh][status"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "88 [task][assignee:dsh][status"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-pitfall",
-          "route": "",
-          "text": "89 MemoryOS agent 自循环踩坑与结论（202"
+          "text": "89 【壳打不开根因：仓库根被打了 Low 完整性标签 → "
         },
         {
           "kind": "dataRow",
@@ -759,9 +759,9 @@
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-pitfall",
+          "cls": "row-experience",
           "route": "",
-          "text": "91 任务#3336 自动领任务验收复盘：dsh 成功自动完"
+          "text": "91 当处理 MemoryOS 任务时，应优先检查 task"
         },
         {
           "kind": "dataRow",
@@ -775,28 +775,28 @@
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "93 [task][assignee:dsh-b][stat"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "94 [task][assignee:dsh-b][stat"
+          "text": "93 [task][assignee:dsh][status"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "95 坑：task_next 的跨 project 计数提示"
+          "text": "94 MemoryOS agent 自循环踩坑与结论（202"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-experience",
+          "cls": "row-task",
           "route": "",
-          "text": "96 事实：memoryos MCP task 工具面实测 "
+          "text": "95 [task][assignee:dsh][status"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "96 任务#3336 自动领任务验收复盘：dsh 成功自动完"
         },
         {
           "kind": "dataRow",
@@ -810,21 +810,21 @@
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "98 [task][assignee:zcode][stat"
+          "text": "98 [task][assignee:dsh-b][stat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-experience",
+          "cls": "row-task",
           "route": "",
-          "text": "99 【rule|首步MCP读约定】收到用户任何消息后，第一"
+          "text": "99 [task][assignee:dsh-b][stat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-experience",
+          "cls": "row-pitfall",
           "route": "",
-          "text": "100 【pitfall|同参数重试空转】症状：同一工具调用"
+          "text": "100 坑：task_next 的跨 project 计数提"
         }
       ],
       "unlabeledControls": [],
@@ -842,15 +842,15 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
         "h1": 1
       },
       "ariaLive": 6,
-      "visiblePage": "page-all",
-      "route": "all",
+      "visiblePage": "page-memory",
+      "route": "memory",
       "focusableNoName": []
     },
     {
@@ -870,7 +870,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -898,7 +898,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -926,295 +926,15 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
         "h1": 1
       },
       "ariaLive": 6,
-      "visiblePage": "page-graph",
-      "route": "graph",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-runs",
-      "route": "runs",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-connect",
-      "route": "connect",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-governance",
-      "route": "governance",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-trend",
-      "route": "trend",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-cross",
-      "route": "cross",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-audit",
-      "route": "audit",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-top",
-      "route": "top",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-zombies",
-      "route": "zombies",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-arbitrate",
-      "route": "arbitrate",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-ingest",
-      "route": "ingest",
+      "visiblePage": "page-govern",
+      "route": "govern",
       "focusableNoName": []
     },
     {
@@ -4091,7 +3811,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -4119,7 +3839,7 @@
       },
       "landmarks": {
         "main": 2,
-        "nav": 1
+        "nav": 3
       },
       "headings": {
         "total": 1,
@@ -4128,34 +3848,6 @@
       "ariaLive": 6,
       "visiblePage": "page-skills",
       "route": "skills",
-      "focusableNoName": []
-    },
-    {
-      "clickableNotFocusable": [],
-      "unlabeledControls": [],
-      "navActiveNoCurrent": 0,
-      "navActiveTotal": 1,
-      "collapsibleNoExpanded": 0,
-      "disclosure": {
-        "present": 0,
-        "focusable": 0,
-        "hasExpanded": 0
-      },
-      "rows": {
-        "total": 508,
-        "withPrimary": 508
-      },
-      "landmarks": {
-        "main": 2,
-        "nav": 1
-      },
-      "headings": {
-        "total": 1,
-        "h1": 1
-      },
-      "ariaLive": 6,
-      "visiblePage": "page-summary",
-      "route": "summary",
       "focusableNoName": []
     }
   ]

@@ -1,7 +1,7 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— cards 域。
  * handler 自 dashboard.js 原行 1332-2396 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS, updateMemory, setCardEvtPusher } from "./db.js";
+import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, readConfig, writeConfig, SECTORS, SECTOR_KEYS, updateMemory, setCardEvtPusher, createDispatch, settleDispatch, releaseDispatch } from "./db.js";
 import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { randomBytes } from "node:crypto";
 import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
@@ -212,6 +212,45 @@ export function registerCards(app, ctx) {
         }
         return true;
     }
+    /* ★ A1 一键派发收口（对标 orca worker_done）：run 终态回调 —— 卡片 running →
+     *   review（成功，交回人工验收）/ failed（失败，failure_count+1），并结算工作证。
+     *  幂等三层：① 卡已不在 running（agent 自己 task_done 已收口 / 人工已流转）→ 只补结算不改状态；
+     *  ② settleDispatch 自带 WHERE state='active' 守卫，重复结算天然无害；
+     *  ③ 全程 try 包裹 —— 收口失败不能反噬 run 终态。 */
+    function finalizeCardDispatch(info) {
+        const cardId = Number(info?.cardId);
+        if (!cardId)
+            return { ok: false, reason: "no-card" };
+        const c = readCard(cardId);
+        if (!c)
+            return { ok: false, reason: "card-gone" };
+        const actor = String(info.actor || "dispatch-agent");
+        const detail = String(info.detail ?? "").slice(0, 160);
+        let statusChanged = null;
+        // 只收口「本派发自己领的那张卡」（他人中途接管则让位，交对账/人工）
+        if (c.status === "running" && (!c.assignee || c.assignee === "unassigned" || c.assignee === actor)) {
+            const to = info.ok ? "review" : "failed";
+            if (CARD_TRANSITIONS[c.status]?.includes(to)) {
+                const g = db
+                    .prepare(`UPDATE cards SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running'`)
+                    .run(to, cardId);
+                if (Number(g.changes)) {
+                    statusChanged = to;
+                    writeCardEvent(cardId, actor, "status_changed", "running", to, detail);
+                    // 三清（锁 + 租约窗 + 贴条/裁决标记）：run 已终态，残留锁会卡死后续认领
+                    db.prepare(`UPDATE cards SET claim_lock=NULL, lease_expires_at=NULL, lease_notice_at=NULL, lease_stale_at=NULL WHERE id=?`).run(cardId);
+                    if (to === "failed")
+                        db.prepare(`UPDATE cards SET failure_count=failure_count+1 WHERE id=?`).run(cardId);
+                    syncCardToTask(cardId); // 头状态回写（review→in_progress / failed→blocked）
+                }
+            }
+        }
+        let settled = false;
+        if (info.dispatchId)
+            settled = settleDispatch(db, info.dispatchId, info.ok ? "succeeded" : "failed", detail || (info.runId ? `run ${info.runId}` : "dispatch-agent"));
+        return { ok: true, statusChanged, settled };
+    }
+    ctx.finalizeCardDispatch = finalizeCardDispatch;
     /** depends 图成环检测（DFS；从 src 沿 depends 向后遍历是否可达 dst） */
     function dependsPathExists(fromCard, toCard, seen = new Set()) {
         if (fromCard === toCard)
@@ -602,6 +641,104 @@ export function registerCards(app, ctx) {
         writeCardEvent(id, actor, "claim", "ready", "running", `CAS 认领（lock=${lock.slice(0, 8)}…）`);
         syncCardToTask(id, { assignee: actor }); // ★ 认领 → 关联 task 回写 in_progress + assignee（修 #10）
         return { ok: true, id, assignee: actor, lock };
+    });
+    // —— ★ A1 一键派发（对标 orca「one authoritative Task attempt」）——
+    /* 一条龙：状态准入 → CAS 认领（claim_lock 即 dispatch_key 投影）→ 建工作证 → 起 agent run。
+     * 与 /claim 的分工：/claim 是人手动认领；本端点是「把活推给 agent」——多两步（建 dispatch + 起 run），
+     * 且起 run 失败整笔回滚（卡回 ready + 工作证释放），不留半开状态。
+     * run 终态由 knowledge 域回调 ctx.finalizeCardDispatch 收口（review/failed + settleDispatch）。 */
+    app.post("/api/cards/:id/dispatch-agent", async (req, reply) => {
+        if (RESTRICTED)
+            return restricted(reply, "cardDispatchAgent");
+        const id = Number(req.params.id);
+        const b = req.body ?? {};
+        const agent = String(b.agent ?? "").trim() || "dispatch-agent";
+        const credErr = actorCredError(agent, b.credential ?? req.query.credential); // kebab 名硬模式需有效写凭据
+        if (credErr)
+            return reply.code(403).send({ ok: false, error: credErr });
+        if (typeof ctx.startAgentRun !== "function")
+            return reply.code(503).send({ ok: false, error: "run 域未就绪（startAgentRun 未注册）" });
+        const c = readCard(id);
+        if (!c)
+            return reply.code(404).send({ ok: false, error: "卡片不存在" });
+        let from = c.status;
+        // todo 且依赖已满足 → 先提升 ready（与 /api/dispatch 调度器同口径），派发少一步手动流转
+        if (from === "todo" && cardDependsDone(id)) {
+            db.prepare(`UPDATE cards SET status='ready', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='todo'`).run(id);
+            writeCardEvent(id, agent, "promote", "todo", "ready", "派发前置：依赖已满足");
+            from = "ready";
+        }
+        if (from !== "ready")
+            return reply.code(409).send({ ok: false, error: `卡片状态「${from}」不可派发（需可认领 ready）` });
+        if (!cardDependsDone(id))
+            return reply.code(409).send({ ok: false, error: "依赖卡片未完成，暂不可派发" });
+        // 关联任务记忆（与 syncCardToTask 同口径：ref 优先，其次 card_memory dispatch 关联）
+        const memRow = (c.ref_kind === "memory" && c.ref_id
+            ? db.prepare(`SELECT id FROM memories WHERE id=?`).get(c.ref_id)
+            : undefined) ??
+            db.prepare(`SELECT memory_id id FROM card_memory WHERE card_id=? AND relation='dispatch' LIMIT 1`).get(id);
+        const taskId = memRow ? Number(memRow.id) : null;
+        const lock = randomBytes(12).toString("hex");
+        let dsp = null;
+        txBegin(); // 认领 + 建工作证一笔事务：任一步失败整笔回滚（事件先入队、COMMIT 后推）
+        try {
+            const info = db
+                .prepare(`UPDATE cards SET status='running', assignee=?, claim_lock=?,
+               lease_expires_at=datetime('now','+10 minutes'), heartbeat_at=datetime('now'), updated_at=datetime('now')
+             WHERE id=? AND status='ready' AND claim_lock IS NULL`)
+                .run(agent, lock, id);
+            if (Number(info.changes) === 0)
+                throw new Error("认领竞争：卡片已不在 ready 或已被认领");
+            if (taskId)
+                dsp = createDispatch(db, { key: lock, memoryId: taskId, agent, leaseMinutes: 10 }); // 同任务旧尝试 → 自动 supersede 换代
+            writeCardEvent(id, agent, "dispatch", "ready", "running", dsp
+                ? `一键派发（工作证 gen=${dsp.generation}${dsp.superseded ? `，取代 #${dsp.superseded}` : ""} · run 启动中）`
+                : "一键派发（无关联任务记忆，仅卡级认领 · run 启动中）");
+            txCommit();
+        }
+        catch (e) {
+            try { txRollback(); }
+            catch { /* 无事务可回滚 */ }
+            return reply.code(409).send({ ok: false, error: String(e instanceof Error ? e.message : e) });
+        }
+        syncCardToTask(id, { assignee: agent }); // 头回写 running + assignee（与 /claim 同口径）
+        // 起 run：提示词内嵌卡片正文（agent 无卡片读工具），并给足收口指令
+        const message = [
+            `【一键派发】你被指派处理 MemoryOS 看板卡片 #${id}（认领人 ${agent}）。`,
+            taskId
+                ? `关联任务 #${taskId}，工作证 dispatch_key=${lock}：干完必须调用 task_done(memory_id=${taskId}, conclusion="<≤200字结论>", dispatch_key="${lock}")。`
+                : `本卡未关联任务记忆：不要调用 task_done，结论直接写在最终回复里。`,
+            `标题：${String(c.title ?? "").slice(0, 120)}`,
+            `正文：${String(c.body ?? "").trim().slice(0, 2500) || "（空卡：先自行调研再给可执行结论）"}`,
+            `要求：① 先查上下文（memory_search/memory_read，或 task_next 看全局任务）再动手；② 结论须可验收，不确定处显式标注不确定性；③ 中途不要改卡片状态（由系统按 run 终态自动收口）。`,
+        ].join("\n");
+        let started;
+        try {
+            started = await ctx.startAgentRun({
+                message, allowWrites: true, title: `🚀 ${String(c.title ?? "卡片派发").slice(0, 50)}`,
+                taskHint: taskId ?? undefined,
+                cardDispatch: { cardId: id, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, actor: agent },
+            });
+        }
+        catch (e) {
+            // 起 run 失败 → 回滚认领 + 释放工作证（不留半开状态，卡片回到可派发）
+            txBegin();
+            try {
+                db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running' AND claim_lock=?`).run(id, lock);
+                if (dsp)
+                    releaseDispatch(db, dsp.id, `起 run 失败：${e instanceof Error ? e.message : e}`);
+                writeCardEvent(id, agent, "dispatch_failed", "running", "ready", String(e instanceof Error ? e.message : e).slice(0, 160));
+                txCommit();
+            }
+            catch { try { txRollback(); } catch { /* noop */ } }
+            syncCardToTask(id, { assignee: "" }); // 头随卡回到 ready 并清 assignee
+            return reply.code(503).send({ ok: false, error: `起 run 失败（认领已回滚）：${e instanceof Error ? e.message : e}` });
+        }
+        return reply.code(202).send({
+            ok: true, id, runId: started.runId, status: started.status, cap: started.cap ?? null,
+            queueAhead: started.queueAhead ?? null, agent, assignee: agent, taskId,
+            dispatch: dsp ? { id: dsp.id, key: lock, generation: dsp.generation, superseded: dsp.superseded ?? null } : null,
+        });
     });
     // —— 状态流转（H3 ②：WHERE status=expected_from 前置校验 + 白名单）——
     app.post("/api/cards/:id/status", async (req, reply) => {
