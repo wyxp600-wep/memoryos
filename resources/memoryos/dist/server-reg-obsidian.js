@@ -13,7 +13,7 @@ export function registerObsidianTools(server, ctx) {
     const { db, AGENT, AGENT_FPATH } = ctx;
     server.addTool({
         name: "obsidian_import",
-        description: "把 Obsidian vault 的 .md 笔记增量导入共享记忆库（幂等：按内容哈希，不变跳过/变更更新/新增入库，agent=obsidian，project 默认取 vault 目录名）。适合把本地笔记/知识库沉淀为可检索记忆。",
+        description: "Obsidian vault 的 .md 增量导入记忆库（幂等：按内容哈希，不变跳过）。",
         parameters: z.object({
             vault: z.string().describe("Obsidian vault 绝对路径（含 .md 笔记的根目录）"),
             project: z.string().optional().describe("project scope，默认取 vault 目录名"),
@@ -37,7 +37,7 @@ export function registerObsidianTools(server, ctx) {
     });
     server.addTool({
         name: "obsidian_export",
-        description: "把记忆库中 active 记忆导出为 Markdown 笔记（带溯源 frontmatter），写入 vault/MemoryOS 导出/，幂等不覆盖。适合把高价值记忆沉淀回 Obsidian 复盘。",
+        description: "active 记忆导出为 Markdown 笔记（带溯源 frontmatter，幂等不覆盖）。",
         parameters: z.object({
             vault: z.string().describe("Obsidian vault 绝对路径（导出目录 = vault/MemoryOS 导出）"),
             project: z.string().optional().describe("project scope 过滤，缺省=全部"),
@@ -61,7 +61,7 @@ export function registerObsidianTools(server, ctx) {
     });
     server.addTool({
         name: "obsidian_write_note",
-        description: "往 Obsidian vault 写单条笔记（带溯源 frontmatter），同时同步写入共享记忆库（去重预检 + 埋点），并记录 obsidian_sync 元表映射。文件已存在时加时间戳后缀，绝不覆盖。适用：Agent 把修复结论/技术决策/隐藏约定沉淀回 Obsidian 笔记库。",
+        description: "写单条 Obsidian 笔记并同步记忆库（去重预检；文件已存在加时间戳，绝不覆盖）。",
         parameters: z.object({
             vault: z.string().describe("Obsidian vault 绝对路径"),
             title: z.string().describe("笔记标题（同时用作文件名）"),

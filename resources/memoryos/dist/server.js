@@ -16,6 +16,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { registerMemoryTools } from "./server-reg-memory.js";
 import { registerObsidianTools } from "./server-reg-obsidian.js";
 import { registerTaskTools } from "./server-reg-task.js";
+import { registerGuideTool } from "./tool-guides.js";
 // —— 运行时身份读取（R3 分工：读写自动带 agent/agent_fpath）——
 const DB_PATH = process.env.MEMORY_DB ?? (process.env.APPDATA
   ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db") // ★ 口径收口（2026-10-02 用户拍板）：缺省只用 %APPDATA% 生产库，不再落仓内 dev 库（防止无 MEMORY_DB 的接入面悄悄写错库）
@@ -149,6 +150,7 @@ const ctx = { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, runTaskTx, isCrede
 registerMemoryTools(server, ctx);
 registerObsidianTools(server, ctx);
 registerTaskTools(server, ctx);
+registerGuideTool(server); // ★ 批次F1（P2-2）：工具详规按需查询（description 已一行化，对标 Orca 分片加载）
 
 /* ── P0 执行工具面注册（方案 A：单 MCP 平面 + 模块分离）────────────
    只有 3 个工具 P0 上线；均自动被上面的 addTool 覆写包裹（try/catch + 风险前缀）。

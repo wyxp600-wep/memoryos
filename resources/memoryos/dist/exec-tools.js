@@ -32,6 +32,7 @@ export const TOOL_RISK = {
     memory_feedback: { risk: "L1", gate: true },
     memory_cite: { risk: "L1", gate: true },
     memory_credential: { risk: "L4", gate: true },   // ★ 2026-09-22 补缺：凭据签发/撤销/查询 = 特权操作
+    tool_guide: { risk: "L0", gate: false },         // ★ 批次F1（P2-2）：纯只读详规查询
     // — Obsidian 域 —
     obsidian_import: { risk: "L1", gate: true },
     obsidian_export: { risk: "L1", gate: true },

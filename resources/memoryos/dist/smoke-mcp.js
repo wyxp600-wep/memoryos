@@ -89,6 +89,13 @@ try {
         missing.length === 0, // ★ 超集断言：不锁死总数——执行面工具上线是增量，精确计数会让套件一上线就变红（F16 病根）
         `count=${tools.length}${missing.length ? " missing=" + missing.join(",") : ""}`,
     );
+    // ── 批次F1（P2-2）：tool_guide 按需详规（description 已一行化）——知名返回详规 / 未知名返回清单 ──
+    const gOK = (await send("tools/call", { name: "tool_guide", arguments: { name: "task_done" } })).result?.content?.[0]?.text ?? "";
+    check("F1.tool_guide 知名返回详规", gOK.includes("【task_done 详规】") && gOK.includes("状态头 → done"), JSON.stringify(gOK.slice(0, 80)));
+    const gMiss = (await send("tools/call", { name: "tool_guide", arguments: { name: "no_such_tool" } })).result?.content?.[0]?.text ?? "";
+    check("F1.tool_guide 未知名返回清单", gMiss.includes("未知工具名") && gMiss.includes("memory_write") && gMiss.includes("task_next"), JSON.stringify(gMiss.slice(0, 80)));
+    const gOneLine = tools.find((t) => t.name === "task_done")?.description ?? "";
+    check("F1.工具 description 已一行化（不含详规全文）", gOneLine.length < 120 && gOneLine.includes("tool_guide"), JSON.stringify(gOneLine.slice(0, 80)));
     const w = (await send("tools/call", {
         name: "memory_write",
         arguments: {

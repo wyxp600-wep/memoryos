@@ -275,7 +275,7 @@ export function registerTaskTools(server, ctx) {
     };
     server.addTool({
         name: "task_gate",
-        description: "多 Agent 协同·确定性验收门：查看任务的 [gate:预设] 声明与最近一次验收结果。预设白名单（lint-sql/lint-catch/smoke-mcp/smoke-task/smoke-p26/snapshot）——task_done 会先跑该验收，通过才 done，失败 fail-closed 回退 pending（E-0 后无 review 态）。",
+        description: "查看任务 [gate:预设] 验收声明与结果（task_done 先跑验收，失败 fail-closed 回 pending）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要查看验收门的任务记忆 id"),
             session_id: z.string().optional(),
@@ -299,7 +299,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_assign",
-        description: "多 Agent 协同：把任务交给指定 Agent（写 type='task' 记忆，状态 open）。depends_on 声明依赖（逗号分隔），依赖全 done 后本任务才可做；对方用 task_claim 领取、task_done 完成、task_next 查可做集。默认同步建任务地图卡（create_card=true），卡片流转回写 memories 状态头。",
+        description: "把任务交给指定 Agent（depends_on 拓扑；对方 claim 领取/done 完成/next 查可做）。详规:tool_guide。",
         parameters: z.object({
             content: z.string().describe("任务描述（不含状态头，工具自动加）"),
             assignee: z.string().describe("接收方 agent 名（如 codex/trae/zcode/claude）"),
@@ -377,7 +377,7 @@ export function registerTaskTools(server, ctx) {
      */
     server.addTool({
         name: "task_delegate",
-        description: "A2A 委派层：把任务对等委派给另一个 agent（A2A agent-to-agent）。内部建 task_assign 任务并打 [a2a] 协议标记；若目标 agent 无有效凭据（A1 认证层）则拒绝委派（fail-closed）。可选声明验收门 gate（P3，task_done 时确定性验收）。",
+        description: "A2A 对等委派（目标无有效凭据 fail-closed 拒绝；可选声明验收门）。",
         parameters: z.object({
             content: z.string().describe("委派的任务描述"),
             to: z.string().describe("目标 agent（如 codex/claude/trae/workbuddy/zcode）"),
@@ -444,7 +444,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_claim",
-        description: "多 Agent 协同：领取『分配给我/未认领』的 pending 任务，状态头 pending→in_progress；不传 memory_id 则列出可领列表。as：缺省=本人（仅领指派给自己或 assignee=? 的）；as=<他人名> 仅限恰指派该名；as='any'=托管认领，跳过接收方校验可领任何 pending，改写归属须携 scope>=write 凭据。租约默认 10 分钟，lease_minutes 可延长。",
+        description: "领取 pending 任务（租约 10 分钟可延长；as=any 托管；takeover 接管须凭据）。详规:tool_guide。",
         parameters: z.object({
             as: z.string().optional().describe("以谁的身份领取（缺省=当前 agent）；传 'any' 托管认领（跳过接收方校验）——语义见工具描述"),
             project: z.string().default("global").describe("任务 scope"),
@@ -657,7 +657,7 @@ export function registerTaskTools(server, ctx) {
      */
     server.addTool({
         name: "task_heartbeat",
-        description: "多 Agent 协同·租约（C-2）：对进行中任务的关联卡片刷新租约窗口（默认 10 分钟，C-3；lease_minutes 可分级 10..120），防止长跑任务被守护回收。调用方应为当前认领者（身份可传 as，仅限本人任务）。无关联卡片（纯任务）时仅记事件。",
+        description: "刷新在办任务租约（默认 10 分钟，防守护回收；无关联卡时仅记事件）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             as: z.string().optional().describe("以谁的身份续租（缺省=当前 agent）；须与任务认领者一致"),
@@ -703,7 +703,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_release",
-        description: "多 Agent 协同·租约（C-2）：释放认领 —— 任务状态头 in_progress → pending（重新可被认领），关联卡片 running → ready 并清租约锁。仅当前认领者（或 human 兜底）可释放。",
+        description: "释放认领（in_progress→pending 清锁；仅当前认领者或 human 兜底）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             reason: z.string().optional().describe("释放原因（留痕 card_events/事件流）"),
@@ -758,7 +758,7 @@ export function registerTaskTools(server, ctx) {
         },
     });server.addTool({
         name: "task_block",
-        description: "多 Agent 协同·租约（C-2）：把任务标记为受阻（状态头 → blocked，原因留痕）；关联卡片同步 blocked。受阻任务不进可做集；恢复走 task_reopen 或重新认领。",
+        description: "把任务标记受阻（blocked 不进可做集；原因必须留痕）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             reason: z.string().describe("受阻原因（必填，留痕）"),
@@ -799,7 +799,7 @@ export function registerTaskTools(server, ctx) {
         },
     });server.addTool({
         name: "task_reopen",
-        description: "多 Agent 协同·租约（C-2）：重开已终态任务（done/failed/cancelled → in_progress，重新指派）；关联卡片 done → ready。E-0 裁决口径：reopened 为派生态（展示层），持久态落回白名单。",
+        description: "重开终态任务（done/failed/cancelled→in_progress 重新指派）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("任务记忆 id"),
             assignee: z.string().optional().describe("重开后指派给谁（缺省=原认领者）"),
@@ -856,7 +856,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_done",
-        description: "多 Agent 协同：把已认领/待办任务标记为完成（状态头 → done），并把结论追加进任务正文。调用方应为当前认领者或任务接收方。",
+        description: "完成任务（→done 结论回写；有 [gate] 先验收，失败回 pending）。详规:tool_guide。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要完成的记忆 id"),
             conclusion: z.string().describe("完成结论/结果摘要（追加进任务正文）"),
@@ -990,7 +990,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_verify",
-        description: "多 Agent 协同·第三方验收关闭：任务实际已完成但任务头未闭环时，验收方直接把状态头置 done——不改 assignee（归属保留）、不发租约、不写 claim 事件，只写 task_verify 事件（verified_by 留痕），消除「为收口伪造 task_claim」的审计污染。不走 [gate] 门控，验收依据在 reason 留痕。",
+        description: "第三方验收关闭（只置 done+verified_by 留痕；不改归属、不发租约）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要验收关闭的任务记忆 id"),
             reason: z.string().describe("验收依据（必填，留痕）：对应提交/冒烟结果/证据位置"),
@@ -1044,7 +1044,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_supersede",
-        description: "多 Agent 协同·去重归档：把一条重复任务标记为「被另一条取代」——状态置 merged + superseded_by=主任务 id。用于跨链路重复（如 dispatcher 卡片派生 与 task_assign 直写 双套）；被并的任务移出可做集、不污染正文、可经 superseded_by 追溯主任务。",
+        description: "重复任务归档（merged+superseded_by 指向主任务，移出可做集）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要归档的重复任务记忆 id（loser）"),
             superseded_by: z.number().int().min(1).describe("保留的主任务记忆 id（winner）"),
@@ -1088,7 +1088,7 @@ export function registerTaskTools(server, ctx) {
     });
     server.addTool({
         name: "task_next",
-        description: "多 Agent 协同·依赖拓扑：给当前 agent 算出『现在可做的开放任务』（依赖拓扑的入度=0 集）。open 且所有 depends_on 依赖均已 done 的任务才可做；被依赖未完成的任务标记 blocked 并说明卡在哪个依赖。同时列出本人名下已认领/在做的任务。",
+        description: "算当前可做任务（依赖拓扑入度 0）+ 本人在办 + 待决策段。",
         parameters: z.object({
             project: z.string().default("global").describe("任务 scope"),
             as: z.string().optional().describe("以谁的身份查（缺省=当前 agent）；传 '' 或 'any' 查全部可做集"),

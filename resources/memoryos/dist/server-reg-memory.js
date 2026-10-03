@@ -91,7 +91,7 @@ export function registerMemoryTools(server, ctx) {
     }
     server.addTool({
         name: "memory_write",
-        description: "写入一条共享记忆（自动做向量嵌入与去重/冲突预检）。适用时机：>30min 修复 / 技术决策 / 隐藏约定 / 第三方坑。",
+        description: "写入一条共享记忆（自动嵌入+去重/冲突预检）。>30min 修复/技术决策/踩坑后沉淀。详规:tool_guide。",
         parameters: z.object({
             content: z.string().describe("记忆正文（结构化，含结论 + 依据）"),
             type: z
@@ -284,7 +284,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_search",
-        description: "语义+关键词混合检索共享记忆（RRF 融合，scope 隔离）。适合新任务前 / 改核心模块前 / 遇报错时。跨表述召回：写'时间戳容差5min'，查'签名校验失败'也能命中。",
+        description: "语义+词法混合检索（RRF，scope 隔离）。新任务前/改核心模块前/遇报错时。详规:tool_guide。",
         parameters: z.object({
             query: z.string().describe("检索描述/关键词"),
             project: z.string().default("global").describe("项目 scope"),
@@ -542,7 +542,7 @@ export function registerMemoryTools(server, ctx) {
     }
     server.addTool({
         name: "memory_ask",
-        description: "记忆库问答（RGA：Retrieve→Generate）。检索命中记忆后，让 LLM 仅基于这些记忆生成答案，每条结论标注引用来源 [#记忆ID]，禁止编造记忆之外的内容。适合『直接要答案』而非『要原始记忆列表』的场景：如问本库沉淀过什么结论/踩坑/约定。需要原始命中列表仍用 memory_search；本工具为只读，不写库。",
+        description: "记忆库问答（RGA）：仅基于命中记忆作答并标注 [#记忆ID]，禁止编造；只读不写库。",
         parameters: z.object({
             query: z.string().describe("要回答的问题（用作检索词，建议直接写问题）"),
             project: z.string().default("global").describe("项目 scope，默认 global（同时搜 global + 知识库）"),
@@ -616,7 +616,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_projects",
-        description: "列出记忆库所有可用 project 及各自记忆条数。memory_search 的 project 参数取值以此为准；scope 不确定时先看一眼再决定搜哪个。避免因不知道存在某 project 而漏检。",
+        description: "列出全部 project 及条数（memory_search 的 project 取值以此为准；防漏检）。",
         parameters: z.object({}),
         async execute() {
             const rows = db
@@ -627,7 +627,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_context",
-        description: "会话开始/执行关键任务前调用一次：一键拉取当前项目的高价值记忆摘要注入上下文，省去多次 memory_search。返回：①当前 scope 的 Top-N 高价值记忆（按引用/曝光/命中排序）②可用 project 清单 ③当前 agent 身份。适合『开工前先注入相关记忆』的场景——避免只写不搜（R1 闭环）。",
+        description: "开工前调用一次：注入当前项目 Top-N 高价值记忆（防只写不搜）。",
         parameters: z.object({
             project: z.string().default("global").describe("项目 scope；只注入该 scope 高价值记忆（含 global 通用）"),
             limit: z.number().int().min(1).max(20).default(5).describe("注入的高价值记忆条数（Top 5 默认）"),
@@ -699,7 +699,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_read",
-        description: "按 id 读取单条记忆的**完整正文**（不受 memory_search 的 220 字截断限制）。适合：search 命中的片段想展开看全文、需要精确引用记忆细节时。返回全文 + 类型/来源/置信/创建时间。",
+        description: "按 id 读单条完整正文（不受 memory_search 220 字截断）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要读取的记忆 id"),
             session_id: z.string().optional().describe("当前会话/任务标识（价值度量）"),
@@ -731,7 +731,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_feedback",
-        description: "对一条记忆标记『已过时/有误』——纠错闭环。Agent 发现记忆内容已过期或不正确时调用，把该记忆 soft-reject（status=rejected，不再进入检索；不物理删除、可追溯审计）。区别于 memory_cite（正向采用）与 memory_write（新增沉淀），本工具是负向修正通道。",
+        description: "把记忆标记为过时/有误（soft-reject 纠错闭环；不物理删除、可追溯）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("要标记为过时/错误的记忆 id"),
             reason: z.string().describe("修正原因：为什么这条过期/错误（写入审计留痕）"),
@@ -759,7 +759,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_cite",
-        description: "声明实际采用了某条记忆（价值漏斗最后一环，R4）。Agent 在落地方案/修改代码引用到记忆内容时调用；同一任务结束后通常触发一次 write 可被记为 inferred-cited，此工具提供显式的 raw-cited。",
+        description: "声明实际采用了某条记忆（价值漏斗 raw-cited 通道）。",
         parameters: z.object({
             memory_id: z.number().int().min(1).describe("被采用记忆的 id"),
             session_id: z.string().optional().describe("当前会话/任务标识"),
@@ -785,7 +785,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_credential",
-        description: "A1 身份认证层：签发/吊销/校验 agent 的短生命周期凭据（最小权限 scope=read/write/admin，默认 1h 到期，可撤销）。action=issue 签发新凭据；action=revoke 撤销指定凭据（凭据值或 agent）；action=verify 校验某 agent 当前是否持有有效凭据。凭据为随机 hex，审计留痕（memory_events）。",
+        description: "A1 凭据：签发/吊销/校验（最小权限 scope，默认 1h 到期，审计留痕）。",
         parameters: z.object({
             action: z.enum(["issue", "revoke", "verify"]).describe("操作类型"),
             agent: z.string().optional().describe("目标 agent（revoke/verify 用；缺省=当前 AGENT）"),
@@ -844,7 +844,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_report",
-        description: "周报五查询（价值度量）。funnel=漏斗(w/r/cited/inferred，含 R4 下界口径)；trend=每日 w/r/c 三线；top=高价值 Top；zombies=待归档僵尸；cross_tool=跨工具复用。适用于周报/复盘。",
+        description: "周报五查询：funnel/trend/top/zombies/cross_tool（价值度量）。",
         parameters: z.object({
             report: z
                 .enum(REPORT_NAMES)
@@ -898,7 +898,7 @@ export function registerMemoryTools(server, ctx) {
     });
     server.addTool({
         name: "memory_health",
-        description: "查看记忆库『使用侧健康度』（效果监控）：近 N 天 search/write/returned/cited 次数、检索触发率(search/write)、空召回率、写读比，以及各 agent 的使用漏斗。用于诊断『只写不搜』（触发率→0/搜索趋零）和各工具是否真正在用记忆。",
+        description: "使用侧健康度：search/write/returned/cited、触发率、空召回率（诊断只写不搜）。",
         parameters: z.object({
             days: z.number().int().min(1).max(365).default(30).describe("统计窗口（天，默认近30天）"),
         }),
