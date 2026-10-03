@@ -24,6 +24,11 @@
  *   W21 经设计会话 CDP 触发模拟拾取 → /api/design/picks 落 HTML/selector/样式 + 裁剪截图 dataURL
  *   W22 前端 🎯 抽屉渲染拾取卡片（图 + 徽标会话中）→ 附到输入框内联进 agent prompt
  *   W23 close → 200 + status 回落 + 设计 Chrome 端口失联（进程树已杀）+ 前端徽标回落
+ *   W24 P4 看板简化：地图卡片悬停快捷条（🚀 交给 Agent，aria-hidden 不入 Tab 序）
+ *   W25 P4 详情「工作台」动作条（交给 Agent / 终端 / 拾取 + 一排改状态按钮）
+ *   W26 P4 一键改状态真执行（✅ 完成 → done，再 🏃 恢复 running，不留脏状态）
+ *   W27 P4 列式看板视图恢复（拖卡片改状态的入口；原 renderCards 拖拽段因入口被删而不可达）
+ *   W28 P4 卡片一键唤起终端且目录自动切到 .worktrees/<本卡隔离区>
  *   CDP 0 未捕获异常（与 a11y 门禁同口径）
  *
  * 隔离要点：本机 shell 注入 MEMORYOS_DATA_DIR=生产目录 → 必须在启动时覆盖到临时目录，
@@ -262,9 +267,12 @@ try {
     rec('W13b 关闭抽屉', termClosed === true);
 
     /* ══ P2 · W14~W17：GitHub 区块（dashboard-reg-github.js + wbGh）══ */
-    // W14：详情弹窗仍在工作区 Tab → GitHub 区块已随 renderWorkspace 追加
+    // W14：★ P4 起 GitHub 独立成 Tab（原挤在工作区 Tab 尾部、与 diff/批注同屏过载）→ 先切 Tab 再断言
+    const ghTabClick = await ev(`(function(){var t=document.querySelector('[data-ctab="github"]');if(!t)return 'no-tab';t.click();return 'ok'})()`);
+    await sleep(2200); // 串行 5 个请求渲染完
+    rec('W14a 「🌐 GitHub」独立 Tab 存在且可点', ghTabClick === 'ok', String(ghTabClick));
     const ghBox = await ev(`(function(){var g=document.getElementById('wbGh');return g?'ok':'no'})()`);
-    rec('W14 工作区 Tab 渲染 GitHub 区块', ghBox === 'ok', String(ghBox));
+    rec('W14 工作区切到 GitHub Tab 后渲染 GitHub 区块', ghBox === 'ok', String(ghBox));
     const ghFields = await ev(`(function(){return !!(document.getElementById('wbGhRepo')&&document.getElementById('wbGhSave'))})()`);
     rec('W14b 配置字段（owner/repo + 保存）存在', ghFields === true);
 
@@ -423,6 +431,95 @@ try {
     await sleep(400);
     rec('W23f 关闭 🎯 抽屉（会话已先前关闭，零残留）', await ev(`!document.querySelector('#designDrawer.show')`) === true);
 
+    /* ══ P4 · W24~W28：看板交互简化（一个卡片 = 一个工作台；2026-10-03 CLAIM §5）══ */
+    // W24：地图卡片悬停快捷条（免右键的一次点击动作）
+    await ev(`(function(){var n=document.querySelector('.nav-item[data-route="tasks"]');if(n)n.click();return 1})()`);
+    await sleep(1800);
+    const quick = await ev(`(function(){
+      var q=document.querySelectorAll('#taskMapNodes .task-map-quick');
+      var b=document.querySelectorAll('#taskMapNodes .task-map-qbtn[data-q="agent"]');
+      var h=q.length?q[0].getAttribute('aria-hidden'):null;
+      return q.length+'|'+b.length+'|'+h;
+    })()`);
+    const qp = String(quick).split('|');
+    rec('W24 地图卡片悬停快捷条渲染（🚀交给 Agent，aria-hidden 不入 Tab 序）', Number(qp[0]) >= 1 && Number(qp[1]) >= 1 && qp[2] === 'true', String(quick));
+
+    // W25：卡片详情「工作台」动作条（交给 Agent / 终端 / 拾取 + 按状态机渲染的改状态按钮）
+    const cwBtns = await ev(`(function(){
+      var ids=['cardAgentBtn','cardTermBtn','cardDesignBtn','cardClaimBtn','cardCloseBtn'];
+      var hit=ids.filter(function(i){return !!document.getElementById(i)}).length;
+      var st=[].map.call(document.querySelectorAll('#modalBody .cw-status-btn[data-st]'),function(b){return b.dataset.st}).join(',');
+      return hit+'|'+st;
+    })()`);
+    const cwp = String(cwBtns).split('|');
+    // 种子卡 status=running → 状态机只允许 review/failed/blocked（前端必须只列这 3 个，否则点了会被 409 打回）
+    rec('W25 详情动作条：交给 Agent / 终端 / 拾取 + 状态机可达按钮', Number(cwp[0]) === 5 && cwp[1] === 'review,failed,blocked', String(cwBtns));
+
+    // W26：一键改状态走合法链路 running → review（真调 status 接口，非仅 toast）
+    const w26Click = await ev(`(function(){
+      var b=document.querySelector('#modalBody .cw-status-btn[data-st="review"]');
+      if(!b)return 'no-btn';
+      if(b.disabled)return 'disabled';
+      b.click();
+      return 'clicked';
+    })()`);
+    await sleep(1800);
+    const w26Toast = await ev(`(document.getElementById('toast')||{}).textContent||''`);
+    let stj = await (await api('GET', `/api/cards/${cardId}`)).json();
+    rec('W26 点 👁 待验收 → 卡片状态真变 review', stj.card?.status === 'review', `click=${w26Click} status=${stj.card?.status} toast=${w26Toast}`);
+
+    // W26b：状态变了 → 按钮随之重渲染成 review 的可达目标（done/failed），再点 ✅ 完成 走完 review → done
+    await sleep(600);
+    const w26bTargets = await ev(`[].map.call(document.querySelectorAll('#modalBody .cw-status-btn[data-st]'),function(b){return b.dataset.st}).join(',')`);
+    const w26bClick = await ev(`(function(){
+      var b=document.querySelector('#modalBody .cw-status-btn[data-st="done"]');
+      if(!b)return 'no-btn';
+      b.click();
+      return 'clicked';
+    })()`);
+    await sleep(1800);
+    stj = await (await api('GET', `/api/cards/${cardId}`)).json();
+    rec('W26b 状态机流转：按钮随状态重渲染 → review 可达 done', w26bTargets === 'done,failed' && stj.card?.status === 'done', `targets=${w26bTargets} click=${w26bClick} status=${stj.card?.status}`);
+
+    // W27：列式看板视图恢复（拖卡片改状态的入口；原 tabCards 被删导致 renderCards 拖拽段成死代码）
+    await ev(`(function(){var b=document.getElementById('cardCloseBtn');if(b)b.click();return 1})()`);
+    await sleep(600);
+    // 种子卡刚被 W26b 流转到 done，而「已完成」默认隐藏（地图与列式看板共用 _taskMapState.showDone）→ 先揭开，否则 done 列是空的
+    await ev(`(function(){var b=document.getElementById('taskMapDoneViewBtn');if(b)b.click();return 1})()`);
+    await sleep(1600);
+    await ev(`(function(){var t=document.getElementById('tabCards');if(!t)return 'no-tab';t.click();return 'ok'})()`);
+    await sleep(2200);
+    const cardsView = await ev(`(function(){
+      var b=document.getElementById('cardsBoard');
+      if(!b)return 'no-board';
+      var shown=getComputedStyle(b).display!=='none';
+      var cols=b.querySelectorAll('[data-col]').length;
+      var card=b.querySelector('[data-card-id="${cardId}"]');
+      return (shown?1:0)+'|'+cols+'|'+(card?1:0);
+    })()`);
+    const cvp = String(cardsView).split('|');
+    rec('W27 切「📋 列式看板」：列渲染 + 种子卡在列里（拖拽改状态入口可达）', cvp[0] === '1' && Number(cvp[1]) >= 3 && cvp[2] === '1', String(cardsView));
+
+    // W28：卡片详情一键唤起终端，工作目录自动切到本卡的隔离工作区
+    const rWt3 = await api('POST', '/api/worktrees', { name: 'wb-walk-3', cardId });
+    rec('W28a 为种子卡重建隔离工作区（验证终端自动切目录）', rWt3.ok === true, 'HTTP ' + rWt3.status);
+    await ev(`(function(){var el=document.querySelector('#cardsBoard [data-card-id="${cardId}"]');if(!el)return 'no-card';el.click();return 'ok'})()`);
+    await sleep(2500);
+    const opened2 = await ev(`!!document.querySelector('#detailModal.show')`);
+    rec('W28b 列式看板点卡片 → 详情打开', opened2 === true);
+    await ev(`(function(){var b=document.getElementById('cardTermBtn');if(b)b.click();return 1})()`);
+    await sleep(1600);
+    const termCwd = await ev(`(function(){
+      var d=document.querySelector('#termDrawer');
+      if(!d||!d.classList.contains('show'))return 'no-drawer';
+      var s=d.querySelector('.term-pane[data-pane="1"] .term-cwd');
+      return s?s.value:'no-select';
+    })()`);
+    rec('W28c 点 ⌨ 终端 → 抽屉打开且目录自动选中 .worktrees/wb-walk-3', termCwd === '.worktrees/wb-walk-3', String(termCwd));
+    await ev(`(function(){var b=document.getElementById('termClose');if(b)b.click();return 1})()`);
+    await sleep(400);
+    await api('DELETE', '/api/worktrees/wb-walk-3?force=1');
+
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
 catch (e) {
@@ -438,8 +535,10 @@ finally {
     // 清理临时 worktree/分支（git 直清，确定性兜底；rmdir 非递归：只删空目录，绝不误删他人 worktree）
     try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-1')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
     try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-2')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
+    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-3')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过（W28 重建的隔离区，正常已被 DELETE 清掉） */ }
     try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-1'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
     try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-2'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
+    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-3'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
     try { fs.rmdirSync(path.join(REPO, '.worktrees')); } catch { /* 非空或不存在则保留 */ }
     try { fs.rmSync(WS, { recursive: true, force: true }); } catch { /* Windows 句柄 */ }
     try { fs.rmSync(DIR, { recursive: true, force: true }); } catch { /* ignore */ }

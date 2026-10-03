@@ -2773,15 +2773,17 @@
         else loadTasks();
       };
       // ★ 2026-09-13：tabCards/tabLegacy 已从 DOM 移除（功能并入任务地图），仅保留地图入口
+      // ★ P4 简化批（2026-10-03）：恢复 tabCards「列式看板」入口 —— 列式视图的「拖卡片改状态」是步骤最少的状态流转（1 次拖拽），
+      //   且 renderCards/拖拽逻辑本就完整可用，此前只是入口按钮被删（_taskViewMode 恒为 'map' 导致 4208 行拖拽段成死代码）。
       if (tabMap) tabMap.onclick = () => showTaskView('map');
+      if (tabCards) tabCards.onclick = () => showTaskView('cards');
       if (tabLegacy) tabLegacy.onclick = () => showTaskView('legacy');
-      // ★ 2026-09-13：只留任务地图模块 —— 旧 Tab（卡片看板/任务视图）隐藏，功能并入地图工具栏/右键菜单
-      if (tabCards) tabCards.style.display = 'none';
+      // ★ 2026-09-13：旧任务视图（七态 #tasksBoard）仍隐藏 —— 与卡片看板重复展示，不属本次范围
       if (tabLegacy) tabLegacy.style.display = 'none';
       if (ccb) ccb.onclick = createCard;
       if (dpb) dpb.onclick = runDispatch;
       if (ilb) ilb.onclick = importLegacy;
-      showTaskView('map'); // ★ 2026-09-13：任务地图为唯一模块入口
+      showTaskView('map'); // ★ 2026-09-13：任务地图为默认模块入口
     }
   }
   /* ===== 系统计划（受限模式：用户只能「应用」系统下发的计划，不能自行创建/导入）===== */
@@ -3728,6 +3730,10 @@
 
   bindNav(); bindSearch(); bindModal();
   initSettings();
+  /* ★ P4 简化批：终端 / Design 抽屉的注册句柄 —— 必须声明在 initTerm()/initDesign() 调用（下方 4012/4013 行）之前，
+     否则模块顺序执行到调用点时会撞上暂时性死区（TDZ）→ ReferenceError 白屏。 */
+  let _termOpenWithCwd = null;   // 由 initTerm 注册：打开准终端并选中指定 cwd
+  let _designOpenDrawer = null;  // 由 initDesign 注册：打开设计拾取抽屉
   /* ===== ★ Orca 融合 P2（2026-10-03 CLAIM §5）：准终端抽屉（exec_run 流式版 SSE，无 pty）=====
    * 与后端 dashboard-reg-term.js 配套：argv 数组 + 白名单 + cwd 白名单 + killTree（安全口径同 MCP exec_run）。
    * 分屏 = 双 pane 并排（窄屏 CSS 自动纵向堆叠）；每 pane 独立 cwd/历史/停止。 */
@@ -3824,6 +3830,16 @@
       el.querySelector('.term-clear').onclick = () => { el.querySelector('.term-out').textContent = ''; };
     };
     // cwd 下拉：主工作区 + 全部 worktree（相对工作区路径，后端 resolveInside 校验）
+    let _wantCwd = null; // ★ P4：卡片详情唤起时待选中的目录（下拉是异步填的，填完再补选一次）
+    const applyCwd = (val) => {
+      if (!val) return;
+      [0, 1].forEach((i) => {
+        const sel = paneEl(i)?.querySelector('.term-cwd');
+        if (!sel || !sel.options.length) return;
+        const hit = Array.from(sel.options).some((o) => o.value === val);
+        if (hit) sel.value = val;
+      });
+    };
     const loadCwd = () => fetch('/api/worktrees').then((r) => r.json()).then((j) => {
       const items = (j && j.items) || [];
       [0, 1].forEach((i) => {
@@ -3838,16 +3854,40 @@
         });
         if (!sel.options.length) { const o = document.createElement('option'); o.value = '.'; o.textContent = '工作区根'; sel.appendChild(o); }
       });
+      applyCwd(_wantCwd); // ★ P4：下拉填充完成后补选（覆盖 open 早于 loadCwd 完成的时序）
     }).catch(() => {});
     const stopAll = () => [0, 1].forEach((i) => { if (T.es[i]) stop(i, true); });
-    const open = () => {
+    const open = (cwdVal) => {
       drawer.classList.add('show');
-      if (!T.inited) { T.inited = true; initPane(0); initPane(1); loadCwd(); }
+      const want = typeof cwdVal === 'string' && cwdVal ? cwdVal : null;
+      if (!T.inited) { T.inited = true; initPane(0); initPane(1); }
+      // ★ P4：每次打开都重拉一次 cwd 下拉 —— worktree 列表会变（卡片一键唤起时正是刚建完隔离区的时刻），
+      //   复用 W9 那次的陈旧快照会导致新 worktree 不在选项里、选不中（走查 W28c 实测踩中）。
+      _wantCwd = want;
+      loadCwd();
+      applyCwd(_wantCwd); // 已有 options → 立刻选中；loadCwd 回调里再补选一次，覆盖「列表刚刷新」的时序
       paneEl(0).querySelector('.term-input').focus();
     };
     const close = () => { stopAll(); drawer.classList.remove('show'); };
     const tb = $('#termBtn');
-    if (tb) tb.onclick = open;
+    if (tb) tb.onclick = () => open(); // ★ P4：不能直接绑 open —— onclick 会把 Event 当 cwdVal 传进来
+    /* ★ P4：卡片详情「⌨ 终端」一键唤起，工作目录自动切到该卡的隔离工作区（没有则留主工作区） */
+    _termOpenWithCwd = async (card) => {
+      let cwd = '.';
+      try {
+        const cm = typeof card.meta === 'string' ? JSON.parse(card.meta || '{}') : (card.meta && typeof card.meta === 'object' ? card.meta : {});
+        const want = cm.worktree || (card.workspace_kind === 'worktree' && card.workspace ? String(card.workspace).split(/[\\/]/).pop() : '');
+        if (want) cwd = `.worktrees/${want}`;
+        else {
+          // meta 没记 → 按 cardId 反查（worktree 列表带 cardId，比 meta 更准）
+          const r = await fetch('/api/worktrees').then((x) => x.json()).catch(() => null);
+          const mine = r && Array.isArray(r.items) ? r.items.find((w) => w.cardId === card.id && !w.main) : null;
+          if (mine) cwd = `.worktrees/${mine.name}`;
+        }
+      } catch { /* 解析失败 → 留主工作区 */ }
+      open(cwd);
+      toast(cwd === '.' ? '终端已打开（主工作区）' : `终端已打开 · 目录 ${cwd}`);
+    };
     $('#termClose').onclick = close;
     drawer.onclick = (e) => { if (e.target === drawer) close(); };
     $('#termSplitBtn').onclick = () => {
@@ -3936,8 +3976,9 @@
     const stopPoll = () => { if (D.timer) { clearInterval(D.timer); D.timer = null; } };
     const open = () => { drawer.classList.add('show'); startPoll(); $('#designUrl')?.focus(); };
     const close = () => { stopPoll(); drawer.classList.remove('show'); }; // 关抽屉不停会话（Chrome 窗口继续可用；「关闭会话」才杀进程）
+    _designOpenDrawer = open; // ★ P4：卡片详情「🎯 拾取」一键唤起（与顶栏按钮同一入口）
     const db = $('#designBtn');
-    if (db) db.onclick = open;
+    if (db) db.onclick = () => open();
     $('#designClose').onclick = close;
     drawer.onclick = (e) => { if (e.target === drawer) close(); };
     $('#designOpenBtn').onclick = async () => {
@@ -4533,6 +4574,7 @@
       const position = _taskMapState.positions.get(Number(node.id));
       if (!position) return;
       const isAux = String(node.kind) === 'aux' || String(node.kind).startsWith('aux_');
+      const isReal = /^\d+$/.test(String(node.id)); // ★ 非数字 id（mem-N 动态子卡）不是真实卡片
       // 辅助卡：右上标签显示挂载类型（非 完成/未完成），边框色用类型色
       // ★ 2026-09-18：running 且有认领者 → 标签直显「已领取·智能体名」（实时：SSE claim 事件 → 800ms 防抖重画）
       const status = isAux
@@ -4566,7 +4608,12 @@
           <span>${esc(isAux ? '' : (node.assignee || '未分配'))}</span>
           <span>${esc(isAux ? '' : (metaTail || node.kind || ''))}</span>
         </span>
-        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">+</span>`;
+        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">+</span>
+        ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
+          <span class="task-map-qbtn" data-q="agent" title="交给 Agent 干（自动填好任务说明）">🚀</span>
+          <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
+          <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>
+        </span>` : ''}`;
       if (_taskMapFilter) {
         // 辅助卡过滤跟随宿主卡（自身无状态）
         const hostId = hostOf.get(node.id);
@@ -4576,9 +4623,12 @@
         if (bkt !== _taskMapFilter) button.style.display = 'none';
       }
       // ★ 2026-09-14：非数字 id 节点（内存/自动匹配的 mem-N 子卡）不是真实卡片，点击/拖拽/右键均跳过，避免 openCardDetail(NaN) 与位置误存
-      const realCard = /^\d+$/.test(String(node.id));
-      button.onclick = () => {
+      const realCard = isReal;
+      button.onclick = (ev) => {
         if (_taskMapState.suppressClick) return;
+        // ★ P4：悬停快捷条（🚀 交给 Agent / ✅ 完成 / 🔧 工作区）优先于「打开详情」
+        const qb = ev.target && ev.target.closest ? ev.target.closest('.task-map-qbtn') : null;
+        if (qb) { ev.stopPropagation(); void quickCardAction(qb.dataset.q, Number(node.id)); return; }
         if (!realCard) { toast(`关联子卡「${esc(node.title)}」为动态匹配，点击任务主卡操作`); return; }
         openCardDetail(Number(node.id));
       };
@@ -4586,6 +4636,8 @@
       button.addEventListener('pointerdown', ev => {
         if (!realCard) { ev.stopPropagation(); return; } // 非真实卡不拖拽不连线
         if (ev.button !== 0) return;
+        // ★ P4：快捷按钮按下不进拖拽（否则微小位移会被当成移动节点、suppressClick 吞掉点击）
+        if (ev.target && ev.target.closest && ev.target.closest('.task-map-qbtn')) { ev.stopPropagation(); return; }
         if (ev.target.classList.contains('task-map-node-link')) { ev.preventDefault(); ev.stopPropagation(); startLinkDraft(Number(node.id)); return; }
         ev.stopPropagation();
         dragTaskMapNode(Number(node.id), ev, viewKey);
@@ -4753,6 +4805,54 @@
     window.addEventListener('pointerup', up);
   }
 
+  /* —— ★ P4 简化批（2026-10-03 CLAIM §5）：卡片免右键直达动作 ——
+     痛点：原改状态只能右键（小白不可发现）、交给 Agent 无入口、终端/设计与卡片无关。
+     落点：① 地图卡片悬停快捷条（一次点击）② 卡片详情底部动作条（同一批动作的键盘可达等价路径，满足 a11y）
+     注：_termOpenWithCwd / _designOpenDrawer 的声明在 initTerm/initDesign 调用之前（见 3733 行附近），此处只使用。 */
+
+  /** 把卡片交给 Agent：跳 Agent 页并预填 prompt（不自动发送，留给用户过目 —— 防误发） */
+  function sendCardToAgent(card) {
+    const body = String(card.body || '').trim();
+    const prompt = [`请处理任务看板卡片 #${card.id}：${card.title}`,
+      body ? `\n背景：\n${body}` : '',
+      '\n要求：先认领该卡，做完把结论回填到本卡（评论或状态流转），不要新开重复任务。'].join('\n');
+    location.hash = 'agent';
+    let tries = 0;
+    const fill = () => {
+      const input = $('#agentInput');
+      if (!input) { if (++tries < 20) setTimeout(fill, 300); else toast('Agent 输入框未就绪，请手动到 Agent 页'); return; }
+      input.value = prompt;
+      input.focus();
+      toast('已填入 Agent 输入框 —— 检查后回车发送');
+    };
+    setTimeout(fill, 350);
+  }
+
+  /** 一键改状态（CAS：带 expected_from，他人抢先改过 → 409 提示刷新，不静默覆盖） */
+  async function setCardStatus(card, to) {
+    const res = await fetch(`/api/cards/${card.id}/status`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: to, expected_from: card.status, as: 'human:dashboard' }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(j.error || '改状态失败（可能已被其他操作改写，请刷新）'); return false; }
+    toast(`#${card.id} → ${j.to || to}`);
+    return true;
+  }
+
+  /** 悬停快捷条动作：agent=交给 Agent ｜ toggle=完成/重开 ｜ ws=打开工作区 Tab */
+  async function quickCardAction(kind, id) {
+    const r = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
+    if (!r || !r.card) { toast('卡片不存在'); return; }
+    const card = r.card;
+    if (kind === 'agent') { sendCardToAgent(card); return; }
+    if (kind === 'ws') { openCardDetail(id, 'workspace'); return; }
+    if (kind === 'toggle') {
+      const to = card.status === 'done' ? 'ready' : 'done';
+      if (await setCardStatus(card, to)) refreshCurrentTaskView();
+    }
+  }
+
   /* —— ★ 2026-09-13：卡片富右键菜单（状态流转/认领/画线/挂辅助卡/同步MCP/删除；整合卡片看板与任务视图操作）—— */
   const AUX_CARD_TYPES = [
     ['aux_project', '相关项目'], ['aux_memory', '用户记忆'], ['aux_rule', '规则定义'],
@@ -4765,17 +4865,15 @@
     const card = r.card;
     const menu = $('#cardCtxMenu');
     if (!menu) return;
-    const statusOpts = [
-      ['ready', '置为可执行'], ['review', '待验收'], ['done', '标记完成'],
-      ['failed', '标记失败'], ['cancelled', '取消'], ['blocked', '标记受阻'],
-    ];
+    // ★ P4：右键状态项改为「按状态机只列可达目标」—— 原固定 6 项里大多数会被后端 409「非法迁移」拒绝
+    const statusOpts = cwTargets(card.status).map(s => [s, CW_STATUS_LABEL[s] || s]);
     menu.innerHTML = `
       <div class="context-menu-title">卡片 #${card.id} · ${esc(String(card.title || '').slice(0, 18))}</div>
       <div class="context-menu-item" data-cardact="claim">✔ 认领</div>
       <div class="context-menu-item" data-cardact="detail">👁 打开详情</div>
       <div class="context-menu-item" data-cardact="link">➡ 拖出依赖连线</div>
       ${AUX_CARD_TYPES.map(([k, l]) => `<div class="context-menu-item" data-cardact="aux" data-aux="${k}">📎 挂${l}</div>`).join('')}
-      ${statusOpts.filter(([s]) => s !== card.status).map(([s, l]) => `<div class="context-menu-item" data-cardact="status" data-status="${s}">${l}</div>`).join('')}
+      ${statusOpts.map(([s, l]) => `<div class="context-menu-item" data-cardact="status" data-status="${s}">${l}</div>`).join('') || '<div class="context-menu-item" style="opacity:.5;cursor:default">（终态，无法流转）</div>'}
       <div class="context-menu-item" data-cardact="pushmcp">⚡ 同步到 MCP</div>
       <div class="context-menu-item danger" data-cardact="delete">🗑 删除卡片</div>`;
     menu.dataset.cardId = String(cardId);
@@ -5056,8 +5154,30 @@
     document.addEventListener('contextmenu', ev => { const m = $('#cardCtxMenu'); if (m && !ev.target.closest('.task-map-node')) m.classList.remove('show'); });
   }
 
-  /* —— C：卡片详情抽屉（多 Tab：正文/评论/事件/关联 + 30s 评论轮询 + 小红点 + Esc 关闭） —— */
+  /* —— C：卡片详情抽屉（多 Tab：正文/工作区/GitHub/评论/事件/关联 + 30s 评论轮询 + 小红点 + Esc 关闭） —— */
   let _cardPollTimer = null, _cardTab = 'body';
+  /** ★ P4：10 态状态机 —— 必须与后端 `dist/dashboard-reg-cards.js` 的 CARD_TRANSITIONS 逐字对齐。
+   *  前端只渲染「从当前状态可达」的目标按钮：原实现固定给 5 个状态，实测点「✅ 完成」在 running 下被
+   *  后端 409「非法迁移 running → done」拒绝（正确流程是 running → review → done），点了报错极劝退。 */
+  const CARD_TRANSITIONS = {
+    triage: ['todo', 'cancelled'],
+    todo: ['ready', 'cancelled', 'blocked'],
+    ready: ['running', 'cancelled'],
+    running: ['review', 'failed', 'blocked'],
+    review: ['done', 'failed'],
+    blocked: ['todo', 'ready', 'running', 'cancelled'],
+    failed: ['blocked', 'todo', 'cancelled'],
+    done: ['archived'],
+    cancelled: [],
+    archived: [],
+  };
+  /** 状态中文短标签（详情按钮 / 右键菜单共用） */
+  const CW_STATUS_LABEL = {
+    triage: '🔍 待细化', todo: '📝 待就绪', ready: '▶ 可认领', running: '🏃 执行中',
+    review: '👁 待验收', blocked: '⛔ 阻塞', failed: '❌ 失败', done: '✅ 完成',
+    cancelled: '🚫 取消', archived: '📦 归档',
+  };
+  const cwTargets = (st) => CARD_TRANSITIONS[st] || [];
 
   function stopCardPoll() { if (_cardPollTimer) { clearInterval(_cardPollTimer); _cardPollTimer = null; } }
   // ★ 2026-09-14 查漏：卡片详情统一关闭（Esc / 关闭按钮 / 认领 / 删除 共用，确保 keydown 监听器必被移除，防累积泄漏）
@@ -5069,7 +5189,10 @@
   }
   let _cardEscHandler = null;
 
-  async function openCardDetail(id) {
+  async function openCardDetail(id, initialTab) {
+    // ★ P4：重复打开（改状态后原地刷新）先解绑上一个 Esc 监听，避免 keydown 处理器累积泄漏
+    if (_cardEscHandler) { document.removeEventListener('keydown', _cardEscHandler); _cardEscHandler = null; }
+    stopCardPoll();
     const r = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
     if (!r || !r.card) { toast('卡片不存在'); return; }
     const card = r.card;
@@ -5079,15 +5202,24 @@
     const links = (card.links_out || []).map(l => `${l.kind} → ${l.dst_kind}#${l.dst_id ?? l.dst_title}`).join('<br>') || '—';
     const mems = (card.memories || []).map(m => `记忆#${m.memory_id}（${m.relation}）`).join('<br>') || '—';
     $('#modalBody').innerHTML = `
-      <div style="display:flex;gap:6px;border-bottom:1px solid var(--border-glass);padding-bottom:10px;margin-bottom:12px">
-        ${[['body','正文'],['comments','评论'],['events','事件'],['links','关联'],['workspace','工作区']].map(([k, t]) => `<button class="btn-ghost" data-ctab="${k}" style="padding:5px 14px;font-size:12px;${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
+      <div style="display:flex;gap:6px;border-bottom:1px solid var(--border-glass);padding-bottom:10px;margin-bottom:12px;flex-wrap:wrap">
+        ${[['body','📋 正文'],['workspace','🔧 工作区'],['github','🌐 GitHub'],['comments','💬 评论'],['events','🕒 事件'],['links','🔗 关联']].map(([k, t]) => `<button class="btn-ghost" data-ctab="${k}" style="padding:6px 14px;font-size:12px;${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
       </div>
       <div id="cardTabBody"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-        <button class="btn-ghost" id="cardClaimBtn" style="padding:6px 14px;font-size:12px">认领</button>
+      <div class="cw-actions">
+        <button class="btn-primary" id="cardAgentBtn" title="跳到 Agent 页并预填本卡任务说明（不自动发送，你过目后回车）">🚀 交给 Agent</button>
+        <button class="btn-ghost" id="cardTermBtn" title="打开准终端，并把工作目录切到本卡的工作区">⌨ 终端</button>
+        <button class="btn-ghost" id="cardDesignBtn" title="打开 Design Mode：去真实浏览器点元素，抓 HTML+CSS+截图">🎯 拾取</button>
+        <button class="btn-ghost" id="cardClaimBtn" style="padding:6px 14px;font-size:12px">✔ 认领</button>
         <button class="btn-ghost" id="cardPushMcpBtn" style="padding:6px 14px;font-size:12px;${_mcpBound ? '' : 'opacity:0.45;cursor:not-allowed'}" title="${_mcpBound ? '把本卡当前状态/标题回写到绑定的 MCP 任务记忆' : '该卡未绑定 MCP 任务'}" ${_mcpBound ? '' : 'disabled'}>⚡ 同步到 MCP</button>
-        <button class="btn-danger" id="cardDeleteBtn" style="padding:6px 14px;font-size:12px">删除卡片</button>
+        <span style="flex:1"></span>
         <button class="btn-ghost" id="cardCloseBtn" style="padding:6px 14px;font-size:12px">关闭（Esc）</button>
+      </div>
+      <div class="cw-status" role="group" aria-label="改卡片状态">
+        <span class="cw-status-label">改状态（当前：${esc(meta[1])}）：</span>
+        ${cwTargets(card.status).map(s => `<button class="cw-status-btn" data-st="${s}" title="改成${esc(CW_STATUS_LABEL[s] || s)}">${esc(CW_STATUS_LABEL[s] || s)}</button>`).join('') || '<span class="cw-status-label">已是终态，不能再流转</span>'}
+        <span style="flex:1"></span>
+        <button class="btn-danger" id="cardDeleteBtn" style="padding:4px 12px;font-size:11px">🗑 删除卡片</button>
       </div>`;
     const bodyBox = $('#cardTabBody');
     const renderBody = () => {
@@ -5332,7 +5464,7 @@
         ` : `<div class="wb-gh-empty">填写 owner/repo 保存后：展示 open issues / PR 列表、可把 issue/PR 关联到本卡（读侧）。</div>`}
       `;
       const j2 = (res) => res.json().catch(() => ({}));
-      const rerender = () => renderWorkspace();
+      const rerender = () => renderGithub(); // ★ P4：GitHub 已独立成 Tab，配置/关联后的重渲染留在本 Tab（原 renderWorkspace 会跳回工作区）
       const save = $('#wbGhSave');
       if (save) save.onclick = async () => {
         const body = { repo: $('#wbGhRepo').value.trim() };
@@ -5423,7 +5555,8 @@
           </div>`;
         const cb = $('#wbCreateBtn');
         if (cb) cb.onclick = async () => {
-          const v = await askForm({ title: '创建隔离 worktree（分支 wt/<名称>，落在 .worktrees/ 内）', okText: '创建', fields: [{ key: 'name', label: '名称', required: true, placeholder: '如 fix-1234' }] });
+          // ★ P4 简化：预填默认名（回车即建），少一次打字；仍保留弹窗以避免与既有 worktree 重名
+          const v = await askForm({ title: '创建隔离 worktree（分支 wt/<名称>，落在 .worktrees/ 内）', okText: '创建', fields: [{ key: 'name', label: '名称（已预填，可改）', required: true, value: `card-${id}`, placeholder: '如 fix-1234' }] });
           if (!v) return;
           const res = await fetch('/api/worktrees', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: v.name, cardId: id }) });
           const j = await res.json().catch(() => ({}));
@@ -5431,7 +5564,6 @@
           toast(`已创建 ${j.name}（${j.branch}）`);
           renderWorkspace();
         };
-        _wbRenderGithub(bodyBox, fcard); // ★ P2：无 worktree 分支同样显示 GitHub 区块
         return;
       }
       bodyBox.innerHTML = `
@@ -5470,7 +5602,15 @@
         renderWorkspace();
       };
       _wbLoadChanges(mine.name);
-      _wbRenderGithub(bodyBox, fcard); // ★ P2：GitHub 区块（配置/关联/列表/建 PR 降级）
+    };
+    /* ★ P4：GitHub 从「工作区」拆为独立 Tab —— 原本配置/issue/PR/建 PR 四组表单与 diff、批注挤在同一条超长滚动里，
+       打开还要连发 5 个请求才渲染完，信息过载是最主要的迷路点之一。低频能力独立成页，主路径（改代码）更干净。 */
+    const renderGithub = async () => {
+      bodyBox.innerHTML = `<div style="padding:14px 0;color:var(--text-muted);font-size:12px">加载 GitHub…</div>`;
+      const fresh = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
+      const fcard = (fresh && fresh.card) ? fresh.card : card;
+      bodyBox.innerHTML = '';
+      _wbRenderGithub(bodyBox, fcard);
     };
     const showTab = (k) => {
       _cardTab = k;
@@ -5483,10 +5623,12 @@
       else if (k === 'links') renderLinks();
       else if (k === 'comments') renderComments();
       else if (k === 'workspace') renderWorkspace();
+      else if (k === 'github') renderGithub();
       else renderEvents();
     };
     // ★ 2026-09-14 查漏：打开新卡片时重置 Tab 为正文，避免沿用上一张卡片的 Tab（评论/事件）
-    _cardTab = 'body';
+    // ★ P4：允许调用方指定首屏 Tab（地图快捷条 🔧 直达工作区）
+    _cardTab = ['body', 'workspace', 'github', 'comments', 'events', 'links'].includes(initialTab) ? initialTab : 'body';
     showTab(_cardTab);
     // 30s 评论轮询 + 小红点（R7-4）
     let lastCount = (await fetch(`/api/cards/${id}/comments`).then(x => x.json()).catch(() => ({ comments: [] }))).comments?.length ?? 0;
@@ -5500,6 +5642,23 @@
     $('#detailModal').classList.add('show');
     // ★ 2026-09-14 查漏：统一关闭路径（关按钮 / Esc / 认领成功 / 删除成功），移除监听器防累积泄漏
     $('#cardCloseBtn').onclick = closeCardDetail;
+    /* ★ P4 工作台动作条：交给 Agent / 终端（自动切本卡目录）/ 设计拾取 / 一键改状态 */
+    $('#cardAgentBtn').onclick = () => { closeCardDetail(); sendCardToAgent(card); };
+    $('#cardTermBtn').onclick = () => {
+      if (!_termOpenWithCwd) { toast('终端尚未就绪'); return; }
+      _termOpenWithCwd(card);
+    };
+    $('#cardDesignBtn').onclick = () => {
+      if (!_designOpenDrawer) { toast('Design Mode 尚未就绪'); return; }
+      _designOpenDrawer();
+    };
+    $$('#modalBody .cw-status-btn[data-st]').forEach(b => b.onclick = async () => {
+      if (b.disabled) return;
+      if (await setCardStatus(card, b.dataset.st)) {
+        refreshCurrentTaskView();
+        openCardDetail(id, _cardTab); // 原地刷新：按钮高亮与状态徽标同步（Esc 监听已在函数开头去重）
+      }
+    });
     _cardEscHandler = (e) => {
       if (e.key === 'Escape' && $('#detailModal').classList.contains('show')) closeCardDetail();
     };
@@ -6412,8 +6571,42 @@
     },
     _agentCockpitNav: (arg) => { location.hash = arg || 'runs'; },
     _agentCockpitCard: async (arg) => {
-      toast(`卡片「${arg}」需在任务看板选中具体卡片后操作，正在跳转…`, 3000);
-      location.hash = 'tasks';
+      /* ★ P4：原实现只弹提示 + 跳看板（点了没反应的假动作）。改为真执行 ——
+         选卡（多数情况只有 1 张候选，直接干）→ 真调 POST /api/cards/:id/status（带 expected_from CAS）。 */
+      const ACT = { accept: { to: 'done', label: '验收通过 → 完成', order: ['review', 'running', 'ready', 'blocked', 'todo', 'triage'] },
+                    refine: { to: 'ready', label: '打回 → 可执行', order: ['running', 'review', 'blocked', 'ready'] },
+                    archive: { to: 'archived', label: '归档', order: ['done'] } }[arg];
+      if (!ACT) { toast('未知操作：' + arg); return; }
+      const data = await fetch('/api/cards').then(r => r.json()).catch(() => null);
+      const buckets = (data && data.buckets) || {};
+      const pool = [];
+      ACT.order.forEach(st => (Array.isArray(buckets[st]) ? buckets[st] : []).forEach(c => pool.push({ ...c, status: st })));
+      if (!pool.length) {
+        toast(arg === 'archive' ? '没有已完成的任务可归档' : `没有可${ACT.label.split(' ')[0]}的卡片`, 3000);
+        location.hash = 'tasks';
+        return;
+      }
+      let target = pool[0];
+      if (pool.length > 1) {
+        const hint = pool.slice(0, 6).map(c => `#${c.id} ${String(c.title || '').slice(0, 16)}`).join(' ｜ ');
+        const v = await askForm({ title: `${ACT.label} —— 有 ${pool.length} 张候选`, okText: '执行', fields: [{ key: 'id', label: `候选（改填别的 ID 也行）：${hint}`, required: true, value: String(pool[0].id), placeholder: '卡片 ID' }] });
+        if (!v) return;
+        const id = Number(v.id);
+        target = pool.find(c => Number(c.id) === id) || null;
+        if (!target) {
+          const rr = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
+          if (!rr || !rr.card) { toast('卡片 #' + id + ' 不存在'); return; }
+          target = rr.card;
+        }
+      }
+      const res = await fetch(`/api/cards/${target.id}/status`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: ACT.to, expected_from: target.status, as: 'human:dashboard' }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(`#${target.id} 失败：${j.error || res.status}（可能已被其他操作改写，请刷新）`, 4200); return; }
+      toast(`✓ #${target.id} ${ACT.label}（${j.from || target.status} → ${j.to || ACT.to}）`, 3600);
+      refreshCurrentTaskView();
     },
     _agentCockpitToggleWrite: () => {
       const cb = $('#agentAllowWrites');
