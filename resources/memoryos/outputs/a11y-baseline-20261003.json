@@ -1,6 +1,6 @@
 {
   "meta": {
-    "at": "2026-10-03T11:09:18.883Z",
+    "at": "2026-10-03T12:24:12.076Z",
     "dashPort": 8787,
     "node": "v24.18.1",
     "chrome": "default"
@@ -44,7 +44,7 @@
     {
       "name": "P1-2 有 aria-live 播报区",
       "ok": true,
-      "extra": "aria-live/status/alert/log=5"
+      "extra": "aria-live/status/alert/log=6"
     },
     {
       "name": "P1-3 表单控件均有标签",
@@ -91,7 +91,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-agent",
       "route": "(initial)",
       "focusableNoName": []
@@ -119,7 +119,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-agent",
       "route": "agent",
       "focusableNoName": []
@@ -131,77 +131,77 @@
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "01 门禁 exit=13（mcp/p26-lifecycl"
+          "text": "01 Orca 融合 P2 落地要点（准终端分屏 + Git"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "02 门禁 exit=13（mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "02 npm test 中 mcp/p26-lifecycl"
+          "text": "03 npm test 中 mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "03 Orca 融合 P0+P1 已落地（2026-10-0"
+          "text": "04 Orca 融合 P0+P1 已落地（2026-10-0"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "04 MemoryOS 批次F1（2026-10-03，提交"
+          "text": "05 MemoryOS 批次F1（2026-10-03，提交"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "05 MemoryOS 批次C3/C4（2026-10-03"
+          "text": "06 MemoryOS 批次C3/C4（2026-10-03"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "06 存在一批untracked排障脚本需用户确认后处理 r"
+          "text": "07 存在一批untracked排障脚本需用户确认后处理 r"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "07 AI Vault核心契约包括status索引账本、四态"
+          "text": "08 AI Vault核心契约包括status索引账本、四态"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "08 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
+          "text": "09 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "09 每日复盘自动化在代理未监听时会静默502失败 自动化静"
+          "text": "10 每日复盘自动化在代理未监听时会静默502失败 自动化静"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "10 resources\\memoryos\\data\\mem"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "11 [session_id: 6ac0056f817199"
+          "text": "11 resources\\memoryos\\data\\mem"
         },
         {
           "kind": "dataRow",
@@ -215,350 +215,350 @@
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "13 [session_id: 6abfacf4817199"
+          "text": "13 [session_id: 6ac0056f817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "14 The user presented four cat"
+          "text": "14 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "15 [session_id: 6abfacf4817199"
+          "text": "15 The user presented four cat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "16 - `git commit -F`命令在包含中文的路径"
+          "text": "16 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "17 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
+          "text": "17 - `git commit -F`命令在包含中文的路径"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "18 - 敏感配置文件`resources/memoryos"
+          "text": "18 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "19 - Memory entry #3370 (parti"
+          "text": "19 - 敏感配置文件`resources/memoryos"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "20 - Modifying AGENTS.md direc"
+          "text": "20 - Memory entry #3370 (parti"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "21 - For all modifications, fo"
+          "text": "21 - Modifying AGENTS.md direc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "22 - Do not write sensitive cr"
+          "text": "22 - For all modifications, fo"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "23 - The project has two simil"
+          "text": "23 - Do not write sensitive cr"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "24 - Read memory by &#39;task所"
+          "text": "24 - The project has two simil"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "25 - After task completion, th"
+          "text": "25 - Read memory by &#39;task所"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "26 - Irreversible operations m"
+          "text": "26 - After task completion, th"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "27 - Modifications must not cr"
+          "text": "27 - Irreversible operations m"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "28 - All AI entries must autom"
+          "text": "28 - Modifications must not cr"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "29 - AGENTS.md is a synchroniz"
+          "text": "29 - All AI entries must autom"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "30 - AGENTS.md is a synchroniz"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "30 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
+          "text": "31 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "31 【2026-10-02 深夜 手机 agent 写不入"
+          "text": "32 【2026-10-02 深夜 手机 agent 写不入"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "32 zcode存储状态中session数据库的迁移状态以l"
+          "text": "33 zcode存储状态中session数据库的迁移状态以l"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "33 AI Vault核心契约包括status索引账本、四态"
+          "text": "34 AI Vault核心契约包括status索引账本、四态"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "34 - **表述方式（2026-10-02 用户原话\"以后"
+          "text": "35 - **表述方式（2026-10-02 用户原话\"以后"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "35 AI Vault核心契约包括status索引账本、四态"
+          "text": "36 AI Vault核心契约包括status索引账本、四态"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "36 Orca采用ratchet（基线只减不增）技术 建议从"
+          "text": "37 Orca采用ratchet（基线只减不增）技术 建议从"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "37 - 上轮交接中提到的“AI vault search "
+          "text": "38 - 上轮交接中提到的“AI vault search "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "38 【2026-10-02 晚 手机端 agent 写记忆"
+          "text": "39 【2026-10-02 晚 手机端 agent 写记忆"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "39 [session_id: 6abfacf4817199"
+          "text": "40 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "40 - CLAIM.md分区表定位为“例外处置”而非“人人"
+          "text": "41 - CLAIM.md分区表定位为“例外处置”而非“人人"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "41 - 默认共享工作区，仅在发生具体冲突时创建worktr"
+          "text": "42 - 默认共享工作区，仅在发生具体冲突时创建worktr"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "42 - 当liveness/ownership/capab"
+          "text": "43 - 当liveness/ownership/capab"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "43 - 编排层安全底线：禁止新开端口绕过现有问题；多AI协"
+          "text": "44 - 编排层安全底线：禁止新开端口绕过现有问题；多AI协"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "44 - 会话终止不导致在制品失效 — 依据Orca原文“L"
+          "text": "45 - 会话终止不导致在制品失效 — 依据Orca原文“L"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "45 - 初版createDispatch采用&#39;有a"
+          "text": "46 - 初版createDispatch采用&#39;有a"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "46 - 未提交的在制品需按CLAIM分区规则处置，避免冲突"
+          "text": "47 - 未提交的在制品需按CLAIM分区规则处置，避免冲突"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "47 - 改动生效需在普通终端执行`node resourc"
+          "text": "48 - 改动生效需在普通终端执行`node resourc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "48 - generation值取任务历史最大generat"
+          "text": "49 - generation值取任务历史最大generat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "49 - Dispatch句柄采用纯hex形态，保留`lea"
+          "text": "50 - Dispatch句柄采用纯hex形态，保留`lea"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "50 - 新增dispatches表及索引会改变空库page"
+          "text": "51 - 新增dispatches表及索引会改变空库page"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "51 - 结构化回执必须包含可执行的next_action，"
+          "text": "52 - 结构化回执必须包含可执行的next_action，"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "52 - 租约到期只标记stale，不回收、不释放；回收必须"
+          "text": "53 - 租约到期只标记stale，不回收、不释放；回收必须"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "53 - 写权限的唯一定义：调用方必须持有该任务的activ"
+          "text": "54 - 写权限的唯一定义：调用方必须持有该任务的activ"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "54 - 一个任务同时只能有一个active的Dispatc"
+          "text": "55 - 一个任务同时只能有一个active的Dispatc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "55 - **移动端密钥隔离**：Termux/非 Wind"
+          "text": "56 - **移动端密钥隔离**：Termux/非 Wind"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "56 - **门禁抖动重试**：`npm test` 中 m"
+          "text": "57 - **门禁抖动重试**：`npm test` 中 m"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "57 - **工具空转熔断**：调用 MCP 工具（如 me"
+          "text": "58 - **工具空转熔断**：调用 MCP 工具（如 me"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "58 - **沙箱EPERM降级**：Windows DSH"
+          "text": "59 - **沙箱EPERM降级**：Windows DSH"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "59 【2026-10-02 晚 手机端 LLM/agent"
+          "text": "60 【2026-10-02 晚 手机端 LLM/agent"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "60 [experience] 2026-10-02 删除功"
+          "text": "61 [experience] 2026-10-02 删除功"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "61 删除自检正文经验 已拒绝 human:dashboar"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "62 Orca采用ratchet（基线只减不增）技术 建议从"
+          "text": "62 删除自检正文经验 已拒绝 human:dashboar"
         },
         {
           "kind": "dataRow",
@@ -572,126 +572,126 @@
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "64 [session_id: 6abfacf4817199"
+          "text": "64 Orca采用ratchet（基线只减不增）技术 建议从"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "65 [decision] 2026-10-02 笔记→记忆"
+          "text": "65 [session_id: 6abfacf4817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "66 [decision] 2026-10-02 笔记→记忆"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "66 记忆联动自检：PUT 编辑后的新正文 v2决策 已拒绝"
+          "text": "67 记忆联动自检：PUT 编辑后的新正文 v2决策 已拒绝"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "67 测试经验 已拒绝 human:dashboard 1."
+          "text": "68 测试经验 已拒绝 human:dashboard 1."
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "68 [decision] 2026-10-02 笔记→记忆"
+          "text": "69 [decision] 2026-10-02 笔记→记忆"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "69 类型贯通自检：这条应为 decision 类型决策 已"
+          "text": "70 类型贯通自检：这条应为 decision 类型决策 已"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "70 [decision] 2026-10-02 笔记页批次"
+          "text": "71 [decision] 2026-10-02 笔记页批次"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "71 按钮自检初始正文 [[知识库]]经验 已拒绝 huma"
+          "text": "72 按钮自检初始正文 [[知识库]]经验 已拒绝 huma"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "72 [decision] 2026-10-02 笔记页\"按"
+          "text": "73 [decision] 2026-10-02 笔记页\"按"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "73 【2026-10-02 手机独立版（本地内核）+ 手机"
+          "text": "74 【2026-10-02 手机独立版（本地内核）+ 手机"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "74 【2026-10-02 手机版真机交付完成】小米 23"
+          "text": "75 【2026-10-02 手机版真机交付完成】小米 23"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "75 F50看门狗执行disable/enable AMD "
+          "text": "76 F50看门狗执行disable/enable AMD "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "76 【门禁 mcp/p26-lifecycle 间歇FAI"
+          "text": "77 【门禁 mcp/p26-lifecycle 间歇FAI"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "77 【2026-10-02 手机版安卓 App 交付】架构"
+          "text": "78 【2026-10-02 手机版安卓 App 交付】架构"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "78 【壳打不开根因：仓库根被打了 Low 完整性标签 → "
+          "text": "79 【壳打不开根因：仓库根被打了 Low 完整性标签 → "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "79 [task][assignee:dsh][status"
+          "text": "80 [task][assignee:dsh][status"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "80 当处理 MemoryOS 任务时，应优先检查 task"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "81 [task][assignee:dsh][status"
+          "text": "81 当处理 MemoryOS 任务时，应优先检查 task"
         },
         {
           "kind": "dataRow",
@@ -703,37 +703,37 @@
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-pitfall",
-          "route": "",
-          "text": "83 MemoryOS agent 自循环踩坑与结论（202"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "84 [task][assignee:dsh][status"
+          "text": "83 [task][assignee:dsh][status"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "85 任务#3336 自动领任务验收复盘：dsh 成功自动完"
+          "text": "84 MemoryOS agent 自循环踩坑与结论（202"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "86 [task][assignee:dsh][status"
+          "text": "85 [task][assignee:dsh][status"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "86 任务#3336 自动领任务验收复盘：dsh 成功自动完"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "87 [task][assignee:dsh-b][stat"
+          "text": "87 [task][assignee:dsh][status"
         },
         {
           "kind": "dataRow",
@@ -745,86 +745,86 @@
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-pitfall",
-          "route": "",
-          "text": "89 坑：task_next 的跨 project 计数提示"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "90 事实：memoryos MCP task 工具面实测 "
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "91 [task][assignee:dsh][status"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "92 [task][assignee:zcode][stat"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "93 【rule|首步MCP读约定】收到用户任何消息后，第一"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "94 【pitfall|同参数重试空转】症状：同一工具调用失"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "95 【pitfall|工具名拼错空转】症状：调用 tool"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "96 【pitfall|沙箱EPERM】症状：Windows"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "97 - **db.js 依赖反向**：数据层 db.js "
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "98 - **asar 热修失效**：MemoryOS.ex"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "99 - **EMBED_MODE 兜底**：embed.j"
+          "text": "89 [task][assignee:dsh-b][stat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "100 现象：services/core-process.j"
+          "text": "90 坑：task_next 的跨 project 计数提示"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "91 事实：memoryos MCP task 工具面实测 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "92 [task][assignee:dsh][status"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "93 [task][assignee:zcode][stat"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "94 【rule|首步MCP读约定】收到用户任何消息后，第一"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "95 【pitfall|同参数重试空转】症状：同一工具调用失"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "96 【pitfall|工具名拼错空转】症状：调用 tool"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "97 【pitfall|沙箱EPERM】症状：Windows"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "98 - **db.js 依赖反向**：数据层 db.js "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "99 - **asar 热修失效**：MemoryOS.ex"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "100 - **EMBED_MODE 兜底**：embed."
         }
       ],
       "unlabeledControls": [],
@@ -848,7 +848,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-all",
       "route": "all",
       "focusableNoName": []
@@ -876,7 +876,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-tasks",
       "route": "tasks",
       "focusableNoName": []
@@ -904,7 +904,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-obsidian",
       "route": "obsidian",
       "focusableNoName": []
@@ -932,7 +932,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-graph",
       "route": "graph",
       "focusableNoName": []
@@ -960,7 +960,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-runs",
       "route": "runs",
       "focusableNoName": []
@@ -988,7 +988,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-connect",
       "route": "connect",
       "focusableNoName": []
@@ -1016,7 +1016,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-governance",
       "route": "governance",
       "focusableNoName": []
@@ -1044,7 +1044,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-trend",
       "route": "trend",
       "focusableNoName": []
@@ -1072,7 +1072,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-cross",
       "route": "cross",
       "focusableNoName": []
@@ -1100,7 +1100,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-audit",
       "route": "audit",
       "focusableNoName": []
@@ -1128,7 +1128,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-top",
       "route": "top",
       "focusableNoName": []
@@ -1156,7 +1156,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-zombies",
       "route": "zombies",
       "focusableNoName": []
@@ -1184,7 +1184,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-arbitrate",
       "route": "arbitrate",
       "focusableNoName": []
@@ -1212,7 +1212,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-ingest",
       "route": "ingest",
       "focusableNoName": []
@@ -4069,7 +4069,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-rules",
       "route": "rules",
       "focusableNoName": []
@@ -4097,7 +4097,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-skills",
       "route": "skills",
       "focusableNoName": []
@@ -4125,7 +4125,7 @@
         "total": 1,
         "h1": 1
       },
-      "ariaLive": 5,
+      "ariaLive": 6,
       "visiblePage": "page-summary",
       "route": "summary",
       "focusableNoName": []

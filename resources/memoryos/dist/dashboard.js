@@ -40,6 +40,7 @@ import { registerKnowledge } from "./dashboard-reg-knowledge.js";
 import { registerWorkbench } from "./dashboard-reg-workbench.js";
 import { registerTerm } from "./dashboard-reg-term.js";       // Orca 融合 P2：准终端（exec_run 流式版 SSE）
 import { registerGithub } from "./dashboard-reg-github.js";   // Orca 融合 P2：GitHub 读侧全功能/写侧降级
+import { registerDesign } from "./dashboard-reg-design.js";   // Orca 融合 P3：Design Mode（CDP 元素拾取，零新依赖）
 const DEFAULT_PORT = 8787;
 /** 人工/编辑/新建允许的 type（含规则页 rule） */
 const ALLOWED_TYPES = ["decision", "experience", "pitfall", "convention", "rule"];
@@ -295,6 +296,7 @@ export function buildApp(db, opts = {}) {
     registerWorkbench(app, ctx); // Orca 融合 P0+P1：worktree 编排 / diff / 行级批注 / 拖拽上传（2026-10-03 CLAIM §5）
     registerTerm(app, ctx);      // Orca 融合 P2：准终端分屏（SSE 流式执行，exec_run 同安全口径）
     registerGithub(app, ctx);    // Orca 融合 P2：GitHub 集成（读侧全功能 + 写侧 no-remote 降级）
+    registerDesign(app, ctx);    // Orca 融合 P3：Design Mode（真实 Chromium 点选元素 → HTML/CSS/裁剪截图进 prompt）
 
     return app;
 }

@@ -18,6 +18,12 @@
  *   W15 保存 owner/repo → 状态徽标回显（temp config 隔离）
  *   W16 issue 关联本卡 → ref + 状态徽标回显
  *   W17 建 PR 写侧降级：本仓无 origin → 409 no-remote hint 展示
+ *   W18 P3 Design Mode：无会话 status → active:false；navigate 无会话 → 404
+ *   W19 URL 协议白名单：javascript:/ftp: → 400（仅 http/https/file）
+ *   W20 打开真 URL → 200 + 随机调试端口；status 轮询转 active；重复 open → 409 单会话
+ *   W21 经设计会话 CDP 触发模拟拾取 → /api/design/picks 落 HTML/selector/样式 + 裁剪截图 dataURL
+ *   W22 前端 🎯 抽屉渲染拾取卡片（图 + 徽标会话中）→ 附到输入框内联进 agent prompt
+ *   W23 close → 200 + status 回落 + 设计 Chrome 端口失联（进程树已杀）+ 前端徽标回落
  *   CDP 0 未捕获异常（与 a11y 门禁同口径）
  *
  * 隔离要点：本机 shell 注入 MEMORYOS_DATA_DIR=生产目录 → 必须在启动时覆盖到临时目录，
@@ -298,12 +304,133 @@ try {
     await api('POST', '/api/github/card', { cardId, url: '' });
     await api('POST', '/api/github/config', { repo: '', clearToken: true });
 
+    /* ══ P3 · W18~W23：Design Mode（dashboard-reg-design.js + designDrawer；真实 Chrome + CDP 拾取）══ */
+    // W18：无会话 status / navigate 404
+    const ds0 = await (await api('GET', '/api/design/status')).json();
+    rec('W18 无会话 status → active:false', ds0.ok === true && ds0.active === false, JSON.stringify(ds0));
+    const rNav404 = await api('POST', '/api/design/navigate', { url: 'https://example.com' });
+    rec('W18b 无会话 navigate → 404', rNav404.status === 404, 'HTTP ' + rNav404.status);
+
+    // W19：协议白名单（javascript:/ftp: 一律 400）
+    const rJs = await api('POST', '/api/design/open', { url: 'javascript:alert(1)' });
+    rec('W19 javascript: 协议 → 400（URL 白名单）', rJs.status === 400, 'HTTP ' + rJs.status);
+    const rFtp = await api('POST', '/api/design/open', { url: 'ftp://evil.example/x' });
+    rec('W19b ftp: 协议 → 400', rFtp.status === 400, 'HTTP ' + rFtp.status);
+
+    // W20：打开真 URL（用看板自身）→ 起 Chrome（随机端口 + 临时 profile）；重复 open → 409
+    const tmpDirsBefore = (() => { try { return fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('memoryos-design-')).length; } catch { return -1; } })();
+    const rOpen = await api('POST', '/api/design/open', { url: 'http://127.0.0.1:' + PORT + '/?token=' + TOKEN });
+    const jOpen = await rOpen.json().catch(() => ({}));
+    rec('W20 打开 URL → 200 + 随机调试端口', rOpen.status === 200 && jOpen.ok === true && Number(jOpen.port) > 0, 'HTTP ' + rOpen.status + ' ' + JSON.stringify(jOpen).slice(0, 120));
+    let ds1 = null;
+    for (let i = 0; i < 20; i++) {
+        ds1 = await (await api('GET', '/api/design/status')).json();
+        if (ds1.active) break;
+        await sleep(500);
+    }
+    rec('W20b status 轮询转 active（含 URL 回显）', ds1?.active === true && String(ds1?.url || '').includes('127.0.0.1'), JSON.stringify(ds1));
+    const rOpen2 = await api('POST', '/api/design/open', { url: 'https://example.com' });
+    rec('W20c 会话中重复 open → 409（单会话）', rOpen2.status === 409, 'HTTP ' + rOpen2.status);
+
+    // W21：设计会话 CDP 触发模拟拾取 → 后端 bindingCalled 落库 + 裁剪截图
+    const dPort = ds1.port;
+    let dws = null;
+    try {
+        let dpage = null;
+        for (let i = 0; i < 20 && !dpage; i++) {
+            try { const l = await (await fetch('http://127.0.0.1:' + dPort + '/json/list', { signal: AbortSignal.timeout(3000) })).json(); dpage = l.find((t) => t.type === 'page'); }
+            catch { await sleep(300); }
+        }
+        if (!dpage) throw new Error('设计会话无 page target');
+        dws = new WebSocket(dpage.webSocketDebuggerUrl);
+        // open/error/close 三路都收：裸等 open 可能永不返回（挂死风险）
+        await new Promise((r, j) => {
+            const to = setTimeout(() => j(new Error('设计 CDP open 超时')), 8000);
+            dws.addEventListener('open', () => { clearTimeout(to); r(); }, { once: true });
+            dws.addEventListener('error', () => { clearTimeout(to); j(new Error('设计 CDP 连接失败')); }, { once: true });
+        });
+        let dmid = 0; const dpend = new Map();
+        dws.addEventListener('message', (ev2) => { const m = JSON.parse(ev2.data); if (m.id && dpend.has(m.id)) { dpend.get(m.id)(m); dpend.delete(m.id); } });
+        dws.addEventListener('close', () => { for (const [, r] of dpend) r({}); dpend.clear(); });
+        const dsend = (method, params = {}) => new Promise((res) => {
+            const i = ++dmid;
+            const to = setTimeout(() => { dpend.delete(i); res({}); }, 10000); // 设计 CDP 命令硬超时，防挂死
+            dpend.set(i, (m) => { clearTimeout(to); res(m); });
+            dws.send(JSON.stringify({ id: i, method, params }));
+        });
+        await dsend('Runtime.enable');
+        const pickExpr = `window.memoryosPick(JSON.stringify({html:'<div id="wb-pick-probe">hello</div>',selector:'div#wb-pick-probe',styles:{color:'rgb(255, 0, 0)',width:'120px'},rect:{x:10,y:10,w:120,h:40},pageUrl:location.href,title:document.title,ts:Date.now()}))`;
+        await dsend('Runtime.evaluate', { expression: pickExpr, returnByValue: true });
+    }
+    finally { try { dws?.close(); } catch { /* ignore */ } }
+    let picks = null;
+    for (let i = 0; i < 20; i++) {
+        picks = await (await api('GET', '/api/design/picks')).json();
+        if ((picks.picks || []).length >= 1) break;
+        await sleep(400);
+    }
+    const pk = (picks?.picks || [])[0] || {};
+    rec('W21 模拟拾取落 /api/design/picks（HTML+selector+样式）',
+        String(pk.html || '').includes('wb-pick-probe') && pk.selector === 'div#wb-pick-probe' && pk.styles?.color === 'rgb(255, 0, 0)',
+        JSON.stringify({ html: String(pk.html || '').slice(0, 60), selector: pk.selector }));
+    rec('W21b 元素裁剪截图回传（dataURL）', String(pk.shot || '').startsWith('data:image/jpeg;base64,'), String(pk.shot || '').slice(0, 40));
+
+    // W22：前端 🎯 抽屉渲染 + 附到输入框
+    await ev(`(function(){var b=document.getElementById('designBtn');if(b)b.click();return 1})()`);
+    await sleep(1800); // 1s 轮询至少一轮
+    const dRender = await ev(`(function(){
+      var n=document.querySelectorAll('#designPicks .design-pick').length;
+      var img=!!document.querySelector('#designPicks .design-pick-shot img');
+      var badge=(document.getElementById('designStatusBadge')||{}).textContent||'';
+      return n+'|'+(img?1:0)+'|'+badge;
+    })()`);
+    const dParts = String(dRender).split('|');
+    rec('W22 抽屉渲染拾取卡片（列表+截图+会话徽标）', Number(dParts[0]) >= 1 && dParts[1] === '1' && dParts[2].includes('会话中'), String(dRender));
+    await ev(`(function(){var b=document.querySelector('#designPicks .design-attach');if(b)b.click();return 1})()`);
+    await sleep(2500); // 截图 artifact 上传 + 内联
+    const dAttach = await ev(`(function(){var i=document.getElementById('agentInput');return i?i.value:''})()`);
+    // 注意：artifacts 上传名带时间戳前缀（up-<ts>-<safe>），断言用 -design-pick- 而非 design-pick- 打头
+    const dA1 = String(dAttach).includes('[Design 拾取'), dA2 = String(dAttach).includes('wb-pick-probe'), dA3 = String(dAttach).includes('[截图 artifact:') && String(dAttach).includes('-design-pick-');
+    rec('W22b 附到输入框：HTML/CSS 文本块 + 截图 artifact 内联', dA1 && dA2 && dA3, `text=${dA1} html=${dA2} shot=${dA3} :: ` + String(dAttach).slice(-140).replace(/\n/g, '\\n'));
+
+    // W23：关闭会话 → 进程树已杀 + 状态回落
+    const rKill = await api('POST', '/api/design/close', {});
+    rec('W23 close → 200（杀进程树 + 清临时 profile）', rKill.status === 200, 'HTTP ' + rKill.status);
+    let ds2 = null;
+    for (let i = 0; i < 12; i++) {
+        ds2 = await (await api('GET', '/api/design/status')).json();
+        if (!ds2.active) break;
+        await sleep(500);
+    }
+    rec('W23b status 回落 active:false + picks 清空', ds2?.active === false && ds2?.picks === 0, JSON.stringify(ds2));
+    let portDead = false;
+    for (let i = 0; i < 12; i++) {
+        try { await fetch('http://127.0.0.1:' + dPort + '/json/version', { signal: AbortSignal.timeout(800) }); }
+        catch { portDead = true; break; }
+        await sleep(500);
+    }
+    rec('W23c 设计 Chrome 端口失联（进程已杀）', portDead === true, 'port=' + dPort);
+    const tmpDirsAfter = (() => { try { return fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('memoryos-design-')).length; } catch { return -1; } })();
+    rec('W23d 临时 profile 目录已清（数量回到打开前）', tmpDirsBefore === tmpDirsAfter, tmpDirsBefore + ' → ' + tmpDirsAfter);
+    let badgeBack = '';
+    for (let i = 0; i < 8; i++) {
+        badgeBack = await ev(`(document.getElementById('designStatusBadge')||{}).textContent||''`);
+        if (badgeBack.includes('未启动')) break;
+        await sleep(600);
+    }
+    rec('W23e 前端徽标随轮询回落「未启动」', badgeBack.includes('未启动'), badgeBack);
+    await ev(`(function(){var b=document.getElementById('designClose');if(b)b.click();return 1})()`);
+    await sleep(400);
+    rec('W23f 关闭 🎯 抽屉（会话已先前关闭，零残留）', await ev(`!document.querySelector('#designDrawer.show')`) === true);
+
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
 catch (e) {
     rec('走查执行', false, String(e.message).slice(0, 200) + ' @ ' + String(e.stack || '').split('\n')[1]);
 }
 finally {
+    // P3 兜底：走查中途异常也先关设计会话（杀设计 Chrome + 清 profile），再关实例
+    try { await fetch('http://127.0.0.1:' + PORT + '/api/design/close', { method: 'POST', headers: H, body: '{}' }); } catch { /* 实例已关或无会话 */ }
     try { ws?.close(); } catch { /* ignore */ }
     try { chrome?.kill(); } catch { /* ignore */ }
     try { await app?.close(); } catch { /* ignore */ }

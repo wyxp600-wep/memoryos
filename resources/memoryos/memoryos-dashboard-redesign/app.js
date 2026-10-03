@@ -3858,7 +3858,126 @@
       b.setAttribute('aria-pressed', String(T.split));
     };
   }
+  /* ===== ★ Orca 融合 P3（2026-10-03 CLAIM §5）：Design Mode 抽屉（真实 Chromium 元素拾取）
+   * 与后端 dashboard-reg-design.js 配套：打开 URL → 独立 Chrome 窗口（127.0.0.1 随机端口 + 临时 profile）
+   * → 窗口内 hover 高亮 / 点击拾取 → CDP bindingCalled 回传 HTML+计算样式+裁剪截图
+   * → 本抽屉 1s 轮询 /api/design/picks 渲染 → 一键附进 Agent 输入框（P0 附件管线同口径）。 */
+  function initDesign() {
+    const drawer = $('#designDrawer');
+    if (!drawer) return;
+    const D = { active: false, timer: null, picks: [], sig: '' };
+    const badge = $('#designStatusBadge');
+    const setBadge = (txt, cls) => { if (badge) { badge.textContent = txt; badge.className = 'wb-gh-badge' + (cls ? ' ' + cls : ''); } };
+    const setMode = (active) => {
+      const o = $('#designOpenBtn'), n = $('#designNavBtn'), k = $('#designKillBtn');
+      if (o) o.hidden = active;
+      if (n) n.hidden = !active;
+      if (k) k.hidden = !active;
+    };
+    const cssText = (p) => Object.entries(p.styles || {}).map(([k, v]) => `${k}: ${v};`).join('\n');
+    const render = (picks) => {
+      const wrap = $('#designPicks');
+      if (!wrap) return;
+      D.picks = Array.isArray(picks) ? picks : [];
+      const sig = D.picks.map((p) => `${p.id}:${p.ts}`).join(',');
+      if (sig === D.sig) return;
+      D.sig = sig;
+      if (!D.picks.length) { wrap.innerHTML = '<div class="wb-gh-empty">暂无拾取结果 —— 打开页面后在 Chrome 窗口里点选元素。</div>'; return; }
+      wrap.innerHTML = [...D.picks].reverse().map((p) => `
+        <div class="design-pick" data-id="${esc(p.id)}">
+          <div class="design-pick-head">
+            <span class="design-pick-sel" title="${esc(p.pageUrl)}">${esc(p.selector || p.title || '(元素)')}</span>
+            <span class="design-pick-ts">${new Date(p.ts).toLocaleTimeString()}</span>
+          </div>
+          <div class="design-pick-main">
+            ${p.shot ? `<div class="design-pick-shot"><img src="${p.shot}" alt="拾取元素裁剪截图"></div>` : ''}
+            <div class="design-pick-meta">
+              <details open><summary>HTML（${String(p.html || '').length} 字符）</summary><pre>${esc(p.html)}</pre></details>
+              <details><summary>计算样式（CSS，${Object.keys(p.styles || {}).length} 项）</summary><pre>${esc(cssText(p))}</pre></details>
+              <div class="design-pick-actions">
+                <button class="btn-primary design-attach" data-id="${esc(p.id)}" style="padding:4px 12px;font-size:11px">附到输入框</button>
+                <button class="btn-ghost design-copy" data-id="${esc(p.id)}" style="padding:4px 12px;font-size:11px">复制 HTML</button>
+              </div>
+            </div>
+          </div>
+        </div>`).join('');
+    };
+    /** 附到 Agent 输入框：HTML/CSS 文本块内联 + 截图走 P0 artifacts 管线（base64 零依赖） */
+    const attach = async (p) => {
+      let insert = `[Design 拾取 · ${p.selector || p.title || '元素'}]（来源：${p.pageUrl}）`;
+      if (p.shot) {
+        try {
+          const b64 = String(p.shot).includes(',') ? String(p.shot).split(',')[1] : '';
+          const res = await fetch('/api/artifacts/upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: `design-pick-${p.id}.jpg`, data: b64 }) });
+          const j = await res.json().catch(() => ({}));
+          if (res.ok && j.ok) insert += `\n[截图 artifact:${j.name}](${j.url})`;
+        } catch { /* 截图上传失败不阻断文本附入 */ }
+      }
+      insert += `\n\`\`\`html\n${p.html}\n\`\`\`\n\`\`\`css\n${cssText(p)}\n\`\`\``;
+      const input = $('#agentInput');
+      if (input) { input.value = (input.value ? input.value.replace(/\s*$/, '\n') : '') + insert + '\n'; input.focus(); }
+      toast('已附到 Agent 输入框');
+    };
+    const poll = async () => {
+      try {
+        const st = await (await fetch('/api/design/status')).json();
+        if (!st || !st.ok) return;
+        D.active = !!st.active;
+        setMode(D.active);
+        setBadge(D.active ? `会话中 · ${st.picks} 拾取` : '未启动', D.active ? 'ok' : '');
+        if (D.active) {
+          const pk = await (await fetch('/api/design/picks')).json();
+          render(pk && pk.picks);
+        }
+        else { D.sig = ''; render([]); }
+      } catch { /* 内核未响应：保持现状 */ }
+    };
+    const startPoll = () => { if (!D.timer) D.timer = setInterval(poll, 1000); void poll(); };
+    const stopPoll = () => { if (D.timer) { clearInterval(D.timer); D.timer = null; } };
+    const open = () => { drawer.classList.add('show'); startPoll(); $('#designUrl')?.focus(); };
+    const close = () => { stopPoll(); drawer.classList.remove('show'); }; // 关抽屉不停会话（Chrome 窗口继续可用；「关闭会话」才杀进程）
+    const db = $('#designBtn');
+    if (db) db.onclick = open;
+    $('#designClose').onclick = close;
+    drawer.onclick = (e) => { if (e.target === drawer) close(); };
+    $('#designOpenBtn').onclick = async () => {
+      const url = ($('#designUrl')?.value || '').trim();
+      if (!url) { toast('请输入 URL（https:// 或 file:///）'); return; }
+      const res = await fetch('/api/design/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(j.error || `打开失败（HTTP ${res.status}）`); return; }
+      toast('Chrome 窗口已启动 —— 移动鼠标高亮，点击即拾取');
+      void poll();
+    };
+    $('#designNavBtn').onclick = async () => {
+      const url = ($('#designUrl')?.value || '').trim();
+      if (!url) { toast('请输入新 URL'); return; }
+      const res = await fetch('/api/design/navigate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(j.error || `换页失败（HTTP ${res.status}）`); return; }
+      toast('已在设计会话内换页');
+    };
+    $('#designKillBtn').onclick = async () => {
+      const res = await fetch('/api/design/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      const j = await res.json().catch(() => ({}));
+      toast(res.ok && j.ok ? '设计会话已关闭（进程树已杀、临时 profile 已清）' : (j.error || '关闭失败'));
+      void poll();
+    };
+    // 结果区事件委托（render 重建 DOM 不丢绑定）
+    $('#designPicks')?.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const p = D.picks.find((x) => x.id === b.dataset.id);
+      if (!p) return;
+      if (b.classList.contains('design-attach')) void attach(p);
+      else if (b.classList.contains('design-copy')) {
+        (navigator.clipboard?.writeText?.(p.html) ?? Promise.reject()).then(() => toast('HTML 已复制')).catch(() => toast('复制失败，请手动选取'));
+      }
+    });
+    setMode(false);
+  }
   initTerm(); // ★ Orca 融合 P2：准终端
+  initDesign(); // ★ Orca 融合 P3：Design Mode（CDP 元素拾取）
   initTheme();
   initRipple();
   initKeyboard();

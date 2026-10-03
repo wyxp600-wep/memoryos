@@ -50,6 +50,8 @@ const ENV_DRIFT_ROUTES = new Set([
     "/api/github/status",               // 上报 workspace git remote + GitHub API 仓库状态（配置/网络依赖；2026-10-03 github 域新增）
     "/api/github/issues",               // GitHub REST 列表（未配置时 400 确定性；配置后随网络变化）
     "/api/github/pulls",                 // 同上（PR 列表）
+    "/api/design/status",                // 上报设计会话状态（起/关即变，随运行态漂移；2026-10-03 design 域新增）
+    "/api/design/picks",                 // 上报拾取结果 FIFO + 截图（会话态，无会话时恒空；2026-10-03 design 域新增）
 ]);
 
 /* ── 固定夹具（全部确定性：显式给 created_at，避免"同秒并列"以外的抖动） ── */

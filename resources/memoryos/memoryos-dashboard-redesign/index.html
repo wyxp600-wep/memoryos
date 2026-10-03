@@ -3368,6 +3368,34 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .wb-gh-item a:hover { color: var(--accent-cyan); text-decoration: underline; }
   .wb-gh-item .wb-gh-no { flex: none; color: var(--text-muted); font-family: Consolas, monospace; font-size: 10px; }
   .wb-gh-empty { color: var(--text-muted); font-size: 11px; padding: 2px 0 6px; }
+  /* ===== Orca 融合 P3：Design Mode 抽屉（2026-10-03 CLAIM §5） ===== */
+  .design-body { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; min-width: min(680px, 90vw); }
+  .design-url-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .design-url-row input {
+    flex: 1; min-width: 220px; padding: 6px 10px; font-size: 12px; border-radius: 6px;
+    border: 1px solid var(--border-glass); background: var(--bg-card); color: var(--text-primary); outline: none;
+  }
+  .design-url-row input:focus-visible { border-color: var(--accent-cyan); }
+  .design-hint { font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+  .design-picks { max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+  .design-pick { border: 1px solid var(--border-glass); border-radius: 8px; padding: 8px 10px; background: var(--bg-card); }
+  .design-pick-head { display: flex; gap: 8px; align-items: baseline; min-width: 0; margin-bottom: 6px; }
+  .design-pick-sel {
+    font-family: Consolas, monospace; font-size: 11px; color: var(--accent-cyan);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1;
+  }
+  .design-pick-ts { flex: none; font-size: 10px; color: var(--text-muted); }
+  .design-pick-main { display: flex; gap: 10px; align-items: flex-start; }
+  .design-pick-shot { flex: none; width: 168px; }
+  .design-pick-shot img { width: 100%; border-radius: 6px; border: 1px solid var(--border-glass); display: block; background: #fff; }
+  .design-pick-meta { flex: 1; min-width: 0; font-size: 11px; }
+  .design-pick-meta details { margin-bottom: 4px; }
+  .design-pick-meta summary { cursor: pointer; color: var(--text-muted); font-size: 10px; user-select: none; }
+  .design-pick-meta pre {
+    max-height: 130px; overflow: auto; font-size: 10px; line-height: 1.5; padding: 6px 8px; margin: 4px 0 0;
+    background: rgba(0,0,0,0.35); border-radius: 5px; white-space: pre-wrap; word-break: break-all;
+  }
+  .design-pick-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 
   /* ===== 更多功能面板 ===== */
   .more-panel {
@@ -3583,6 +3611,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
       <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
       <button class="theme-toggle" id="termBtn" title="准终端">⌨</button>
+      <button class="theme-toggle" id="designBtn" title="Design Mode 元素拾取" aria-label="Design Mode 元素拾取">🎯</button>
     </div>
   </header>
 
@@ -5045,6 +5074,28 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
     </div>
     <div class="term-foot">准终端 ≠ 完整 shell：以参数数组执行（防注入），不支持管道/重定向/全屏 TUI。超时（上限 10 分钟）、点击停止或关闭抽屉都会杀掉整棵进程树；白名单可由 MEMORYOS_EXEC_ALLOW 扩展。</div>
+  </div>
+</div>
+
+<!-- ===== Orca 融合 P3：Design Mode 抽屉（真实 Chromium 元素拾取；2026-10-03 CLAIM §5） ===== -->
+<div class="modal-overlay" id="designDrawer">
+  <div class="modal term-modal">
+    <div class="modal-header">
+      <div class="modal-title">🎯 Design Mode<span class="term-hint">点真实浏览器里的元素 → HTML + CSS + 裁剪截图 进 Agent prompt</span></div>
+      <span class="wb-gh-badge" id="designStatusBadge" aria-live="polite">未启动</span>
+      <button class="modal-close" id="designClose" aria-label="关闭 Design Mode">×</button>
+    </div>
+    <div class="design-body">
+      <div class="design-url-row">
+        <input type="text" id="designUrl" placeholder="https://… 或 file:///C:/path/page.html" aria-label="要打开的页面 URL" autocomplete="off" spellcheck="false">
+        <button class="btn-primary" id="designOpenBtn" style="padding:6px 16px;font-size:12px">打开</button>
+        <button class="btn-ghost" id="designNavBtn" style="padding:6px 14px;font-size:12px" hidden>换页</button>
+        <button class="btn-danger" id="designKillBtn" style="padding:6px 14px;font-size:12px" hidden>关闭会话</button>
+      </div>
+      <div class="design-hint">会弹出独立 Chrome 窗口：移动鼠标高亮元素，<b>点击即拾取</b>（HTML + 计算样式 + 元素裁剪截图）。结果实时回传到下方列表，可一键附进 Agent 输入框。</div>
+      <div class="design-picks" id="designPicks"><div class="wb-gh-empty">暂无拾取结果 —— 打开页面后在 Chrome 窗口里点选元素。</div></div>
+    </div>
+    <div class="term-foot">调试端口仅监听 127.0.0.1（随机端口 + 独立临时 profile，不碰你的浏览器配置）；拾取结果只留最近 10 条；关闭会话即杀进程树并清临时目录。协议白名单 http/https/file。</div>
   </div>
 </div>
 
