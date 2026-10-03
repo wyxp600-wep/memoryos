@@ -66,8 +66,9 @@ export function registerKnowledge(app, ctx) {
         const handle = runs.createRun({ sessionId: b.sessionKey || undefined, title: b.title || message.slice(0, 60), taskHint: b.taskHint }, { deferred });
         if (b.cardDispatch?.cardId) {
             if (dispatchRuns.size > 200)
-                dispatchRuns.clear();
+                dispatchRuns.delete(dispatchRuns.keys().next().value); // ★ 删最旧而非 clear()：清空会让排队 run 中止时补收口失效
             dispatchRuns.set(handle.run.id, b.cardDispatch);
+            startRunHeartbeat(b.cardDispatch);
         }
         if (deferred) {
             runQueue.push({ handle, b });
@@ -137,7 +138,6 @@ export function registerKnowledge(app, ctx) {
         // ★ A1 一键派发：本 run 绑定的卡片（无绑定 = 普通对话 run，下面三条派发逻辑全部不触发）
         const cd = b.cardDispatch?.cardId ? b.cardDispatch : null;
         let doneSeen = false; // agent 是否已自行 task_done（没做 → 终态前强制收尾轮补一枪）
-        let lastBeatAt = Date.now(); // 租约打卡节流（60s）：长跑 run 不被 reaper 误判掉线
         // 写文件类步骤的前后快照（diff 数据源在路由层注入；路径经 resolveInside 边界校验，越界不快照）
         // ★ 并行池：一轮可能含多个 file_write（L1 独占串行跑，但 tool_call 事件在前置门禁里先批量发）——
         //   快照按 FIFO 队列逐条配对（tool_result 按模型序到达，与创建序一致），单槽会被后一次覆盖而错配。
@@ -169,20 +169,25 @@ export function registerKnowledge(app, ctx) {
             if (s.type === "tool_result" && s.tool === "task_done" && s.ok && lastStep?.taskDone) {
                 handle.ev("task_done", { taskId: lastStep.taskDone });
             }
-            // ★ A1 派发 run 的两件小事：记下 agent 已收口 + 租约/工作证打卡（60s 节流，失败不阻断）
+            // ★ A1 派发 run：记下 agent 已收口。租约打卡改为 60s 定时器（时间驱动）——
+            //   原绑定 onStep 节奏：单轮长生成（无工具调用）超 10 分钟租约即过期被 reaper 误杀。
             if (cd) {
                 if (s.type === "tool_result" && s.tool === "task_done" && s.ok)
                     doneSeen = true;
-                if (Date.now() - lastBeatAt >= 60000) {
-                    lastBeatAt = Date.now();
-                    try {
-                        db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cd.cardId);
-                        if (cd.dispatchId)
-                            touchDispatchLease(db, cd.dispatchId, 10);
-                    }
-                    catch { /* 打卡失败不阻断 run */ }
-                }
             }
+        };
+        let runHeartbeat = null; // 派发 run 的租约定时器（终态后清除）
+        const startRunHeartbeat = (cd) => {
+            if (!cd || runHeartbeat)
+                return;
+            runHeartbeat = setInterval(() => {
+                try {
+                    db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cd.cardId);
+                    if (cd.dispatchId)
+                        touchDispatchLease(db, cd.dispatchId, 10);
+                }
+                catch { /* 打卡失败不阻断 run */ }
+            }, 60000);
         };
         let runAnswer = ""; // ★ P4：run 最终回复（try 块内赋值，收口处生成交接卡用）
         try {
@@ -239,6 +244,7 @@ export function registerKnowledge(app, ctx) {
                 });
             }
             catch (e) { console.error(`[dispatch] 收口失败：${e instanceof Error ? e.message : e}`); }
+            finally { if (runHeartbeat) { clearInterval(runHeartbeat); runHeartbeat = null; } }
         }
         // 本轮 run 终态 → 空出并发位，启动排队的下一个（★ 驾驶舱「并行数」）
         await pumpQueue();

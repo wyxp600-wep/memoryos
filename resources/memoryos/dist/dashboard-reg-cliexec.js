@@ -55,6 +55,8 @@ export function registerCliExec(app, ctx) {
     })();
 
     function pushLine(job, stream, text) {
+        // 全量原文独立累积（供 HANDOFF 解析与日志落盘，D7）；lines 只服务 SSE、可截断
+        job.fullText = (job.fullText ?? "") + text + (text.endsWith("\n") ? "" : "\n");
         for (const line of String(text).split(/\r?\n/)) {
             job.lines.push({ stream, text: line, at: Date.now() });
         }
@@ -63,16 +65,16 @@ export function registerCliExec(app, ctx) {
         job.waiters?.forEach((w) => w());
     }
 
-    /** 队列泵：档案并发位空出即启动下一个（串行默认 1） */
+    /** 队列泵：档案并发位空出即启动下一个（串行默认 1；计数在循环内累加，防连派并发击穿） */
     function pump(profileId) {
         const q = queues.get(profileId);
         if (!q?.length)
             return;
-        const running = [...jobs.values()].filter((j) => j.profileId === profileId && j.status === "running").length;
         const limit = Math.max(1, Number(q.concurrency) || 1);
+        let running = [...jobs.values()].filter((j) => j.profileId === profileId && j.status === "running").length;
         while (running < limit && q.length) {
-            const job = q.shift();
-            launch(job);
+            launch(q.shift());
+            running++;
         }
     }
 
@@ -112,6 +114,7 @@ export function registerCliExec(app, ctx) {
             return;
         }
         job.pid = job.proc.pid ?? null;
+        job.proc.stdin?.on("error", () => { }); // ★ CLI 提前退出时 stdin EPIPE 不能炸 dashboard
         pushLine(job, "sys", `[执行器] ${cmd} ${args.join(" ")} ｜ 工作区 ${cwd} ｜ PID ${job.pid ?? "?"}`);
         // 心跳：续卡租约 + 工作证租约（防治理回收误杀长任务）
         job.heartbeat = setInterval(() => {
@@ -176,7 +179,7 @@ export function registerCliExec(app, ctx) {
         clearTimeout(job.timer);
         clearInterval(job.heartbeat);
         killTree(job);
-        const all = job.lines.map((l) => l.text).join("\n");
+        const all = job.fullText ?? job.lines.map((l) => l.text).join("\n"); // 全量原文（不受 SSE 缓冲截断影响）
         let answer = "";
         const m = all.match(/<<<HANDOFF>>>([\s\S]*?)(?:<<\/HANDOFF>>>|$)/);
         if (m?.[1]?.trim())
@@ -201,8 +204,31 @@ export function registerCliExec(app, ctx) {
             pushLine(job, "sys", `[执行器] 收口异常：${e instanceof Error ? e.message : e}`);
         }
         job.waiters?.forEach((w) => w());
+        pruneJobs();
         pump(job.profileId);
     }
+
+    /** 收口后的 job 只留最近 20 条（防常驻内存无界增长）；active/queued 永不清理 */
+    function pruneJobs() {
+        const finished = [...jobs.entries()].filter(([, j]) => j.status === "done" || j.status === "failed");
+        if (finished.length > 20)
+            for (const [id] of finished.slice(0, finished.length - 20))
+                jobs.delete(id);
+    }
+
+    /** 启动时清理 14 天前的历史日志（防 cli-logs 无界吃磁盘） */
+    function cleanOldLogs() {
+        try {
+            const cutoff = Date.now() - 14 * 86400000;
+            for (const f of fs.readdirSync(logDir)) {
+                const fp = path.join(logDir, f);
+                if (fs.statSync(fp).mtimeMs < cutoff)
+                    fs.rmSync(fp, { force: true });
+            }
+        }
+        catch { /* 清理失败不影响启动 */ }
+    }
+    cleanOldLogs();
 
     function safeJson(s) {
         try {
@@ -226,8 +252,9 @@ export function registerCliExec(app, ctx) {
         const q = queues.get(profile.id);
         q.concurrency = profile.concurrency;
         q.push(job);
+        const queueAhead = q.indexOf(job); // 必须在 pump 前取（启动即出队会变 -1）
         pump(profile.id);
-        return { runId, queued: job.status === "queued", queueAhead: q.indexOf(job) };
+        return { runId, queued: job.status === "queued", queueAhead };
     };
 
     // 实时执行流（SSE）：先重放缓冲，再持续推送；done/failed 即关闭

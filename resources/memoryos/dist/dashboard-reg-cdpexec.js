@@ -23,6 +23,21 @@ export function registerCdpExec(app, ctx) {
     const { db } = ctx;
     let jobs = new Map();
     let portCursor = 0;
+    // scanAgents 是 spawnSync 秒级同步扫描，绝不能在派发热路径裸调（会卡住所有 SSE/HTTP）——60s TTL 缓存
+    let _scanCache = { list: null, at: 0 };
+    async function scanAgentsCached() {
+        const now = Date.now();
+        if (_scanCache.list && now - _scanCache.at < 60000)
+            return _scanCache.list;
+        try {
+            const { scanAgents } = await import("./scan.js");
+            _scanCache = { list: scanAgents()?.agents ?? [], at: now };
+        }
+        catch {
+            _scanCache = { list: null, at: now };
+        }
+        return _scanCache.list;
+    }
 
     function pushLine(job, stream, text) {
         job.lines.push({ stream, text: String(text), at: Date.now() });
@@ -87,8 +102,7 @@ export function registerCdpExec(app, ctx) {
         let exe = ov?.exe ?? null;
         if (!exe) {
             try {
-                const { scanAgents } = await import("./scan.js");
-                const hit = (scanAgents()?.agents ?? []).find((a) => a.id === p.agent_key && a.path && a.path.includes(".exe"));
+                const hit = ((await scanAgentsCached()) ?? []).find((a) => a.id === p.agent_key && a.path && a.path.includes(".exe"));
                 exe = hit?.path ?? null;
             }
             catch { /* 扫描失败走降档 */ }
@@ -114,9 +128,18 @@ export function registerCdpExec(app, ctx) {
         if (!targets)
             return fail(job, `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
         pushLine(job, "sys", `[驾驶] CDP 已连接（端口 ${port}，${targets.length} 个页面）`);
-        // 选目标页：targetMatch 正则优先，否则第一个 page
+        // 选目标页：targetMatch 正则优先（非法正则降级为不匹配，不能崩进程），否则第一个 page
         const pages = targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
-        const match = ov?.targetMatch ? pages.find((t) => new RegExp(ov.targetMatch).test(`${t.title} ${t.url}`)) : null;
+        let match = null;
+        if (ov?.targetMatch) {
+            try {
+                const re = new RegExp(ov.targetMatch);
+                match = pages.find((t) => re.test(`${t.title} ${t.url}`));
+            }
+            catch (e) {
+                pushLine(job, "sys", `[驾驶] targetMatch 正则非法（${e.message}），已忽略`);
+            }
+        }
         const target = match ?? pages[0];
         if (!target)
             return fail(job, "没有可驾驶的页面目标");
@@ -161,8 +184,9 @@ export function registerCdpExec(app, ctx) {
             }
         });
         job.ws.addEventListener("close", () => {
+            // ★ App 被用户关闭 → 会话终止并收口，不能让心跳把租约无限续命（reaper 失效）
             if (job.status === "driving")
-                pushLine(job, "sys", "[驾驶] 调试连接已断开（应用可能被关闭）");
+                finish(job, false, "调试连接断开（应用可能被关闭）");
         });
         // 心跳 + 会话上限
         job.heartbeat = setInterval(() => {
@@ -212,11 +236,16 @@ export function registerCdpExec(app, ctx) {
     function finish(job, ok, detail) {
         if (job.status === "done" || job.status === "failed")
             return;
+        // ★ 从未成功驾驶过（启动/等 CDP 阶段失败）→ 我们拉起的 App 是废实例，杀掉防泄漏；
+        //   已进入 driving 的（用户停止/超时）→ App 归用户，只断连接不杀。
+        const neverDrove = job.status !== "driving";
         job.status = ok ? "done" : "failed";
         job.finishedAt = Date.now();
         clearTimeout(job.timer);
         clearInterval(job.heartbeat);
         try { job.ws?.close(); } catch { /* 忽略 */ }
+        if (neverDrove && job.pid)
+            killTree(job.pid);
         pushLine(job, "sys", `[驾驶] 收口：${detail}`);
         try {
             ctx.finalizeCardDispatch?.({ cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId, detail: `${detail}（CDP 驾驶）` });
@@ -226,6 +255,11 @@ export function registerCdpExec(app, ctx) {
         }
         job.waiters?.forEach((w) => w("end"));
         job.waiters = [];
+        // 收口后的会话只留最近 10 条（帧 base64 每条可达数百 KB，防常驻内存无界增长）
+        const finishedJobs = [...jobs.entries()].filter(([, j]) => j.status === "done" || j.status === "failed");
+        if (finishedJobs.length > 10)
+            for (const [id] of finishedJobs.slice(0, finishedJobs.length - 10))
+                jobs.delete(id);
     }
     function safeJson(s) {
         try { return JSON.parse(s ?? "null"); } catch { return null; }
@@ -239,7 +273,8 @@ export function registerCdpExec(app, ctx) {
             taskId: taskId ?? null, message, profile, status: "queued", lines: [], frame: null, startedAt: null, finishedAt: null,
         };
         jobs.set(runId, job);
-        start(job);
+        // start 是 async：必须接住 rejection（launch_overrides 正则写错等不能崩整个 dashboard）
+        start(job).catch((e) => fail(job, `驾驶启动异常：${e instanceof Error ? e.message : e}`));
         return { runId, queued: false, queueAhead: 0 };
     };
 

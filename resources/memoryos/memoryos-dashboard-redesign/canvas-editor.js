@@ -81,10 +81,21 @@
             // 派生视觉边：交接挂边（links.kind='handoff'，任务卡→交接卡）只读展示，不可删
             for (const l of (g.links || [])) {
                 if (l.kind !== 'handoff') continue;
-                const dup = [...this.edges.values()].some(e => e.source_id === l.src_id && e.target_id === l.dst_id);
+                const dup = [...this.edges.values()].some(e => String(e.source_id) === String(l.src_id) && String(e.target_id) === String(l.dst_id));
                 if (!dup) this.edges.set(`l${l.src_id}_${l.dst_id}`, { source_id: l.src_id, target_id: l.dst_id, kind: 'handoff', status: 'active', derived: true });
             }
-            if (this.visible) this.renderAll();
+            // 数据签名比对：12s 轮询里数据没变就跳过全量重渲染（重建 50 节点 DOM 的最大开销项）。
+            // 注意 _renderedSig 守卫：隐藏期只存了签名没渲染过，打开画布时必须真正渲染一次。
+            const sig = JSON.stringify([
+                [...keep.values()].map(n => [n.id, n.kind, n.status, n.title, n.x, n.y, n.profileMissing]),
+                [...this.edges.values()].map(e => [e.id, e.source_id, e.target_id, e.kind, e.status]),
+            ]);
+            if (this.visible && sig === this._lastSig && sig === this._renderedSig) return;
+            this._lastSig = sig;
+            if (this.visible && !this._dragging && !this._panning) {
+                try { this.renderAll(); this._renderedSig = sig; }
+                catch (e) { console.error('节点画布渲染失败', e); } // 渲染异常不得留下"清空后中断"的空画布
+            }
         }
         refreshSoon() { clearTimeout(this._reloadT); this._reloadT = setTimeout(() => this.reload(), 300); }
 
@@ -247,7 +258,7 @@
                         method: 'POST', headers: { 'content-type': 'application/json' },
                         body: JSON.stringify({ title: '新卡片', kind: 'doc', meta: { map_pos: { c: { x: Math.round(wx), y: Math.round(wy) } } } }),
                     }).then(x => x.json());
-                    if (res.ok) { this.toast(`已创建卡片 #${res.id}，点击类型徽标选择类型`); await this.reload(); this.editCard(Number(res.id)); }
+                    if (res.ok) { this.toast(`已创建卡片 #${res.id}，点击类型徽标选择类型`); await this.reload(); const node = this.nodes.get(Number(res.id)); if (node) this.editCard(node); }
                     else this.toast(res.error || '创建失败');
                 } catch { this.toast('创建失败：服务不可达'); }
             };
@@ -257,20 +268,22 @@
         /* ── 渲染 ────────────────────────────────── */
         renderAll() { this.renderNodes(); this.renderEdges(); }
         renderNodes() {
-            this.nodesEl.innerHTML = '';
+            // 原子替换：先在片段上建完再换入——渲染中途异常不会留下清空的画布
+            const frag = document.createDocumentFragment();
             // 无位置的卡自动瀑布排布，避免全部叠在原点
             let auto = 0;
             for (const n of this.nodes.values()) {
                 if (!n.x && !n.y) { n.x = 40 + (auto % 4) * 250; n.y = 40 + Math.floor(auto / 4) * 110; auto++; }
-                this.nodesEl.appendChild(this.nodeEl(n));
+                frag.appendChild(this.nodeEl(n));
             }
+            this.nodesEl.replaceChildren(frag);
         }
         nodeEl(n) {
             const el = document.createElement('div');
             el.className = 'nc-node';
             el.dataset.id = n.id;
             const t = this.types.get(n.kind);
-            const badgeColor = t?.color ? `style="background:${t.color}"` : '';
+            const badgeColor = /^#[0-9a-fA-F]{3,8}$/.test(t?.color ?? '') ? `style="background:${t.color}"` : '';
             const sub = [];
             if (n.kind === 'agent') {
                 sub.push(n.profileMissing ? '⚠️ 智能体载体缺失' : '');
@@ -333,6 +346,17 @@
                 }
                 p.addEventListener('click', ev => ev.stopPropagation());
                 this.svgEl.appendChild(p);
+                e.el = p;
+            }
+        }
+        /** 拖拽热路径：只更新既有 path 的 d 属性（renderEdges 每帧重建全部 DOM 的替代） */
+        updateEdgePaths() {
+            for (const e of this.edges.values()) {
+                const s = this.nodes.get(Number(e.source_id)), t = this.nodes.get(Number(e.target_id));
+                if (!s || !t || !e.el) continue;
+                const x1 = s.x + 216, y1 = s.y + 33, x2 = t.x, y2 = t.y + 33;
+                const dx = Math.max(40, Math.abs(x2 - x1) / 2);
+                e.el.setAttribute('d', `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`);
             }
         }
 
@@ -347,7 +371,7 @@
                 n.x = ox + (ev.clientX - sx) / this.scale;
                 n.y = oy + (ev.clientY - sy) / this.scale;
                 n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
-                this.renderEdges();
+                this.updateEdgePaths(); // 拖拽每帧只改 d 属性，不全量重建 SVG
             };
             const up = () => {
                 removeEventListener('pointermove', move); removeEventListener('pointerup', up);
@@ -472,6 +496,7 @@
             const term = pop.querySelector('.nc-term');
             const status = pop.querySelector('.nc-term-status');
             const es = new EventSource(`/api/agent-cards/${n.id}/exec/stream`);
+            this._popClosers.push(() => es.close()); // 弹层被任何途径关闭时同步断流（防 EventSource 泄漏）
             const scroll = () => { term.scrollTop = term.scrollHeight; };
             es.addEventListener('line', e => {
                 const d = JSON.parse(e.data);
@@ -505,6 +530,7 @@
             const term = pop.querySelector('.nc-term');
             const status = pop.querySelector('.nc-term-status');
             const es = new EventSource(`/api/agent-cards/${n.id}/live`);
+            this._popClosers.push(() => es.close()); // 同上
             es.addEventListener('frame', e => { img.src = 'data:image/jpeg;base64,' + JSON.parse(e.data).frame; });
             es.addEventListener('line', e => {
                 const d = JSON.parse(e.data);
@@ -590,10 +616,13 @@
             const chLabel = { cli: '直控 · 终端流', cdp: '驾驶 · 界面直播', queue: '队列 · 领单' }[st.channel] ?? '队列 · 领单';
             pop.innerHTML = `
               <h4>派发确认</h4>
-              <div class="row">任务：${src.title}</div>
-              <div class="row">智能体：${st.name ?? dst.title} · ${chLabel}</div>
-              <div class="row">${st.queue_depth ? `队列中已有 ${st.queue_depth} 项（将排队执行）` : '当前空闲，立即执行'}</div>
+              <div class="row">任务：<span class="ce-esc-task"></span></div>
+              <div class="row">智能体：<span class="ce-esc-agent"></span> · ${chLabel}</div>
+              <div class="row">${st.queue_depth ? `队列中已有 ${Number(st.queue_depth)} 项（将排队执行）` : '当前空闲，立即执行'}</div>
               <div class="nc-btns"><button class="nc-btn ok" act="ok">确认派发</button><button class="nc-btn" act="cancel">取消</button></div>`;
+            // 卡片标题/智能体名是用户/智能体可控文本 → 一律 textContent 注入，防存储型 XSS
+            pop.querySelector('.ce-esc-task').textContent = src.title;
+            pop.querySelector('.ce-esc-agent').textContent = st.name ?? dst.title;
             pop.querySelector('[act="cancel"]').onclick = () => { this.closePops(); this.exitLink(); };
             pop.querySelector('[act="ok"]').onclick = async () => {
                 this.closePops();
@@ -630,7 +659,7 @@
             this._pops.push(el);
             return el;
         }
-        closePops() { (this._pops || []).forEach(p => p.remove()); this._pops = []; }
+        closePops() { (this._popClosers || []).forEach(f => { try { f(); } catch { /* 忽略 */ } }); this._popClosers = []; (this._pops || []).forEach(p => p.remove()); this._pops = []; }
         confirmPop(e, text, onOk) {
             this.closePops();
             const pop = this.pop(`left:${Math.min(e.clientX, innerWidth - 220)}px;top:${Math.min(e.clientY, innerHeight - 120)}px;width:200px`);

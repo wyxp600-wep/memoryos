@@ -264,10 +264,12 @@ export function registerCards(app, ctx) {
             }
             catch { /* 同上 */ }
         }
-        // ★ P4 交接文档卡：run 收口即把结论落成 handoff 卡并挂边（任务卡 --handoff--> 交接卡）。
-        //   有任务记忆则优先提取其「→ 结论(AGENT)：」段（task_done 回写），否则用收口 detail；
-        //   失败不反噬收口。消费规则：下游注入取 dispatch generation 最新的那张（D9）。
+        // ★ P4 交接文档卡：仅成功收口生成（失败不产交接噪音，防 board 无界膨胀；失败教训在 run 日志与任务记忆）。
+        //   内容优先级：任务记忆「→ 结论(AGENT)：」段 > run 最终回复 > 收口 detail；
+        //   消费规则：下游注入取 dispatch generation 最新的那张（D9）。
         try {
+            if (!info.ok)
+                throw 0; // 纯控制流：跳过失败收口的交接生成（catch 为空、不影响收口本身）
             const memRow = (c.ref_kind === "memory" && c.ref_id
                 ? db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(c.ref_id)
                 : undefined) ??
@@ -661,6 +663,7 @@ export function registerCards(app, ctx) {
         }
         db.prepare(`DELETE FROM card_memory WHERE card_id=?`).run(c.id);
         db.prepare(`DELETE FROM links WHERE (src_kind='card' AND src_id=?) OR (dst_kind='card' AND dst_id=?)`).run(c.id, c.id);
+        db.prepare(`DELETE FROM card_edges WHERE source_id=? OR target_id=?`).run(c.id, c.id); // ★ 节点画布：防悬挂边（源/目标指向已删卡）
         db.prepare(`DELETE FROM card_events WHERE card_id=?`).run(c.id);
         db.prepare(`DELETE FROM card_comments WHERE card_id=?`).run(c.id);
         db.prepare(`DELETE FROM cards WHERE id=?`).run(c.id);
@@ -766,7 +769,7 @@ export function registerCards(app, ctx) {
         const handoffs = db.prepare(`SELECT h.title title, h.body body FROM card_edges e JOIN cards h ON h.id = e.source_id
             WHERE e.target_id=? AND e.kind='inject' AND e.status='active' ORDER BY e.id`).all(id);
         const handoffBlock = handoffs.length
-            ? `【前情提要（来自上游交接文档，全文按需检索）】\n` + handoffs.map((h) => `· ${h.title}：${String(h.body ?? "").slice(0, 600)}`).join("\n")
+            ? (`【前情提要（来自上游交接文档，全文按需检索）】\n` + handoffs.map((h) => `· ${h.title}：${String(h.body ?? "").slice(0, 600)}`).join("\n")).slice(0, 1200) // ★ 总量截断：多注入边叠加不能撞 run 提示词上限
             : "";
         // 起 run：提示词内嵌卡片正文（agent 无卡片读工具），并给足收口指令
         const message = [
@@ -786,14 +789,14 @@ export function registerCards(app, ctx) {
         try {
             if (channel === "cli") {
                 if (typeof ctx.startCliRun !== "function")
-                    return reply.code(503).send({ ok: false, error: "CLI 直控执行器未就绪" });
+                    throw new Error("CLI 直控执行器未就绪"); // ★ 抛出走统一回滚分支（503 早退会留下已认领的 running 卡+工作证）
                 started = await ctx.startCliRun({
                     cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
                 });
             }
             else if (channel === "cdp") {
                 if (typeof ctx.startCdpRun !== "function")
-                    return reply.code(503).send({ ok: false, error: "CDP 驾驶执行器未就绪" });
+                    throw new Error("CDP 驾驶执行器未就绪"); // 同上
                 started = await ctx.startCdpRun({
                     cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
                 });
