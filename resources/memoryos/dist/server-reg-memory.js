@@ -71,8 +71,20 @@ export function registerMemoryTools(server, ctx) {
                 memType = "task";
                 _taskNote = `\n⚠ 检测到 [task] 状态头：type 已强制 task（原 ${args.type}）。本通道不建地图卡——正式派活请用 task_assign。`;
             }
-            const embedder = await getEmbedder();
-            const [emb] = await embedder.embedTexts([args.content]);
+            // ★ 手机离线适配（2026-10-02）：嵌入端点不可达（如 EMBED_MODE=api 指向的电脑 IP 失效/关机）时不硬失败。
+            //   降级为「先落库、无向量、置 embedding_stale=1 待补嵌」——词法检索照常可召回，语义检索等端点恢复后
+            //   由 daemon reembedStale 自动补算。与搜索路径（hybridSearch）离线优雅降级对齐。
+            let emb = null;
+            let embedFailed = false;
+            try {
+                const embedder = await getEmbedder();
+                [emb] = await embedder.embedTexts([args.content]);
+            }
+            catch (e) {
+                emb = null;
+                embedFailed = true;
+                try { console.error(`[memory_write] 嵌入失败降级（离线）：${e instanceof Error ? e.message : String(e)}`); } catch { }
+            }
             // ★ P2-6（C-4 / #4200）修订写前置：乐观版本校验 + 归档副作用。
             //   **必须早于下方去重/冲突预检**——预检命中 merge/conflict 时会提前 return，
             //   若把本段放在其后，supersedes 会被静默丢弃（旧条不归档、无 superseded 事件、causal_parent 丢失）。
@@ -128,7 +140,8 @@ export function registerMemoryTools(server, ctx) {
                     return;
                 }
                 // (3) 事务内新鲜全量比对 —— 原 dedupeDecisionFast 兜底走进程缓存（跨进程盲区），此处绕开
-                const d2 = dedupeDecision(getVectorsOnProject(db, args.project), emb, -1);
+                // emb=null（离线嵌入降级）→ cosine(vec,null) 会抛，跳过向量去重（精确同文闸已兜底），直接 insert
+                const d2 = emb ? dedupeDecision(getVectorsOnProject(db, args.project), emb, -1) : { action: "insert", targetId: null, sim: -1 };
                 if (d2.action === "merge" && d2.targetId) {
                     plan = { kind: "merge", targetId: d2.targetId, sim: d2.sim };
                     bumpConfidence(db, d2.targetId, 0.1);
@@ -197,6 +210,10 @@ export function registerMemoryTools(server, ctx) {
             });
             if (wAbort)
                 return wAbort;
+            // 离线降级：本条以无向量落库 → 置 embedding_stale=1，待嵌入端点恢复由 daemon reembedStale 补算
+            if (embedFailed && row && row.id) {
+                try { db.prepare(`UPDATE memories SET embedding_stale=1 WHERE id=? AND embedding_stale=0`).run(row.id); } catch { /* 标记失败不阻断写库 */ }
+            }
             if (plan.kind === "idem")
                 return `幂等键命中：#${plan.id} 已存在且内容一致，本次未重复写入。` + stateReceipt({ op: "memory_write_idempotent", id: plan.id }) + _taskNote + _gate;
             if (plan.kind === "idem_conflict")

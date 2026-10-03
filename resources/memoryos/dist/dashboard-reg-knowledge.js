@@ -137,7 +137,7 @@ export function registerKnowledge(app, ctx) {
             const r = await runAgent({
                 llm, mcp, messages, maxSteps,
                 onStep,
-                writeGate: allowWrites ? null : () => false,
+                writeGate: allowWrites ? (() => true) : () => false,
                 signal: handle.run.abortCtrl.signal,
                 cache: tuning.llmCache,                  // ★ 驾驶舱「缓存」：同历史轮次命中 LLM 响应缓存
                 budgetTokens: tuning.tokenBudget,        // ★ 驾驶舱「预算上限」：超预算即中止本 run
@@ -511,7 +511,7 @@ export function registerKnowledge(app, ctx) {
                         denied.push(s.tool);
                 },
                 // 未获同意 → 写门禁一律拒绝（agent 收到拒绝提示后改为只读作答，不会硬重试）
-                writeGate: allowWrites ? null : () => false,
+                writeGate: allowWrites ? (() => true) : () => false,
             });
             return {
                 ok: true, answer: r.answer, steps: r.steps, llmSteps: r.steps,

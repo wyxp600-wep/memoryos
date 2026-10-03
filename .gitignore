@@ -42,6 +42,7 @@ resources/memoryos/data/logs/
 resources/memoryos/data/*.log
 resources/memoryos/data/_ls.txt
 resources/memoryos/data/token
+resources/memoryos/data/config.json
 
 # ---- 6. 旧备份命名（已由 git 取代）----
 *.bak
