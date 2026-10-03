@@ -132,6 +132,66 @@ try {
     }));
     const rdtext = rd.result?.content?.[0]?.text ?? "";
     check("tools/call memory_read 返回完整正文", rdtext.includes("完整正文") && rdtext.includes("微信回调"), JSON.stringify(rdtext.slice(0, 50)));
+    // ── 批次C3/C4（P1-10/P1-12）：memory_search cursor 分页 + 证据/向量三态 ──
+    // 设计：6 条共享前缀长探针（fake-embed 会因向量相似被去重合并成 1~2 条——不影响断言，关键是「第 1 页有超长命中」
+    //   供 P1-12 证据窗口/向量三态断言）+ 2 条无共享前缀的独立探针 A/B（保证独立可召回，总命中 ≥3 稳定）。
+    // 分页断言用 limit=2：满页签发 cursor → 逐页推进 → 末页必见「已到末尾」（Orca 显式截断契约：有/无下一页必须可区分）。
+    const c34Pad = "分页探针填充文字〇一二三四五六七八九甲乙丙丁戊己庚辛";
+    const c34Query = "C3PROBE 探针分页";
+    for (let i = 1; i <= 6; i++) {
+        await send("tools/call", {
+            name: "memory_write",
+            arguments: {
+                content: `C3PROBE 探针分页 第 ${i} 号 ${c34Pad.repeat(8)} 尾部唯一锚词 probe-anchor-${i} 尾C3PROBE`,
+                type: "experience",
+                project: "ecommerce",
+            },
+        });
+    }
+    await send("tools/call", {
+        name: "memory_write",
+        arguments: {
+            content: "C3PROBE 探针分页 试验 A 唯一锚词 alpha-unique-a-001 beta gamma delta epsilon 甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥",
+            type: "experience",
+            project: "ecommerce",
+        },
+    });
+    await send("tools/call", {
+        name: "memory_write",
+        arguments: {
+            content: "C3PROBE 探针分页 试验 B 唯一锚词 beta-unique-b-990 zeta eta theta iota 子丑寅卯辰巳午未申酉戌亥甲乙丙丁",
+            type: "experience",
+            project: "ecommerce",
+        },
+    });
+    const c34Call = (args) => send("tools/call", { name: "memory_search", arguments: { query: c34Query, project: "ecommerce", ...args } });
+    const c34Pages = [];
+    const c34pg1 = (await c34Call({ limit: 2 })).result?.content?.[0]?.text ?? "";
+    c34Pages.push(c34pg1);
+    check("C3.满页回执签发 cursor（第 1 页）", c34pg1.includes("第 1 页") && c34pg1.includes("cursor="), JSON.stringify(c34pg1.slice(-160)));
+    const c34c1 = (c34pg1.match(/cursor=([A-Za-z0-9+/=]+)/) || [])[1];
+    let c34cur = c34c1;
+    let c34pgN = "";
+    let c34EndSeen = false;
+    for (let page = 2; c34cur && page <= 8; page++) {
+        c34pgN = (await c34Call({ limit: 2, cursor: c34cur })).result?.content?.[0]?.text ?? "";
+        c34Pages.push(c34pgN);
+        check(`C3.cursor 翻到第 ${page} 页`, c34pgN.includes(`第 ${page} 页`), JSON.stringify(c34pgN.slice(-120)));
+        if (c34pgN.includes("已到末尾")) {
+            c34EndSeen = true;
+            break;
+        }
+        c34cur = (c34pgN.match(/cursor=([A-Za-z0-9+/=]+)/) || [])[1];
+    }
+    check("C3.末页回执「已到末尾」（有/无下一页可区分）", c34EndSeen, "");
+    const c34stale = Buffer.from(JSON.stringify({ o: 5, h: "0000dead" })).toString("base64");
+    const c34pgStale = (await c34Call({ limit: 2, cursor: c34stale })).result?.content?.[0]?.text ?? "";
+    check("C3.stale cursor 回第 1 页", c34pgStale.includes("cursor 与当前 query/scope 不匹配") && c34pgStale.includes("第 1 页"), "");
+    const c34pgF = (await c34Call({ limit: 2, type: "experience", cursor: c34c1 })).result?.content?.[0]?.text ?? "";
+    check("C3.过滤激活时 cursor 被忽略（回执显式告知）", c34pgF.includes("cursor 被忽略"), "");
+    check("C4.命中带 via/vec 元信息（尾部区块）", c34pg1.includes("via/vec：") && /#\d+=(lexical|semantic|hybrid)\//.test(c34pg1), JSON.stringify((c34pg1.match(/via\/vec：[^\n]*/g) || []).slice(0, 1)));
+    const c34All = c34Pages.join("\n");
+    check("C4.超长正文带「证据」窗口（任一页）", c34All.includes("↳ 证据 #") && /证据 #[^\n]*C3PROBE/.test(c34All), JSON.stringify((c34All.match(/↳ 证据 #[^\n]*/g) || []).slice(0, 1)));
     // task 交接：assign → claim → done（MVP 协同闭环，真实 MCP 链路）
     const ta = (await send("tools/call", {
         name: "task_assign",

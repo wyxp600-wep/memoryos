@@ -262,6 +262,9 @@ export async function hybridSearch(db, embedder, p) {
             confidence: rc.confidence,
             created_at: rc.created_at,
             score: rc.salience * wOf(rc), // 暴露显著度×权重供上层参考（RRF 原始分见 final 逻辑）
+            // ★ 批次C4（P1-12 证据分离，按 MemoryOS 语义裁剪）：召回通道归因。rankedAll 只含 RRF 并集 id
+            //   → 每命中必在语义/词法至少一路；双路都在 = hybrid。语义路降级（semScores 空）时自然全 lexical。
+            via: semScores.has(id) ? (lexScores.has(id) ? "hybrid" : "semantic") : "lexical",
         });
         hitIds.push(id);
     }

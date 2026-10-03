@@ -19,6 +19,59 @@ export function registerMemoryTools(server, ctx) {
     // ★ 2026-10-03 批次C2（截断契约扩面）：命中正文摘要长度上限（截断层③）——原散落的 magic number 220，
     //   提为常量以便"有几条被缩"的量化与调用方提示。
     const SNIPPET_MAX = 220;
+    /** ★ 批次C3（P1-10 检索分页）：cursor 绑定键 = query+project 的 FNV-1a 32bit。
+     *  不存全量 query（cursor 保持不透明短串）；query 或 scope 一变即 stale（对标 Orca stale-cursor：作废、客户端重发第 1 页）。 */
+    function cursorHashOf(query, project) {
+        let h = 0x811c9dc5;
+        const s = String(query ?? "") + "\u0000" + String(project ?? "global");
+        for (let i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = Math.imul(h, 0x01000193);
+        }
+        return (h >>> 0).toString(16);
+    }
+    /** ★ 批次C4（P1-12 证据分离，按 MemoryOS 语义裁剪）：证据 = 匹配锚定窗口。
+     *  词命中取首个词位置 ±40/120 窗；纯语义命中（无词命中）退回前窗。Orca 的「源存在性三态」无转录层可映射，
+     *  裁剪为「向量可用性三态」，见 vectorStatesOf。 */
+    function evidenceSnippet(flatContent, query, cap = 120) {
+        const terms = (String(query ?? "").match(/[一-鿿]+|[a-zA-Z0-9_]+/g) || []).filter((t) => t.length >= 2);
+        const low = flatContent.toLowerCase();
+        let pos = -1;
+        for (const t of terms) {
+            const p = low.indexOf(t.toLowerCase());
+            if (p >= 0) {
+                pos = p;
+                break;
+            }
+        }
+        if (pos < 0)
+            return flatContent.slice(0, cap);
+        const from = Math.max(0, pos - 40);
+        return `${from > 0 ? "…" : ""}${flatContent.slice(from, from + cap)}${from + cap < flatContent.length ? "…" : ""}`;
+    }
+    /** ★ 批次C4（P1-12）：向量可用性三态 —— memory_vectors JOIN（P1-2.2 拆表）+ embedding_stale（P1-2.4 stale 惩罚）。
+     *  ok=有向量且最新 / stale=正文已改向量未重算（语义分可能滞后，daemon embed-backfill 补算）/ missing=无向量（仅词法可召回）。
+     *  旧库无向量表/列 → 全量省略 vec 字段（不臆造）。 */
+    function vectorStatesOf(d, ids) {
+        const map = new Map();
+        if (!ids.length)
+            return map;
+        try {
+            const qs = ids.map(() => "?").join(",");
+            const rows = d
+                .prepare(`SELECT m.id, CASE WHEN v.memory_id IS NOT NULL THEN (CASE m.embedding_stale WHEN 1 THEN 'stale' ELSE 'ok' END) ELSE 'missing' END st
+        FROM memories m
+        LEFT JOIN memory_vectors v ON v.memory_id = m.id
+        WHERE m.id IN (${qs})`)
+                .all(...ids);
+            for (const r of rows)
+                map.set(Number(r.id), r.st);
+        }
+        catch {
+            map.clear();
+        }
+        return map;
+    }
     /**
      * P0 注入防御（融合智能体架构「确定性过滤器先于概率性评判器 + nonce 隔离不可信内容」）：
      * 记忆库是跨 Agent 共享写入面（codex/claude/zcode/trae/workbuddy 均可写），正文可能由外部来源
@@ -236,6 +289,11 @@ export function registerMemoryTools(server, ctx) {
             query: z.string().describe("检索描述/关键词"),
             project: z.string().default("global").describe("项目 scope"),
             limit: z.number().int().min(1).max(50).default(10).describe("返回条数"),
+            cursor: z
+                .string()
+                .max(512)
+                .optional()
+                .describe("批次C3（P1-10）分页游标（不透明 base64，由本工具回执签发）：须与签发它的 query+project 一致，否则判 stale 回第 1 页；type/agent 过滤激活时不启用分页。"),
             type: z
                 .enum(["decision", "experience", "pitfall", "convention", "rule"])
                 .optional()
@@ -249,11 +307,35 @@ export function registerMemoryTools(server, ctx) {
             // 自动双 scope：默认(未指定/global 时)同时搜 global + 知识库，合并去重。中文笔记主体在知识库（实证 #3228）。
             // 显式指定非 global scope 则尊重调用方（保持隔离语义）。
             const scopes = !args.project || args.project === "global" ? ["global", "知识库"] : [args.project];
+            // ★ 批次C3（P1-10 检索分页）：cursor 编码 {o: offset, h: hash(query+project)}（base64 不透明串）。
+            //   h 不匹配（query/scope 变化）= Orca stale-cursor 语义：作废、客户端重发第 1 页；解析失败 = malformed，同样回第 1 页。
+            //   type/agent 后置过滤会改变排序空间 → 过滤激活时不启用分页（回执显式告知，cursor 被忽略）。
+            const filtered = Boolean(args.type || args.agent);
+            let offset = 0;
+            let cursorNote = "";
+            if (args.cursor && !filtered) {
+                try {
+                    const c = JSON.parse(Buffer.from(String(args.cursor), "base64").toString("utf8"));
+                    if (c && c.h === cursorHashOf(args.query, args.project) && Number.isInteger(c.o) && c.o >= 0) {
+                        offset = c.o;
+                    }
+                    else {
+                        cursorNote = `\n⚠ cursor 与当前 query/scope 不匹配（Orca stale-cursor 语义：作废，客户端重发第 1 页）；已自第 1 页重新返回。`;
+                    }
+                }
+                catch {
+                    cursorNote = `\n⚠ cursor 解析失败（malformed）；已自第 1 页重新返回。`;
+                }
+            }
+            else if (args.cursor) {
+                cursorNote = `\n⚠ type/agent 过滤激活时 cursor 被忽略（过滤改变排序空间，分页仅对无过滤查询启用）。`;
+            }
+            const fetchLimit = filtered ? args.limit : offset + args.limit + 1; // +1：per-scope 截断信号（hasMore 判据）
             const results = [];
             const seen = new Set();
             const srcStats = []; // ★ 批次C2：逐 scope 收集检索诊断（截断/降级）——原只读最后一次调用，会漏报
             for (const sp of scopes) {
-                const hits = await hybridSearch(db, embedder, { query: args.query, project: sp, limit: args.limit });
+                const hits = await hybridSearch(db, embedder, { query: args.query, project: sp, limit: fetchLimit });
                 if (hits._searchStats)
                     srcStats.push(hits._searchStats);
                 for (const h of hits) {
@@ -268,7 +350,20 @@ export function registerMemoryTools(server, ctx) {
                     results.push(h);
                 }
             }
-            const hits = results.slice(0, args.limit);
+            const hits = filtered ? results.slice(0, args.limit) : results.slice(offset, offset + args.limit);
+            // ★ 批次C3：分页回执（Orca 显式截断契约：「还有更多」与「到底了」必须可区分，绝不静默）。
+            //   hasMore 判据：本页满（可能还有）或任一 scope 候选池确凿超出本次取数（preLimit > fetchLimit）。
+            let pageNote = "";
+            if (!filtered && (offset > 0 || hits.length === args.limit || srcStats.some((s2) => s2.preLimit > fetchLimit))) {
+                const hasMore = hits.length === args.limit || srcStats.some((s2) => s2.preLimit > fetchLimit);
+                const pgNo = Math.floor(offset / args.limit) + 1;
+                const nextCursor = hasMore
+                    ? Buffer.from(JSON.stringify({ o: offset + args.limit, h: cursorHashOf(args.query, args.project) })).toString("base64")
+                    : "";
+                pageNote = hasMore
+                    ? `\nℹ 第 ${pgNo} 页（本页 ${hits.length}/${args.limit} 条）：续取下一页传 cursor=${nextCursor}。`
+                    : `\nℹ 第 ${pgNo} 页（本页 ${hits.length}/${args.limit} 条）：已到末尾。`;
+            }
             // ★ 2026-09-25 P0：语义路本次降级过（嵌入失败→纯词法）则显式告警 —— 静默降级曾让
             //   "跨表述召回为 0" 无从定位。
             // ★ 2026-10-03 批次C2 修正：原实现读模块级 `semanticDegradation()`（每次 hybridSearch 开头清零）
@@ -286,7 +381,7 @@ export function registerMemoryTools(server, ctx) {
             if (_semSliced)
                 _trunc.push(`语义候选池 ${_semSliced.semPool} 条被粗筛截到 ${_semSliced.semTopK} 条`);
             if (_limitSliced)
-                _trunc.push(`过滤后尚有 ${_limitSliced.preLimit} 条，按 limit=${args.limit} 截断`);
+                _trunc.push(filtered ? `过滤后尚有 ${_limitSliced.preLimit} 条，按 limit=${args.limit} 截断` : `过滤后尚有 ${_limitSliced.preLimit} 条，本页仅展示前 ${args.limit} 条（续页见下方 cursor）`);
             if (_snipCut)
                 _trunc.push(`${_snipCut} 条正文摘要被缩到 ${SNIPPET_MAX} 字`);
             const truncNote = _trunc.length ? `\nℹ 本次结果不全：${_trunc.join("；")}。可调大 limit 或细化查询再试。` : "";
@@ -371,16 +466,29 @@ export function registerMemoryTools(server, ctx) {
                     // 指定 scope 零命中时，提示默认 global 也可能有通用内容
                     hint = `\n可将 project 改为 global 重试（当前 scope=${args.project} 无命中）。`;
                 }
-                return `未命中任何记忆（scope=${args.project}）。${hint || `\n（可在相关修复/决策后 memory_write 沉淀。）`}${degNote}${truncNote}`;
+                return `未命中任何记忆（scope=${args.project}）。${hint || `\n（可在相关修复/决策后 memory_write 沉淀。）`}${degNote}${truncNote}${cursorNote}${pageNote}`;
             }
             // P0 注入防御：命中记忆正文可能含外部写入的指令性内容，用 nonce 围栏包裹标记为不可信数据
+            // ★ 批次C4（P1-12 证据分离，按 MemoryOS 语义裁剪）：via/vec 与「证据」窗口一律放**尾部区块**，
+            //   命中行格式保持 WYSIWYG 基线（用户侧 /api/all 视图与 AI 侧逐字一致的既有承诺，smoke-wysiwyg 断言）。
+            const vecStates = vectorStatesOf(db, hits.map((h) => h.id));
             const head = hits
                 .map((h) => `#${h.id} [${h.type}|${h.agent}|${h.created_at.slice(0, 10)}](conf=${h.confidence.toFixed(2)}) ${h.content
                 .replace(/\s+/g, " ")
                 .slice(0, SNIPPET_MAX)}`)
                 .join("\n");
+            // via/vec 逐命中归因（尾部紧凑区）：#id=通道/向量态。vec≠ok 时附图例（一次性，非逐条重复）。
+            const viaVecNote = [...vecStates.values()].some((v) => v !== "ok") || hits.some((h) => h.via)
+                ? `\nℹ via/vec：${hits.map((h) => `#${h.id}=${h.via ?? "?"}/${vecStates.get(h.id) ?? "?"}`).join(" ")}`
+                : "";
+            const evLines = hits
+                .filter((h) => h.content.replace(/\s+/g, " ").length > SNIPPET_MAX)
+                .map((h) => `\n↳ 证据 #${h.id}: "${evidenceSnippet(h.content.replace(/\s+/g, " "), args.query)}"`);
+            const vecLegend = [...vecStates.values()].some((v) => v !== "ok")
+                ? `\n图例：vec=ok 向量可用 / stale 正文已改、向量未重算（语义分可能滞后，daemon embed-backfill 补算）/ missing 无向量（仅词法可召回）。via=semantic/lexical/hybrid 为召回通道。`
+                : "";
             return fenceUntrusted("MEMORY", head, "memory_search") +
-                `\n命中 ${hits.length} 条${embedMode() !== "fake" ? "" : "（fake-embed：跨表述命中需 EMBED_MODE=local/api）"}${truncNote}${degNote}`;
+                `\n命中 ${hits.length} 条${embedMode() !== "fake" ? "" : "（fake-embed：跨表述命中需 EMBED_MODE=local/api）"}${truncNote}${degNote}${viaVecNote}${evLines.join("")}${vecLegend}${cursorNote}${pageNote}`;
         },
     });
     /** 调用本地 LLM 生成问答答案（RGA：仅基于记忆作答）。30s 超时防挂起，失败抛错由工具层降级。 */
