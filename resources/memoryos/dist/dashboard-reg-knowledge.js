@@ -184,6 +184,7 @@ export function registerKnowledge(app, ctx) {
                 }
             }
         };
+        let runAnswer = ""; // ★ P4：run 最终回复（try 块内赋值，收口处生成交接卡用）
         try {
             // ★ A1：中止运行 —— 传 AbortSignal（agent-core 轮次间 + LLM fetch 可中断；
             //   进行中的 mcp.callTool 跑完，不硬杀进程）。
@@ -211,6 +212,7 @@ export function registerKnowledge(app, ctx) {
                 catch (e) { console.error(`[dispatch] 强制收尾轮失败：${e instanceof Error ? e.message : e}`); }
             }
             handle.finish("done", { answer: r.answer, usage: r.usage, estimatedTokens: r.estimatedTokens, cache: r.cache || null });
+            runAnswer = String(r.answer ?? ""); // ★ P4：带出 try 块供收口交接卡使用（r 为块内局部量）
             // 会话持久化：把本轮 user/assistant 追加进 agent_sessions（写入方截断纪律）
             if (b.sessionKey) {
                 try {
@@ -230,6 +232,7 @@ export function registerKnowledge(app, ctx) {
                 const ok = handle.run.status === "done";
                 ctx.finalizeCardDispatch?.({
                     ...cd, ok, runId: handle.run.id,
+                    answer: ok ? runAnswer.slice(0, 1200) : undefined, // ★ P4：最终回复进交接卡
                     detail: ok
                         ? `一键派发完成（run ${handle.run.id}）`
                         : `一键派发失败（run ${handle.run.id}）：${handle.run.error ?? "未知错误"}`,

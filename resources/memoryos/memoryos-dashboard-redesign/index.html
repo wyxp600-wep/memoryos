@@ -109,7 +109,7 @@
 [data-theme="dark"] .stat-card { background: rgba(20,30,42,0.85); border-color: rgba(255,255,255,0.08); }
 [data-theme="dark"] .stat-label { color: rgba(226,232,240,0.6); }
 [data-theme="dark"] .stat-value { color: #e2e8f0; }
-[data-theme="dark"] .stat-trend { color: rgba(226,232,240,0.5); }
+[data-theme="dark"] .stat-trend { color: rgba(226,232,240,0.62); }
 [data-theme="dark"] .toast { background: rgba(15,22,32,0.95); color: #e2e8f0; border-color: rgba(255,255,255,0.1); }
 [data-theme="dark"] .context-menu { background: rgba(15,22,32,0.98); border-color: rgba(255,255,255,0.1); }
 [data-theme="dark"] .context-menu-item { color: rgba(226,232,240,0.85); }
@@ -156,6 +156,16 @@
 @keyframes rippleAnim {
   to { transform: scale(4); opacity: 0; }
 }
+
+/* ===== Slice D：界面 pictograph 统一为单色 SVG（随 currentColor 走主题色）===== */
+/* 扫不扫由 window.__MOS_PICTOGRAPH 控制，默认 true；置 false 即回滚到原 emoji */
+.ic{display:inline-block;width:1em;height:1em;flex:none;vertical-align:-0.14em;
+  fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ic-solid{fill:currentColor;stroke:none}
+.ic-lg{font-size:26px;vertical-align:-0.2em;stroke-width:1.6}
+[data-picto]{display:inline-flex;align-items:center;gap:6px}
+.subtab-badge .ic{width:11px;height:11px;vertical-align:-0.1em}
+.row-action-btn .ic,.notes-zoom .ic{width:13px;height:13px}
 
 /* ===== Staggered Card Entry ===== */
 .page.active .glass-card {
@@ -683,7 +693,6 @@ html, body {
   height: 60vw;
   background: radial-gradient(circle, rgba(252,211,77,0.15) 0%, transparent 55%);
   border-radius: 50%;
-  animation: orbFloat1 20s ease-in-out infinite;
 }
 .bg-space::after {
   content: '';
@@ -694,36 +703,8 @@ html, body {
   height: 50vw;
   background: radial-gradient(circle, rgba(225,29,72,0.1) 0%, transparent 55%);
   border-radius: 50%;
-  animation: orbFloat2 25s ease-in-out infinite;
-}
-@keyframes orbFloat1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(5%, 8%) scale(1.1); }
-}
-@keyframes orbFloat2 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(-6%, -5%) scale(1.08); }
 }
 
-/* Star particles */
-.stars {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-.star {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: rgba(252,211,77,0.7);
-  border-radius: 50%;
-  animation: twinkle 3s ease-in-out infinite;
-}
-@keyframes twinkle {
-  0%, 100% { opacity: 0.2; transform: scale(1); }
-  50% { opacity: 0.9; transform: scale(1.5); }
-}
 
 /* ===== Layout ===== */
 .app-layout {
@@ -1100,10 +1081,17 @@ html, body {
 
 .stat-icon {
   position: absolute;
-  top: 18px;
+  top: 16px;
   right: 18px;
-  font-size: 28px;
-  opacity: 0.7;
+  /* ★ Slice-A：emoji 换 SVG 后原样式（无 color + 浅色调）会让描边图标近乎不可见，
+     这里显式给色并提高不透明度；尺寸由 font-size:28px 的 emoji 槽位改为 22px SVG */
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-primary);
+  opacity: 0.85;
   transition: all 0.3s;
 }
 .stat-card:hover .stat-icon {
@@ -1531,7 +1519,8 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--node-color, #64748b);
+  /* ★ D-5：文字用注入的高对比文字色；--node-color 仍供 ::before 圆点/描边 */
+  color: var(--node-color-text, var(--node-color, #64748b));
   font-family: var(--font-body);
   font-weight: 600;
 }
@@ -2283,7 +2272,12 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .sysplan-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(148,163,184,0.08); margin-bottom: 8px; flex-wrap: wrap; }
 
   /* ===== 全部记忆：类别计数徽标（类别按钮此前点了不生效，顺带把每类条数摆明） ===== */
-  .filter-btn .fcount {
+  /* ★ D-5：#dc2626(red-600) 在白底仅 4.24:1，文字降到 red-700 达 5.9:1，
+   底色/边框保持 red-600 不变，状态色观感不变 */
+.type-tag.pitfall { color: #b91c1c; }
+.status-pill.rejected { color: #b91c1c; }
+
+.filter-btn .fcount {
     display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 8px;
     font-size: 10px; line-height: 15px; font-family: var(--font-mono, monospace);
     background: rgba(65,187,200,0.14); color: var(--accent-cyan); vertical-align: 1px;
@@ -2470,7 +2464,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   /* ===== 设计令牌：统一冷色科技感配色体系 ===== */
   :root {
     /* 主色：电光青 + 蓝紫辅色 */
-    --c-primary: #0ea5b7;
+    --c-primary: #0A6E7B;
     --c-primary-bright: #22d3ee;
     --c-primary-soft: rgba(34,211,238,0.10);
     --c-violet: #8b5cf6;
@@ -2482,7 +2476,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     --bg-elevated: #ffffff;
     --text-primary: #0f2029;
     --text-secondary: #46606e;
-    --text-muted: #7d94a1;
+    --text-muted: #56707F;
     --border-glass: rgba(14,116,132,0.14);
     --border-glow: rgba(34,211,238,0.5);
     --line-soft: rgba(15,40,55,0.07);
@@ -2495,6 +2489,12 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
     /* 修复未定义变量 */
     --radius: var(--radius-md);
+    /* ★ Slice-A 令牌收敛：第一套 :root 的 --accent-* 全部映射到本套命名，
+       消除「同一主色 6 个变量名并存」；此处只做别名，不删第一套，避免动 180 处 !important 覆盖 */
+    --accent-cyan: var(--c-primary);
+    --accent-purple: var(--c-violet);
+    --accent-blue: var(--c-primary-bright);
+    --accent-cyan-soft: var(--c-primary-soft);
   }
   [data-theme="dark"] {
     --c-primary: #22d3ee;
@@ -2508,7 +2508,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     --bg-elevated: #131e2c;
     --text-primary: #e6f1f7;
     --text-secondary: #9db4c2;
-    --text-muted: #5f7686;
+    --text-muted: #7A93A3;
     --border-glass: rgba(34,211,238,0.14);
     --border-glow: rgba(34,211,238,0.5);
     --line-soft: rgba(255,255,255,0.06);
@@ -2566,11 +2566,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .logo-icon {
     background: linear-gradient(135deg, var(--c-primary-bright), var(--c-violet)) !important;
     box-shadow: 0 0 20px rgba(34,211,238,0.45), inset 0 1px 0 rgba(255,255,255,0.3) !important;
-    animation: logoBreath 4s ease-in-out infinite;
-  }
-  @keyframes logoBreath {
-    0%,100% { box-shadow: 0 0 16px rgba(34,211,238,0.35), inset 0 1px 0 rgba(255,255,255,0.3); }
-    50% { box-shadow: 0 0 28px rgba(34,211,238,0.6), inset 0 1px 0 rgba(255,255,255,0.3); }
   }
   .logo-title {
     background: linear-gradient(135deg, var(--c-primary-bright), var(--c-violet)) !important;
@@ -2697,6 +2692,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   .stat-card.orange .stat-value { color: var(--warning) !important; }
   .stat-value { letter-spacing: -1px; }
   .stat-icon { transition: transform .35s var(--ease-spring); }
+  .stat-icon svg { width: 22px; height: 22px; display: block; }
+  .stat-card.cyan   .stat-icon { color: var(--c-primary); }
+  .stat-card.green  .stat-icon { color: var(--ok-ink); }
+  .stat-card.purple .stat-icon { color: var(--c-violet); }
+  .stat-card.orange .stat-icon { color: var(--warn-ink); }
   .stat-card:hover .stat-icon { transform: scale(1.12) rotate(-6deg); }
 
   /* ===== 按钮：渐变流动 + 光泽扫过 ===== */
@@ -2784,9 +2784,8 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   }
   .modal::before {
     background: linear-gradient(90deg, var(--c-primary-bright), var(--c-violet), var(--c-primary-bright)) !important;
-    background-size: 200% 100% !important; animation: gradFlow 4s linear infinite;
+    background-size: 200% 100% !important;
   }
-  @keyframes gradFlow { to { background-position: 200% 0; } }
   .modal-header {
     background: linear-gradient(180deg, rgba(34,211,238,0.05), transparent) !important;
     border-bottom: 1px solid var(--line-soft) !important;
@@ -3585,14 +3584,53 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   [data-theme="dark"] .cmd-palette { background: rgba(15,22,32,0.98); }
 
   /* UI 2.0 优化层·模块插入点 */
+
+/* ===== Slice-B：记忆中心 子导航 + 子视图 ===== */
+.subnav{display:flex;gap:2px;margin-bottom:14px;padding-bottom:0;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.subtab{position:relative;display:flex;align-items:center;gap:6px;padding:8px 14px;font-family:inherit;font-size:13px;
+  color:var(--text-secondary);background:none;border:0;cursor:pointer;transition:color .18s var(--ease-out)}
+.subtab:hover{color:var(--text-primary)}
+.subtab[aria-selected="true"]{color:var(--c-primary);font-weight:600}
+.subtab[aria-selected="true"]::after{content:'';position:absolute;left:10px;right:10px;bottom:-1px;height:2px;
+  background:var(--c-primary);border-radius:2px 2px 0 0}
+.subtab-badge{font-family:var(--font-mono);font-size:10.5px;padding:1px 5px;border-radius:99px;
+  background:rgba(180,83,9,.12);color:var(--warn-ink)}
+.subview{display:none}
+.subview.on{display:block}
+@media (prefers-reduced-motion:reduce){.subtab{transition:none}}
+
+/* ===== Slice D-2：暗色模式对比度修复 =====
+   实证：暗色下 .type-tag/.status-pill 彩色字（亮色设计的深色档）对比度仅 1.98–2.75:1，
+   且原 CSS 无任何 [data-theme="dark"] 覆盖。此处保持色相、只提明度到同色系 300 档。 */
+[data-theme="dark"] .status-pill.active     { background: rgba(16,185,129,0.16); color: #6ee7b7; border-color: rgba(16,185,129,0.4); }
+[data-theme="dark"] .status-pill.merged     { background: rgba(168,85,247,0.16); color: #d8b4fe; border-color: rgba(168,85,247,0.4); }
+[data-theme="dark"] .status-pill.superseded { background: rgba(245,158,11,0.16); color: #fcd34d; border-color: rgba(245,158,11,0.4); }
+[data-theme="dark"] .status-pill.rejected   { background: rgba(239,68,68,0.16);  color: #fca5a5; border-color: rgba(239,68,68,0.4); }
+[data-theme="dark"] .status-pill.archived   { background: rgba(148,163,184,0.18); color: #cbd5e1; border-color: rgba(148,163,184,0.4); }
+[data-theme="dark"] .type-tag.decision      { background: rgba(245,158,11,0.16); color: #fcd34d; border-color: rgba(245,158,11,0.4); }
+[data-theme="dark"] .type-tag.experience    { background: rgba(168,85,247,0.16); color: #d8b4fe; border-color: rgba(168,85,247,0.4); }
+[data-theme="dark"] .type-tag.pitfall       { background: rgba(239,68,68,0.16);  color: #fca5a5; border-color: rgba(239,68,68,0.4); }
+[data-theme="dark"] .type-tag.convention,
+[data-theme="dark"] .type-tag.rule          { background: rgba(16,185,129,0.16); color: #6ee7b7; border-color: rgba(16,185,129,0.4); }
+
+/* 类别计数徽标：active 按钮是青紫渐变底，原色 accent-cyan 在暗色下与底色接近 → 改用近白 */
+[data-theme="dark"] .filter-btn .fcount { background: rgba(255,255,255,0.18); color: #e8f4f7; }
+[data-theme="dark"] .filter-btn.zero .fcount { background: rgba(255,255,255,0.1); color: #b9cbd6; }
+
+/* 次要说明文字：实测 4.46:1，差 0.04 达标线，提到 4.6:1 */
+[data-theme="dark"] .text-muted { color: rgba(226,232,240,0.62) !important; }
+
+/* 任务地图节点小标签：实测 3.28:1 */
+[data-theme="dark"] .task-map-node-status { color: var(--node-color-text-dark, #9fb3c4); }
+[data-theme="dark"] .proj-chip.has-agents { background: rgba(16,185,129,0.16); border-color: rgba(16,185,129,0.4); color: #6ee7b7; }
+[data-theme="dark"] .db-pill.ok      { background: rgba(22,163,74,0.2);  color: #4ade80; }
+[data-theme="dark"] .db-pill.bad     { background: rgba(220,38,38,0.2);  color: #f87171; }
+[data-theme="dark"] .db-pill.unknown { background: rgba(148,163,184,0.22); color: #cbd5e1; }
 </style>
 </head>
 <body>
 
 <!-- Background -->
-<div class="bg-space"></div>
-<div class="stars" id="stars"></div>
-
 <div class="app-layout">
   <!-- ===== Global Top Nav ===== -->
   <header class="global-nav">
@@ -3610,24 +3648,13 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
     </div>
     <nav class="global-nav-scroll">
-      <a class="nav-item" data-route="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9 19h6"/></svg>Agent</a>
-      <a class="nav-item" data-route="all"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>全部记忆<span class="nav-badge">247</span></a>
+      <a class="nav-item" data-route="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9 19h6"/></svg>智能体</a>
+      <a class="nav-item" data-route="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>记忆中心</a>
       <a class="nav-item" data-route="tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 8l-2 2 3 3 5-5 2 2"/><path d="M8 15h8"/></svg>任务看板</a>
       <a class="nav-item" data-route="obsidian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg>笔记</a>
-      <a class="nav-item" data-route="graph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 9a5 5 0 0 0-5 5M12 15a5 5 0 0 1 5-5M9 12a3 3 0 0 0 3 3M15 12a3 3 0 0 1-3 3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.5 6.5l3 3M17.5 6.5l-3 3M6.5 17.5l3-3M17.5 17.5l-3-3"/></svg>知识图谱</a>
-      <a class="nav-item" data-route="runs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>执行中心<span class="nav-badge" id="runsBadge" style="display:none">0</span></a>
-      <a class="nav-item" data-route="connect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>工具连接<span class="nav-badge" id="connectedBadge">5</span></a>
-      <a class="nav-item" data-route="governance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>治理中心</a>
-      <a class="nav-item" data-route="trend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>趋势</a>
-      <a class="nav-item" data-route="cross"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.5"/><path d="M8 2v20M16 2v20M2 8h20M2 16h20"/></svg>跨工具</a>
-      <a class="nav-item" data-route="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>审计</a>
-      <a class="nav-item" data-route="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>高价值 TOP</a>
-      <a class="nav-item" data-route="zombies"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>待归档·僵尸<span class="nav-badge">18</span></a>
-      <a class="nav-item" data-route="arbitrate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>仲裁队列<span class="nav-badge" id="arbitrateBadge" style="display:none">0</span></a>
-      <a class="nav-item" data-route="ingest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>采集消化</a>
+<a class="nav-item" data-route="govern"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>连接与治理</a>
       <a class="nav-item" data-route="rules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>规则管理</a>
       <a class="nav-item" data-route="skills"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>技能同步</a>
-      <a class="nav-item" data-route="summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</a>
     </nav>
     <div class="global-nav-right">
       <!-- ★ P2-⑤ a11y：全局唯一 h1（视觉隐藏），由 navigate() 同步为当前页名，给屏幕阅读器提供页面标题 -->
@@ -3638,10 +3665,10 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
       <button class="btn-ghost nav-icon-btn" title="导出"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
       <button class="btn-primary nav-icon-btn" id="createMemoryBtn" title="写入记忆"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-      <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式">🌙</button>
-      <button class="theme-toggle" id="settingsBtn" title="设置">⚙️</button>
+      <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式" aria-label="切换暗色/亮色模式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+      <button class="theme-toggle" id="settingsBtn" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.35.4.64.73.84H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       <button class="theme-toggle" id="termBtn" title="准终端">⌨</button>
-      <button class="theme-toggle" id="designBtn" title="Design Mode 元素拾取" aria-label="Design Mode 元素拾取">🎯</button>
+      <button class="theme-toggle" id="designBtn" title="设计模式 元素拾取" aria-label="设计模式 元素拾取">🎯</button>
     </div>
   </header>
 
@@ -3668,196 +3695,21 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     </div>
 
     <!-- ===== Page: Summary ===== -->
-    <section class="page active" id="page-summary">
-      <!-- 骨架屏 -->
-      <div id="summarySkeleton">
-        <div class="stat-grid">
-          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
-          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
-          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
-          <div class="skeleton-card skeleton-stat"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line" style="width:60%;height:32px;margin:12px 0"></div><div class="skeleton skeleton-line short"></div></div>
-        </div>
-        <div class="glass-card" style="margin-top:18px;height:200px"><div class="skeleton skeleton-line" style="width:30%;margin:20px"></div><div class="skeleton skeleton-line" style="width:90%;margin:0 20px 10px"></div><div class="skeleton skeleton-line" style="width:85%;margin:0 20px 10px"></div><div class="skeleton skeleton-line" style="width:92%;margin:0 20px 10px"></div></div>
-      </div>
-      <!-- 实际内容 -->
-      <div id="summaryContent" style="display:none">
-      <div class="stat-grid">
-        <div class="stat-card cyan" data-route="all">
-          <div class="stat-icon">📚</div>
-          <div class="stat-label">记忆总量</div>
-          <div class="stat-value">247</div>
-          <div class="stat-trend"><span class="up">+12.4%</span> 较上周</div>
-        </div>
-        <div class="stat-card green" data-route="all">
-          <div class="stat-icon">✅</div>
-          <div class="stat-label">活跃可检索</div>
-          <div class="stat-value">189</div>
-          <div class="stat-trend">eff &gt; 0.15 阈值</div>
-        </div>
-        <div class="stat-card purple" data-route="top">
-          <div class="stat-icon">🔗</div>
-          <div class="stat-label">本周引用</div>
-          <div class="stat-value">1,342</div>
-          <div class="stat-trend"><span class="up">+8.7%</span> 跨工具复用</div>
-        </div>
-        <div class="stat-card orange" data-route="zombies">
-          <div class="stat-icon">💤</div>
-          <div class="stat-label">僵尸待归档</div>
-          <div class="stat-value">18</div>
-          <div class="stat-trend">平均闲置 32 天</div>
-        </div>
-      </div>
 
-      <!-- 主动写入健康：写习惯闭环提醒（/api/write-health 驱动） -->
-      <div class="write-health" id="writeHealth">
-        <div class="wh-icon">✎</div>
-        <div class="wh-body">
-          <div class="wh-title">主动写入习惯</div>
-          <div class="wh-desc" id="writeHealthText">加载中…</div>
-        </div>
-        <button class="wh-btn" id="writeHealthBtn">去写入一条记忆</button>
-      </div>
 
-      <!-- 利用率健康：search/write 两个提升方向的闭环度量（/api/usage-health 驱动） -->
-      <div class="usage-health" id="usageHealth">
-        <div class="uh-head">
-          <div class="card-title"><span class="dot"></span>记忆利用率健康</div>
-          <span class="text-muted" style="font-size:12px">先搜后干 · 干完必写</span>
-        </div>
-        <div class="uh-stats">
-          <div class="uh-stat"><div class="uh-num" id="uhSearch">-</div><div class="uh-label">今日检索 search</div></div>
-          <div class="uh-stat"><div class="uh-num" id="uhWrite">-</div><div class="uh-label">今日沉淀 write</div></div>
-          <div class="uh-stat"><div class="uh-num" id="uh30">-</div><div class="uh-label">30天 搜/写/回/引</div></div>
-        </div>
-        <div class="uh-desc" id="usageHealthText">加载中…</div>
-      </div>
-
-      <div class="two-col">
-        <div class="glass-card">
-          <div class="card-header">
-            <div class="card-title"><span class="dot"></span>记忆活动趋势（近 14 天）</div>
-            <span class="text-muted" style="font-size:12px">write / returned / cited</span>
-          </div>
-          <div class="chart-box" id="trendChart"></div>
-        </div>
-        <div class="glass-card">
-          <div class="card-header">
-            <div class="card-title"><span class="dot"></span>状态分布</div>
-          </div>
-          <div class="status-bars">
-            <div class="status-bar-row">
-              <div class="status-bar-label"><span class="sdot" style="background:var(--success)"></span>活跃</div>
-              <div class="status-bar-track"><div class="status-bar-fill" style="width:76.5%;background:var(--success)"></div></div>
-              <div class="status-bar-count">189</div>
-            </div>
-            <div class="status-bar-row">
-              <div class="status-bar-label"><span class="sdot" style="background:var(--merged)"></span>已合并</div>
-              <div class="status-bar-track"><div class="status-bar-fill" style="width:9.3%;background:var(--merged)"></div></div>
-              <div class="status-bar-count">23</div>
-            </div>
-            <div class="status-bar-row">
-              <div class="status-bar-label"><span class="sdot" style="background:var(--superseded)"></span>已取代</div>
-              <div class="status-bar-track"><div class="status-bar-fill" style="width:5.3%;background:var(--superseded)"></div></div>
-              <div class="status-bar-count">13</div>
-            </div>
-            <div class="status-bar-row">
-              <div class="status-bar-label"><span class="sdot" style="background:var(--archived)"></span>已归档</div>
-              <div class="status-bar-track"><div class="status-bar-fill" style="width:7.3%;background:var(--archived)"></div></div>
-              <div class="status-bar-count">18</div>
-            </div>
-            <div class="status-bar-row">
-              <div class="status-bar-label"><span class="sdot" style="background:var(--danger)"></span>已拒绝</div>
-              <div class="status-bar-track"><div class="status-bar-fill" style="width:1.6%;background:var(--danger)"></div></div>
-              <div class="status-bar-count">4</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="two-col">
-        <div class="glass-card">
-          <div class="card-header">
-            <div class="card-title"><span class="dot"></span>记忆类型构成</div>
-          </div>
-          <div class="chart-box" id="typeChart"></div>
-        </div>
-        <div class="glass-card">
-          <div class="card-header">
-            <div class="card-title"><span class="dot"></span>治理守护最近动作</div>
-          </div>
-          <div class="audit-timeline">
-            <div class="audit-item success">
-              <div class="audit-time">2026-09-05 21:12:03</div>
-              <div class="audit-action">衰减任务完成</div>
-              <div class="audit-meta"><span class="operator daemon">daemon</span>42 条记忆 eff 自然衰减，0 条跌破阈值</div>
-            </div>
-            <div class="audit-item warn">
-              <div class="audit-time">2026-09-05 20:00:00</div>
-              <div class="audit-action">僵尸归档：3 条</div>
-              <div class="audit-meta"><span class="operator daemon">daemon</span>闲置 &gt; 30 天自动归档，审计 ID #A-1042</div>
-            </div>
-            <div class="audit-item">
-              <div class="audit-time">2026-09-05 18:30:15</div>
-              <div class="audit-action">去重合并：2 条 → 1 条</div>
-              <div class="audit-meta"><span class="operator daemon">daemon</span>相似度 0.91，合并为 #M-0234，保留双方引用</div>
-            </div>
-            <div class="audit-item danger">
-              <div class="audit-time">2026-09-05 15:22:41</div>
-              <div class="audit-action">仲裁裁决：保留新记忆</div>
-              <div class="audit-meta"><span class="operator human">human:dashboard</span>冲突对 #C-0089，旧记忆标记 superseded</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="glass-card" style="margin-top:18px">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>记忆热词云</div>
-          <span class="text-muted" style="font-size:12px">基于 active 记忆内容的高频词提取</span>
-        </div>
-        <div class="word-cloud" id="wordCloud" style="padding:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;min-height:120px"></div>
-      </div>
-
-      <div class="glass-card" style="margin-top:18px">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>eff 质量分布</div>
-          <span class="text-muted" style="font-size:12px">所有记忆的有效度分布直方图</span>
-        </div>
-        <div id="effHistogram" style="padding:20px;display:flex;align-items:flex-end;gap:6px;height:160px;border-bottom:1px solid var(--border-glass)"></div>
-        <div id="effHistogramLabels" style="display:flex;gap:6px;padding:8px 20px 0"></div>
-      </div>
-
-      <div class="glass-card" style="margin-top:18px">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>写入活跃度热力图</div>
-          <span class="text-muted" style="font-size:12px">最近 12 周记忆写入分布</span>
-        </div>
-        <div id="heatmap" style="padding:20px;display:flex;gap:4px;overflow-x:auto"></div>
-        <div style="display:flex;align-items:center;gap:8px;padding:0 20px 16px;font-size:11px;color:var(--text-muted)">
-          <span>少</span>
-          <div style="width:12px;height:12px;background:rgba(65,187,200,0.1);border-radius:2px"></div>
-          <div style="width:12px;height:12px;background:rgba(65,187,200,0.3);border-radius:2px"></div>
-          <div style="width:12px;height:12px;background:rgba(65,187,200,0.5);border-radius:2px"></div>
-          <div style="width:12px;height:12px;background:rgba(65,187,200,0.75);border-radius:2px"></div>
-          <div style="width:12px;height:12px;background:rgba(65,187,200,1);border-radius:2px"></div>
-          <span>多</span>
-        </div>
-      </div>
-      <div class="two-col" style="margin-top:18px">
-        <div class="glass-card">
-          <div class="card-header"><div class="card-title"><span class="dot"></span>记忆类别分布（9 类）</div><span class="text-muted" style="font-size:12px">sector · OpenMemory 认知分层</span></div>
-          <div class="chart-box" id="sectorChart" style="height:220px"></div>
-        </div>
-        <div class="glass-card">
-          <div class="card-header"><div class="card-title"><span class="dot"></span>前瞻到期提醒</div><span class="text-muted" style="font-size:12px">cron 到期 / pattern 命中 → 自动建卡</span></div>
-          <div id="prospectiveList" style="min-height:120px"><div class="text-muted" style="font-size:12px;padding:12px">加载中…</div></div>
-        </div>
-      </div>
-      </div><!-- /summaryContent -->
-    </section>
-
-    <!-- ===== Page: All Memories ===== -->
-    <section class="page" id="page-all">
+<section class="page" id="page-memory">
+  <!-- ★ Slice-B：全部记忆 / 高价值TOP / 待归档 / 仲裁队列 / 趋势 / 采集消化 / 审计 七页合并。
+       内部 DOM id 全部保持原样，因此 app.js 里按 id 取元素的渲染与绑定函数无需改动。 -->
+  <nav class="subnav" role="tablist" aria-label="记忆视图切换">
+      <button class="subtab" role="tab" data-view="all" aria-selected="true">全部记忆</button>
+      <button class="subtab" role="tab" data-view="top" aria-selected="false">高价值榜单</button>
+      <button class="subtab" role="tab" data-view="zombies" aria-selected="false">待归档·僵尸<span class="subtab-badge" id="zombiesBadge" style="display:none"></span></button>
+      <button class="subtab" role="tab" data-view="arbitrate" aria-selected="false">仲裁队列<span class="subtab-badge" id="arbitrateBadge" style="display:none">0</span></button>
+      <button class="subtab" role="tab" data-view="trend" aria-selected="false">趋势</button>
+      <button class="subtab" role="tab" data-view="ingest" aria-selected="false">采集消化</button>
+      <button class="subtab" role="tab" data-view="audit" aria-selected="false">审计</button>
+  </nav>
+    <div class="subview on" data-view="all" role="tabpanel">
       <div class="toolbar">
         <div class="filter-group" id="statusFilter">
           <button class="filter-btn active" data-status="all">全部</button>
@@ -3922,7 +3774,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
                 <th style="width:100px" data-sort="type">类型</th>
                 <th style="width:100px" data-sort="status">状态</th>
                 <th style="width:120px" data-sort="agent">来源工具</th>
-                <th style="width:90px" data-sort="eff">eff</th>
+                <th style="width:90px" data-sort="eff">有效置信</th>
                 <th style="width:70px" data-sort="hits">引用</th>
                 <th style="width:150px" data-sort="created_at">创建时间</th>
                 <th style="width:80px">操作</th>
@@ -3938,21 +3790,19 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <button class="page-btn" id="allNextBtn">下一页</button>
         <span class="page-size-info" id="allPageSizeInfo">每页 100 条</span>
       </div>
-    </section>
-
-    <!-- ===== Page: Top ===== -->
-    <section class="page" id="page-top">
+        </div>
+    <div class="subview" data-view="top" role="tabpanel">
       <div class="two-col">
         <div class="glass-card">
           <div class="card-header">
-            <div class="card-title"><span class="dot"></span>引用量 TOP 10</div>
-            <span class="text-muted" style="font-size:12px">raw-cited + inferred-cited</span>
+            <div class="card-title"><span class="dot"></span>引用量前 10</div>
+            <span class="text-muted" style="font-size:12px">原始引用 + 推断引用</span>
           </div>
           <div class="rank-list" id="topCitedList"></div>
         </div>
         <div class="glass-card">
           <div class="card-header">
-            <div class="card-title"><span class="dot"></span>曝光量 TOP 10</div>
+            <div class="card-title"><span class="dot"></span>曝光量前 10</div>
             <span class="text-muted" style="font-size:12px">检索返回次数</span>
           </div>
           <div class="rank-list" id="topExposedList"></div>
@@ -3960,14 +3810,28 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
       <div class="glass-card">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>高价值记忆分布（eff × 引用）</div>
+          <div class="card-title"><span class="dot"></span>高价值记忆分布（有效置信 × 引用）</div>
         </div>
         <div class="chart-box" id="scatterChart"></div>
       </div>
-    </section>
-
-    <!-- ===== Page: Zombies ===== -->
-    <section class="page" id="page-zombies">
+        
+      <div class="glass-card" style="margin-top:18px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>记忆热词云</div>
+          <span class="text-muted" style="font-size:12px">基于活跃记忆内容的高频词提取</span>
+        </div>
+        <div class="word-cloud" id="wordCloud" style="padding:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;min-height:120px"></div>
+      </div>
+      <div class="glass-card" style="margin-top:18px">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>有效置信质量分布</div>
+          <span class="text-muted" style="font-size:12px">所有记忆的有效度分布直方图</span>
+        </div>
+        <div id="effHistogram" style="padding:20px;display:flex;align-items:flex-end;gap:6px;height:160px;border-bottom:1px solid var(--border-glass)"></div>
+        <div id="effHistogramLabels" style="display:flex;gap:6px;padding:8px 20px 0"></div>
+      </div>
+</div>
+    <div class="subview" data-view="zombies" role="tabpanel">
       <div class="toolbar">
         <div class="filter-group" id="zombieFilter">
           <button class="filter-btn active" data-days="all">全部僵尸</button>
@@ -3990,7 +3854,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
                 <th>内容</th>
                 <th style="width:100px">类型</th>
                 <th style="width:100px">来源工具</th>
-                <th style="width:100px">eff</th>
+                <th style="width:100px">有效置信</th>
                 <th style="width:110px">闲置天数</th>
                 <th style="width:150px">最后命中</th>
               </tr>
@@ -3999,10 +3863,35 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
           </table>
         </div>
       </div>
-    </section>
-
-    <!-- ===== Page: Trend ===== -->
-    <section class="page" id="page-trend">
+        </div>
+    <div class="subview" data-view="arbitrate" role="tabpanel">
+      <div class="toolbar">
+        <div class="card-title" style="font-size:15px"><span class="dot"></span>仲裁队列 · pending-conflict</div>
+        <span class="text-muted" style="font-size:12px">待裁决 <strong id="arbCount" style="color:var(--accent-cyan)">0</strong> 条</span>
+        <button class="btn-ghost" id="arbReloadBtn" style="padding:6px 14px;font-size:12px;margin-left:auto">刷新</button>
+      </div>
+      <div id="arbToast" style="display:none;padding:10px 16px;margin-bottom:12px;border-radius:8px;font-size:13px;background:rgba(65,187,200,0.08)"></div>
+      <div class="glass-card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>新记忆内容</th>
+                <th style="width:100px">类型</th>
+                <th style="width:70px">有效置信</th>
+                <th style="width:80px">旧记忆ID</th>
+                <th style="width:100px">旧类型</th>
+                <th>旧记忆内容</th>
+                <th style="width:240px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="arbTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+        </div>
+    <div class="subview" data-view="trend" role="tabpanel">
       <div class="two-col">
         <div class="glass-card">
           <div class="card-header">
@@ -4012,7 +3901,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         </div>
         <div class="glass-card">
           <div class="card-header">
-            <div class="card-title"><span class="dot"></span>eff 均值衰减曲线</div>
+            <div class="card-title"><span class="dot"></span>有效置信均值衰减曲线</div>
             <span class="text-muted" style="font-size:12px">遗忘曲线</span>
           </div>
           <div class="chart-box" id="effChart"></div>
@@ -4024,50 +3913,66 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         </div>
         <div class="chart-box" id="typeTrendChart"></div>
       </div>
-    </section>
-
-    <!-- ===== Page: Cross-tool ===== -->
-    <section class="page" id="page-cross">
-      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-        <div class="stat-card cyan">
-          <div class="stat-label">接入工具数</div>
-          <div class="stat-value">5</div>
-          <div class="stat-trend">Codex · Claude · TRAE · Cursor · Continue</div>
         </div>
-        <div class="stat-card purple">
-          <div class="stat-label">跨工具复用率</div>
-          <div class="stat-value">34.2%</div>
-          <div class="stat-trend"><span class="up">+5.1%</span> 较上月</div>
+    <div class="subview" data-view="ingest" role="tabpanel">
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>采集消化 — 让 AI 智能体记忆自己长出来</div>
+          <button class="btn-primary" id="ingestRunBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polyline points="20 6 9 17 4 12"/></svg>
+            开始采集
+          </button>
         </div>
-        <div class="stat-card green">
-          <div class="stat-label">最活跃写入方</div>
-          <div class="stat-value" style="font-size:24px">Codex</div>
-          <div class="stat-trend">写入 98 条 / 引用 412 次</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;margin-bottom:14px" class="text-muted">
+          读取本机各 AI 智能体（Codex / Claude / ZCode / WorkBuddy / Trae…）的明文<strong style="color:var(--text-primary)">记忆、规则、对话日志</strong>，
+          先做库内相似去重，再经本地 LLM (+127.0.0.1:18900) 提炼成结构化记忆/规则写回记忆库。
+          <br>预算默认：每轮最多 <span class="mono">30</span> 次 LLM 提炼、每源最多 <span class="mono">12</span> 块，可用环境变量 <span class="mono">INGEST_MAX_CALLS</span> 调整。
+        </div>
+        <div id="ingestProgress" style="display:none;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px">
+            <span id="ingestStatus">正在采集…</span>
+            <span id="ingestPercent" class="mono">0%</span>
+          </div>
+          <div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
+            <div id="ingestBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));border-radius:3px;transition:width 0.3s ease"></div>
+          </div>
+          <div id="ingestStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary)"></div>
+          <div id="ingestLog" style="margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-height:140px;overflow-y:auto;line-height:1.8"></div>
         </div>
       </div>
 
       <div class="glass-card">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>Writer × Reader 复用矩阵</div>
-          <span class="text-muted" style="font-size:12px">单元格 = 被引用次数</span>
+          <div class="card-title"><span class="dot"></span>可采集的知识源</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="text-muted" style="font-size:12px">内置源运行时探测 · 自定义源存于 sources.json</span>
+            <button class="btn-ghost" id="addSourceBtn" style="padding:6px 14px;font-size:12px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              添加自定义源
+            </button>
+          </div>
         </div>
-        <div class="matrix-grid" id="crossMatrix"></div>
+        <div class="table-wrap">
+          <table class="data-table" id="ingestSourceTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>智能体</th>
+                <th>名称</th>
+                <th style="width:90px">类型</th>
+                <th>文件路径</th>
+                <th style="width:70px">来源</th>
+                <th style="width:70px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="ingestSourceBody">
+              <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-
-      <div class="two-col" style="margin-top:18px">
-        <div class="glass-card">
-          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具写入占比</div></div>
-          <div class="chart-box-sm" id="writerPie"></div>
         </div>
-        <div class="glass-card">
-          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具引用占比</div></div>
-          <div class="chart-box-sm" id="readerPie"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== Page: Audit ===== -->
-    <section class="page" id="page-audit">
+    <div class="subview" data-view="audit" role="tabpanel">
       <div class="toolbar">
         <div class="filter-group" id="auditFilter">
           <button class="filter-btn active" data-op="all">全部</button>
@@ -4083,40 +3988,41 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         </div>
         <div class="audit-timeline" id="auditTimeline"></div>
       </div>
-    </section>
+        </div>
+</section>
+
+    <!-- ===== Page: All Memories ===== -->
+    
+
+    <!-- ===== Page: Top ===== -->
+    
+
+    <!-- ===== Page: Zombies ===== -->
+    
+
+    <!-- ===== Page: Trend ===== -->
+    
+
+    <!-- ===== Page: Cross-tool ===== -->
+
+
+    <!-- ===== Page: Audit ===== -->
+    
 
     <!-- ===== Page: Arbitrate ===== -->
-    <section class="page" id="page-arbitrate">
-      <div class="toolbar">
-        <div class="card-title" style="font-size:15px"><span class="dot"></span>仲裁队列 · pending-conflict</div>
-        <span class="text-muted" style="font-size:12px">待裁决 <strong id="arbCount" style="color:var(--accent-cyan)">0</strong> 条</span>
-        <button class="btn-ghost" id="arbReloadBtn" style="padding:6px 14px;font-size:12px;margin-left:auto">刷新</button>
-      </div>
-      <div id="arbToast" style="display:none;padding:10px 16px;margin-bottom:12px;border-radius:8px;font-size:13px;background:rgba(65,187,200,0.08)"></div>
-      <div class="glass-card" style="padding:0;overflow:hidden">
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width:40px">#</th>
-                <th>新记忆内容</th>
-                <th style="width:100px">类型</th>
-                <th style="width:70px">eff</th>
-                <th style="width:80px">旧记忆ID</th>
-                <th style="width:100px">旧类型</th>
-                <th>旧记忆内容</th>
-                <th style="width:240px">操作</th>
-              </tr>
-            </thead>
-            <tbody id="arbTableBody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    
 
     <!-- ===== Page: Connect ===== -->
-    <section class="page" id="page-connect">
-      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+
+
+<section class="page" id="page-govern">
+  <!-- ★ Slice-C1：工具连接 + 跨工具 + 治理中心 三页合并；原概览的健康信号并入治理子视图 -->
+  <nav class="subnav" role="tablist" aria-label="连接与治理视图切换">
+      <button class="subtab" role="tab" data-view="connect" aria-selected="true">工具连接</button>
+      <button class="subtab" role="tab" data-view="cross" aria-selected="false">跨工具</button>
+      <button class="subtab" role="tab" data-view="govern" aria-selected="false">治理中心</button>
+  </nav>
+  <div class="subview on" data-view="connect" role="tabpanel">      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
         <div class="stat-card cyan">
           <div class="stat-label">已连接工具</div>
           <div class="stat-value" id="connectedCount">5</div>
@@ -4125,7 +4031,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="stat-card green">
           <div class="stat-label">扫描发现</div>
           <div class="stat-value" id="discoveredCount">0</div>
-          <div class="stat-trend">本机已安装 AI Agent</div>
+          <div class="stat-trend">本机已安装 AI 智能体</div>
         </div>
         <div class="stat-card purple">
           <div class="stat-label">待连接</div>
@@ -4133,7 +4039,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
           <div class="stat-trend">发现但未接入</div>
         </div>
         <div class="stat-card orange">
-          <div class="stat-label">Dashboard 地址</div>
+          <div class="stat-label">控制台地址</div>
           <div class="stat-value" style="font-size:24px">localhost:8787</div>
           <div class="stat-trend">MCP stdio · memory_write / search / cite</div>
         </div>
@@ -4141,7 +4047,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
       <div class="glass-card mb-24">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>扫描本机 AI Agent</div>
+          <div class="card-title"><span class="dot"></span>扫描本机 AI 智能体</div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn-ghost" id="manualRegBtn" style="padding:7px 13px;font-size:12px" title="扫描清单外的新智能体：手动登记名称 + 配置目录，登记后自动重扫">＋ 手动登记</button>
             <button class="btn-primary" id="scanBtn">
@@ -4168,7 +4074,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div id="scanEmpty" style="text-align:center;padding:32px;color:var(--text-muted)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 12px;opacity:0.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M8 11h6M11 8v6"/></svg>
           <div style="font-size:14px;margin-bottom:4px">尚未扫描</div>
-          <div style="font-size:12px">点击右上角「开始扫描」发现本机已安装的 AI Agent 工具</div>
+          <div style="font-size:12px">点击右上角「开始扫描」发现本机已安装的 AI 智能体工具</div>
         </div>
       </div>
 
@@ -4221,8 +4127,138 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             </table>
           </div>
         </div>
-      </details>
-    </section>
+      </details>    </div>
+  <div class="subview" data-view="cross" role="tabpanel">      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card cyan">
+          <div class="stat-label">接入工具数</div>
+          <div class="stat-value">5</div>
+          <div class="stat-trend">Codex · Claude · TRAE · Cursor · Continue</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">跨工具复用率</div>
+          <div class="stat-value">34.2%</div>
+          <div class="stat-trend"><span class="up">+5.1%</span> 较上月</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">最活跃写入方</div>
+          <div class="stat-value" style="font-size:24px">Codex</div>
+          <div class="stat-trend">写入 98 条 / 引用 412 次</div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>写入方 × 读取方复用矩阵</div>
+          <span class="text-muted" style="font-size:12px">单元格 = 被引用次数</span>
+        </div>
+        <div class="matrix-grid" id="crossMatrix"></div>
+      </div>
+
+      <div class="two-col" style="margin-top:18px">
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具写入占比</div></div>
+          <div class="chart-box-sm" id="writerPie"></div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>各工具引用占比</div></div>
+          <div class="chart-box-sm" id="readerPie"></div>
+        </div>
+      </div>    </div>
+  <div class="subview" data-view="govern" role="tabpanel">
+  <!-- ★ Slice-C2：原「概览」页的 3 块健康/运维信号迁入治理中心（它们是治理信号，不是查询结果） -->
+      <!-- 主动写入健康：写习惯闭环提醒（/api/write-health 驱动） -->
+      <div class="write-health" id="writeHealth">
+        <div class="wh-icon">✎</div>
+        <div class="wh-body">
+          <div class="wh-title">主动写入习惯</div>
+          <div class="wh-desc" id="writeHealthText">加载中…</div>
+        </div>
+        <span class="wh-cadence" id="writeCadence" style="font-size:11.5px;color:var(--text-muted);align-self:center;margin-right:10px"></span>
+        <button class="wh-btn" id="writeHealthBtn">去写入一条记忆</button>
+      </div>
+      <!-- 利用率健康：search/write 两个提升方向的闭环度量（/api/usage-health 驱动） -->
+      <div class="usage-health" id="usageHealth">
+        <div class="uh-head">
+          <div class="card-title"><span class="dot"></span>记忆利用率健康</div>
+          <span class="text-muted" style="font-size:12px">先搜后干 · 干完必写</span>
+        </div>
+        <div class="uh-stats">
+          <div class="uh-stat"><div class="uh-num" id="uhSearch">-</div><div class="uh-label">今日检索次数</div></div>
+          <div class="uh-stat"><div class="uh-num" id="uhWrite">-</div><div class="uh-label">今日沉淀次数</div></div>
+          <div class="uh-stat"><div class="uh-num" id="uh30">-</div><div class="uh-label">30天 搜/写/回/引</div></div>
+        </div>
+        <div class="uh-desc" id="usageHealthText">加载中…</div>
+      </div>
+        <div class="glass-card">
+          <div class="card-header"><div class="card-title"><span class="dot"></span>前瞻到期提醒</div><span class="text-muted" style="font-size:12px">cron 到期 / 模式命中 → 自动建卡</span></div>
+          <div id="prospectiveList" style="min-height:120px"><div class="text-muted" style="font-size:12px;padding:12px">加载中…</div></div>
+        </div>
+      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat-card cyan">
+          <div class="stat-label">成本治理档位</div>
+          <div class="stat-value" id="govBudgetLevel">—</div>
+          <div class="stat-trend">采集消化三级渐进（压缩/降级/终止）</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">确定性验收门</div>
+          <div class="stat-value" id="govGateCount">—</div>
+          <div class="stat-trend">task_done 门控预设（fail-closed）</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">进化双回归门</div>
+          <div class="stat-value" id="govEvoState">—</div>
+          <div class="stat-trend">引擎提案 held-in/out 双回归</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-label">智能体凭据</div>
+          <div class="stat-value" id="govCredTotal">—</div>
+          <div class="stat-trend">短生命周期 · 可撤销信任</div>
+        </div>
+      </div>
+
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>A2A 协议层 · 智能体卡</div>
+          <button class="btn-ghost" id="govCardsBtn" style="padding:4px 12px">刷新卡片</button>
+        </div>
+        <div id="govCards" style="font-size:12.5px;line-height:1.9;color:var(--text-secondary)">
+          <div style="text-align:center;padding:20px;color:var(--text-muted)">点击「刷新卡片」拉取 A2A 能力卡片（含签名）…</div>
+        </div>
+      </div>
+
+      <div class="glass-card mb-24">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>确定性验收门预设（P3 门控泛化）</div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>预设名</th><th>验收内容</th><th style="width:260px">说明</th></tr>
+            </thead>
+            <tbody id="govGateBody">
+              <tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-muted)">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-header">
+          <div class="card-title"><span class="dot"></span>智能体短生命周期凭据（A1 身份认证层）</div>
+          <button class="btn-primary" id="govCredIssueBtn" style="padding:4px 12px;font-size:12px">+ 签发凭据</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>智能体</th><th>作用域</th><th style="width:90px">凭据数</th><th style="width:110px">已撤销</th><th style="width:170px">最晚到期</th></tr>
+            </thead>
+            <tbody id="govCredBody">
+              <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>    </div>
+</section>
 
     <!-- ===== Page: Rules 规则管理 ===== -->
     <section class="page" id="page-rules">
@@ -4263,7 +4299,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
       <div class="glass-card">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>规则列表（AI Agent 协同约束）</div>
+          <div class="card-title"><span class="dot"></span>规则列表（AI 智能体协同约束）</div>
           <span class="text-muted" style="font-size:12px" id="ruleCount">共 0 条</span>
         </div>
         <div class="table-wrap">
@@ -4288,151 +4324,34 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     </section>
 
     <!-- ===== Page: Governance 治理中心（融合架构增量：成本治理 / 确定性门控 / 进化有界验证 / 身份凭据 / A2A 协议）===== -->
-    <section class="page" id="page-governance">
-      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
-        <div class="stat-card cyan">
-          <div class="stat-label">成本治理档位</div>
-          <div class="stat-value" id="govBudgetLevel">—</div>
-          <div class="stat-trend">采集消化三级渐进（压缩/降级/终止）</div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-label">确定性验收门</div>
-          <div class="stat-value" id="govGateCount">—</div>
-          <div class="stat-trend">task_done 门控预设（fail-closed）</div>
-        </div>
-        <div class="stat-card purple">
-          <div class="stat-label">进化双回归门</div>
-          <div class="stat-value" id="govEvoState">—</div>
-          <div class="stat-trend">引擎提案 held-in/out 双回归</div>
-        </div>
-        <div class="stat-card orange">
-          <div class="stat-label">Agent 凭据</div>
-          <div class="stat-value" id="govCredTotal">—</div>
-          <div class="stat-trend">短生命周期 · 可撤销信任</div>
-        </div>
-      </div>
 
-      <div class="glass-card mb-24">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>A2A 协议层 · Agent Card</div>
-          <button class="btn-ghost" id="govCardsBtn" style="padding:4px 12px">刷新卡片</button>
-        </div>
-        <div id="govCards" style="font-size:12.5px;line-height:1.9;color:var(--text-secondary)">
-          <div style="text-align:center;padding:20px;color:var(--text-muted)">点击「刷新卡片」拉取 A2A 能力卡片（含签名）…</div>
-        </div>
-      </div>
-
-      <div class="glass-card mb-24">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>确定性验收门预设（P3 门控泛化）</div>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr><th>预设名</th><th>验收内容</th><th style="width:260px">说明</th></tr>
-            </thead>
-            <tbody id="govGateBody">
-              <tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-muted)">加载中…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="glass-card">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>Agent 短生命周期凭据（A1 身份认证层）</div>
-          <button class="btn-primary" id="govCredIssueBtn" style="padding:4px 12px;font-size:12px">+ 签发凭据</button>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr><th>Agent</th><th>Scope</th><th style="width:90px">凭据数</th><th style="width:110px">已撤销</th><th style="width:170px">最晚到期</th></tr>
-            </thead>
-            <tbody id="govCredBody">
-              <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">加载中…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
 
     <!-- ===== Page: Ingest 采集消化 ===== -->
-    <section class="page" id="page-ingest">
-      <div class="glass-card mb-24">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>采集消化 — 让 AI Agent 记忆自己长出来</div>
-          <button class="btn-primary" id="ingestRunBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polyline points="20 6 9 17 4 12"/></svg>
-            开始采集
-          </button>
-        </div>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;margin-bottom:14px" class="text-muted">
-          读取本机各 AI Agent（Codex / Claude / ZCode / WorkBuddy / Trae…）的明文<strong style="color:var(--text-primary)">记忆、规则、对话日志</strong>，
-          先做库内相似去重，再经本地 LLM (+127.0.0.1:18900) 提炼成结构化记忆/规则写回记忆库。
-          <br>预算默认：每轮最多 <span class="mono">30</span> 次 LLM 提炼、每源最多 <span class="mono">12</span> 块，可用环境变量 <span class="mono">INGEST_MAX_CALLS</span> 调整。
-        </div>
-        <div id="ingestProgress" style="display:none;margin-bottom:16px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px">
-            <span id="ingestStatus">正在采集…</span>
-            <span id="ingestPercent" class="mono">0%</span>
-          </div>
-          <div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
-            <div id="ingestBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));border-radius:3px;transition:width 0.3s ease"></div>
-          </div>
-          <div id="ingestStats" style="margin-top:12px;font-size:12px;color:var(--text-secondary)"></div>
-          <div id="ingestLog" style="margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-height:140px;overflow-y:auto;line-height:1.8"></div>
-        </div>
-      </div>
-
-      <div class="glass-card">
-        <div class="card-header">
-          <div class="card-title"><span class="dot"></span>可采集的知识源</div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <span class="text-muted" style="font-size:12px">内置源运行时探测 · 自定义源存于 sources.json</span>
-            <button class="btn-ghost" id="addSourceBtn" style="padding:6px 14px;font-size:12px">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              添加自定义源
-            </button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table" id="ingestSourceTable">
-            <thead>
-              <tr>
-                <th style="width:40px">#</th>
-                <th>Agent</th>
-                <th>名称</th>
-                <th style="width:90px">类型</th>
-                <th>文件路径</th>
-                <th style="width:70px">来源</th>
-                <th style="width:70px">操作</th>
-              </tr>
-            </thead>
-            <tbody id="ingestSourceBody">
-              <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">加载中…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    
 
     <section class="page" id="page-obsidian">
+      <div class="subnav">
+        <button class="subtab" role="tab" data-view="vault" aria-selected="true">笔记库</button>
+        <button class="subtab" role="tab" data-view="unified" aria-selected="false">统一图谱</button>
+      </div>
+
+      <div class="subview on" data-view="vault" role="tabpanel">
       <!-- 顶栏：标题 + 同步动作（功能不变，仅呈现重构为工作台） -->
       <div class="notes-bar">
         <div class="notes-bar-left">
           <span class="notes-bar-icon">📓</span>
           <div>
             <div class="notes-bar-title">笔记</div>
-            <div class="notes-bar-sub">vault 笔记 ↔ 共享记忆库 · 内容哈希增量同步 · 双向链接图谱</div>
+            <div class="notes-bar-sub">仓库笔记 ↔ 共享记忆库 · 内容哈希增量同步 · 双向链接图谱</div>
           </div>
         </div>
         <div class="notes-bar-right">
-          <label class="notes-check"><input type="checkbox" id="obsidianDryRun"> dry-run 预演</label>
+          <label class="notes-check"><input type="checkbox" id="obsidianDryRun"> 预演模式</label>
           <button class="btn-primary" id="obsidianImportBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             导入笔记
           </button>
-          <button class="btn-primary" id="obsidianExportBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)" title="导出不适用 dry-run：dry-run 仅用于「导入笔记」预演">
+          <button class="btn-primary" id="obsidianExportBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)" title="导出不适用预演模式：预演仅用于「导入笔记」">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             导出记忆
           </button>
@@ -4441,11 +4360,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
       <!-- vault 选择行：本机探测到的 vault 以芯片直选（不自动填入，避免误导入） -->
       <div class="notes-vaultrow">
-        <span class="notes-vrow-label">Vault</span>
-        <input list="obsidianVaultList" id="obsidianVaultInput" aria-label="Obsidian vault 路径" class="form-input notes-vault-input" placeholder="例如 C:\Users\WYX\Desktop\知识库\知识库">
+        <span class="notes-vrow-label">仓库</span>
+        <input list="obsidianVaultList" id="obsidianVaultInput" aria-label="Obsidian 仓库路径" class="form-input notes-vault-input" placeholder="例如 C:\Users\WYX\Desktop\知识库\知识库">
         <datalist id="obsidianVaultList"></datalist>
-        <span class="notes-vrow-label">Project</span>
-        <input id="obsidianProjectInput" aria-label="记忆库 project scope" class="form-input notes-proj-input" value="global" placeholder="global（推荐，所有 Agent 可检索）">
+        <span class="notes-vrow-label">项目</span>
+        <input id="obsidianProjectInput" aria-label="记忆库项目作用域" class="form-input notes-proj-input" value="global" placeholder="global（推荐，所有智能体可检索）">
         <div class="notes-vchips" id="noteVaultChips"></div>
       </div>
 
@@ -4461,7 +4380,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
 
       <div class="notes-hint">
-        扫描 vault 内 <strong style="color:var(--text-primary)">.md 笔记</strong>，解析 frontmatter（title/tags/type）与正文，按<strong style="color:var(--text-primary)">内容哈希增量同步</strong>：不变跳过、变更更新（保持同一条记忆 id）、新增自动去重 / 冲突预检；导出则把 active 记忆写回 <span class="mono">vault/MemoryOS 导出/</span>，带溯源 frontmatter，幂等不覆盖。本地优先：零插件、零网络；语义检索需 <span class="mono">EMBED_MODE=local</span>。
+        扫描仓库内 <strong style="color:var(--text-primary)">.md 笔记</strong>，解析 frontmatter（title/tags/type）与正文，按<strong style="color:var(--text-primary)">内容哈希增量同步</strong>：不变跳过、变更更新（保持同一条记忆 id）、新增自动去重 / 冲突预检；导出则把活跃记忆写回 <span class="mono">vault/MemoryOS 导出/</span>，带溯源 frontmatter，幂等不覆盖。本地优先：零插件、零网络；语义检索需 <span class="mono">EMBED_MODE=local</span>。
       </div>
 
       <!-- 三栏工作台：左=笔记列表 · 中=关系图谱 · 右=内容 / 反向链接 / 编辑 -->
@@ -4480,7 +4399,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <span class="notes-canvas-title">关系图谱</span>
             <span class="notes-canvas-sub" id="noteGraphStats">—</span>
             <select id="noteGraphScope" class="notes-mini-select" title="节点范围">
-              <option value="vault">当前 vault</option>
+              <option value="vault">当前仓库</option>
               <option value="all">全部笔记</option>
             </select>
             <label class="notes-check"><input type="checkbox" id="noteGraphLabels" checked> 标签</label>
@@ -4490,7 +4409,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div id="noteGraphChart"></div>
             <div id="noteGraphEmpty" class="notes-canvas-empty">
               <span class="big">🕸️</span>
-              <div id="noteGraphEmptyText">选择 vault 后点击右上角「导入笔记」，笔记与双向链接会在这里结成图谱</div>
+              <div id="noteGraphEmptyText">选择仓库后点击右上角「导入笔记」，笔记与双向链接会在这里结成图谱</div>
             </div>
             <div class="notes-zoom">
               <button type="button" data-zoom="in" title="放大">＋</button>
@@ -4525,10 +4444,10 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="form-field" style="margin-bottom:8px">
               <label>类型（保存后转成记忆的类别）</label>
               <select id="noteType" class="form-input" style="width:100%;padding:7px 10px">
-                <option value="experience">经验 experience</option>
-                <option value="decision">决策 decision</option>
-                <option value="pitfall">坑 pitfall</option>
-                <option value="convention">约定 convention</option>
+                <option value="experience">经验</option>
+                <option value="decision">决策</option>
+                <option value="pitfall">踩坑</option>
+                <option value="convention">约定</option>
               </select>
             </div>
             <div class="form-field" style="margin-bottom:8px">
@@ -4552,32 +4471,57 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
       <!-- 原有同步明细：折叠保留，数据与功能不变 -->
       <details class="notes-fold">
-        <summary>已导入笔记（obsidian_sync 元表）<span class="text-muted" style="font-size:12px" id="obsidianStatusBadge">选择 vault 后查看</span></summary>
+        <summary>已导入笔记（obsidian_sync 元表）<span class="text-muted" style="font-size:12px" id="obsidianStatusBadge">选择仓库后查看</span></summary>
         <div class="notes-fold-body">
           <div class="table-wrap">
             <table class="data-table" id="obsidianImportedTable">
               <thead>
                 <tr>
                   <th style="width:40px">#</th>
-                  <th>笔记路径（vault 相对）</th>
+                  <th>笔记路径（仓库相对）</th>
                   <th style="width:90px">记忆 id</th>
                   <th style="width:90px">内容哈希</th>
                   <th style="width:160px">导入时间</th>
                 </tr>
               </thead>
               <tbody id="obsidianImportedBody">
-                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">选择 vault 后加载…</td></tr>
+                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">选择仓库后加载…</td></tr>
               </tbody>
             </table>
           </div>
         </div>
       </details>
+      </div>
+
+      <!-- Slice C3：原「知识图谱」整段并入本子视图，DOM id 全部保留，故 app.js 绘图逻辑零改动 -->
+      <div class="subview" data-view="unified" role="tabpanel">
+        <div class="toolbar">
+          <span style="font-size:14px;font-weight:600;color:var(--text-primary)">统一图谱</span>
+          <span class="text-muted" style="font-size:12px">笔记 · 记忆 · 卡片统一图（双向链接 + 卡片互联）</span>
+          <select id="graphScope" title="节点范围" style="margin-left:auto;padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
+            <option value="all">全部节点</option>
+            <option value="note">仅笔记</option>
+            <option value="memory">仅记忆</option>
+            <option value="card">仅卡片</option>
+          </select>
+          <select id="graphDepth" title="邻居深度" style="padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
+            <option value="1">深度 1</option>
+            <option value="2">深度 2</option>
+            <option value="3">深度 3</option>
+          </select>
+          <button class="btn-ghost" id="graphRefreshBtn">刷新</button>
+        </div>
+        <div id="graphBanner" style="display:none;margin-bottom:12px;padding:8px 14px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:var(--text-primary);font-size:12px"></div>
+        <div class="glass-card" style="height:calc(100vh - 260px);min-height:420px;padding:10px">
+          <div id="graphChart" style="width:100%;height:100%"></div>
+        </div>
+      </div>
     </section>
 
     <section class="page" id="page-skills">
       <div class="glass-card mb-24">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>技能同步 — 中央技能库 ↔ 多 Agent 一键分发</div>
+          <div class="card-title"><span class="dot"></span>技能同步 — 中央技能库 ↔ 多智能体一键分发</div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn-primary" id="skillsRefreshBtn" style="background:rgba(65,187,200,0.12);color:var(--accent-cyan);border:1px solid rgba(65,187,200,0.25);box-shadow:none">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -4585,7 +4529,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             </button>
             <button class="btn-primary" id="skillsDryBtn" style="background:linear-gradient(135deg,var(--accent-purple),#7c3aed)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-              dry-run 预演
+              预演模式
             </button>
             <button class="btn-primary" id="skillsSyncBtn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><line x1="8.59" y1="7.59" x2="15.42" y2="17.42"/></svg>
@@ -4595,7 +4539,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         </div>
         <div class="text-muted" style="font-size:12px;line-height:1.8;margin-bottom:14px">
           中央技能库内每个含 <span class="mono">SKILL.md</span> 的目录即一个技能，一键分发到
-          <strong style="color:var(--text-primary)">豆包 Doubao / Codex / Claude Code</strong> 各自的技能目录——<strong style="color:var(--text-primary)">装一次，所有 Agent 可用</strong>。
+          <strong style="color:var(--text-primary)">豆包 Doubao / Codex / Claude Code</strong> 各自的技能目录——<strong style="color:var(--text-primary)">装一次，所有智能体可用</strong>。
           <br>幂等：目标一致跳过；不一致先备份 <span class="mono">技能名.bak-时间戳</span> 再替换；绝不删除中央库之外的技能。TRAE 暂不支持自定义技能目录。
         </div>
         <div id="skillsCentralInfo"></div>
@@ -4616,11 +4560,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
       <div class="glass-card" style="margin-top:16px">
         <div class="card-header">
-          <div class="card-title"><span class="dot"></span>本机 Agent 自动检测（与「工具连接」页同源）</div>
+          <div class="card-title"><span class="dot"></span>本机智能体自动检测（与「工具连接」页同源）</div>
           <span class="text-muted" style="font-size:12px" id="skillsDetectedBadge">—</span>
         </div>
         <div class="text-muted" style="font-size:12px;line-height:1.8;margin-bottom:12px">
-          自动扫描本机已安装的 AI Agent，已连接 MCP 且支持本地 skills 目录的将<strong style="color:var(--text-primary)">自动加入分发目标</strong>；不支持 skills 目录的 Agent 会标注原因。
+          自动扫描本机已安装的 AI 智能体，已连接 MCP 且支持本地 skills 目录的将<strong style="color:var(--text-primary)">自动加入分发目标</strong>；不支持 skills 目录的智能体会标注原因。
         </div>
         <div id="skillsDetected" style="display:flex;flex-direction:column;gap:8px">
           <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">正在扫描…</div>
@@ -4629,7 +4573,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     </section>
 
     <!-- ===== Page: Agent（V1重构：左侧会话边栏 + 右侧聊天区）===== -->
-    <section class="page" id="page-agent">
+    <section class="page active" id="page-agent">
       <div class="agent-layout">
         <!-- 左侧：会话边栏（豆包风格） -->
         <aside class="agent-sidebar">
@@ -4668,11 +4612,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="agent-chat">
           <div class="agent-chat-header">
             <div>
-              <div class="agent-chat-title">Agent · 内置智能体</div>
-              <div class="agent-chat-sub" id="agentStatusLine">正在读取 agent 状态…</div>
+              <div class="agent-chat-title">内置智能体</div>
+              <div class="agent-chat-sub" id="agentStatusLine">正在读取智能体状态…</div>
             </div>
             <div class="agent-chat-actions">
-              <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-muted);user-select:none" id="agentWriteWrap" title="默认只读：agent 的写类工具需先勾选同意">
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-muted);user-select:none" id="agentWriteWrap" title="默认只读：智能体的写类工具需先勾选同意">
                 <input type="checkbox" id="agentAllowWrites"> 允许写入
               </label>
               <button class="btn-ghost" id="agentClearBtn" style="padding:6px 10px;font-size:11px">清空</button>
@@ -4690,9 +4634,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
               <button class="btn-ghost" id="agentRunExportBtn" style="padding:4px 10px;font-size:11px">⬇ 导出对话</button>
             </div>
           </div>
-          <div class="agent-chat-messages" id="agentChat" role="log" aria-live="polite" aria-label="agent 对话">
+          <div class="agent-chat-messages" id="agentChat" role="log" aria-live="polite" aria-label="智能体对话">
             <div class="text-muted" style="font-size:13px;padding:18px;text-align:center;line-height:2">
-              内置 agent 与 MCP 客户端（Codex / Claude / TRAE）共用同一套工具与记忆库。<br>
+              内置智能体与 MCP 客户端（Codex / Claude / TRAE）共用同一套工具与记忆库。<br>
               试着问：<span class="mono">当前项目最该先记住的一件事是什么？</span> · <span class="mono">有没有可做的任务？</span> · <span class="mono">备份策略是怎么定的？</span>
               <br><span style="font-size:11px;opacity:.7">发送后执行过程（工具调用 / 产物 / diff）内联展开在对话流中，点任意步骤可看详情。</span>
             </div>
@@ -4709,10 +4653,10 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
               <button class="btn-ghost" id="agentRunLiveOpen" style="padding:2px 8px;font-size:10px" title="在执行中心查看本轮完整过程">执行中心 →</button>
             </div>
             <!-- ★ 批次⑤：去掉行内 max-height/overflow 内滚，改由 #agentChat 统一滚动（内联后不嵌套滚动条） -->
-            <div id="agentRunLiveTimeline" class="run-cards" role="log" aria-live="polite" aria-label="agent 执行过程"></div>
+            <div id="agentRunLiveTimeline" class="run-cards" role="log" aria-live="polite" aria-label="智能体执行过程"></div>
           </div>
           <div class="agent-chat-input" id="agentInputZone">
-            <textarea id="agentInput" rows="2" aria-label="给 agent 下指令" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行；文件可拖入或点 📎 附加）"></textarea>
+            <textarea id="agentInput" rows="2" aria-label="给智能体下指令" placeholder="给智能体下指令（Enter 发送，Shift+Enter 换行；文件可拖入或点 📎 附加）"></textarea>
             <button class="btn-ghost agent-attach-btn" id="agentAttachBtn" aria-label="附加文件" title="附加文件（拖入输入框也可上传）">📎</button>
             <button class="btn-primary" id="agentSendBtn">发送</button>
             <input type="file" id="agentFileInput" style="display:none" tabindex="-1" aria-hidden="true">
@@ -4738,92 +4682,8 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
     </section>
 
-    <!-- ===== Page: Graph 知识图谱（P6 新增：笔记·记忆·卡片统一图）===== -->
-    <section class="page" id="page-graph">
-      <div class="toolbar">
-        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">知识图谱</span>
-        <span class="text-muted" style="font-size:12px">笔记 · 记忆 · 卡片统一图（双向链接 + 卡片互联）</span>
-        <select id="graphScope" title="节点范围" style="margin-left:auto;padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
-          <option value="all">全部节点</option>
-          <option value="note">仅笔记</option>
-          <option value="memory">仅记忆</option>
-          <option value="card">仅卡片</option>
-        </select>
-        <select id="graphDepth" title="邻居深度" style="padding:6px 10px;border-radius:6px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px">
-          <option value="1">深度 1</option>
-          <option value="2">深度 2</option>
-          <option value="3">深度 3</option>
-        </select>
-        <button class="btn-ghost" id="graphRefreshBtn">刷新</button>
-      </div>
-      <div id="graphBanner" style="display:none;margin-bottom:12px;padding:8px 14px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:var(--text-primary);font-size:12px"></div>
-      <div class="glass-card" style="height:calc(100vh - 200px);min-height:420px;padding:10px">
-        <div id="graphChart" style="width:100%;height:100%"></div>
-      </div>
-    </section>
-
     <!-- ===== Page: 执行中心（Agent 工具调用过程 · 审批 · 产物 · 会话）=====
          呈现层模块：读 /api/agent/runs* + SSE /stream；审批三键未启用（501 占位，B1 不静默放行） -->
-    <section class="page" id="page-runs">
-      <div class="toolbar">
-        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">Agent 执行中心</span>
-        <span class="text-muted" style="font-size:12px">工具调用过程 · 实时 SSE · 产物与 diff · 会话</span>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-          <button class="btn-ghost" id="runsRefreshBtn" style="padding:5px 12px;font-size:12px">刷新</button>
-        </div>
-      </div>
-
-      <!-- V1 运行卡片板（横排四态卡；点击定位到下方时间线） -->
-      <div class="glass-card" style="padding:14px;margin-bottom:14px">
-        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">运行（内存保留最近 50 个）</div>
-        <div id="runBoard" style="display:flex;flex-wrap:wrap;gap:10px">
-          <div id="runBoardEmpty" class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「Agent」页发一条指令（带会话）即在此实时展开。</div>
-        </div>
-      </div>
-
-      <!-- V2 时间线 + V3 终端 + V4 diff + V5 产物（选中 run 后填充） -->
-      <div id="runDetailWrap" style="display:none">
-        <div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px">
-          <div class="glass-card" style="padding:14px;min-height:200px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">工具调用时间线 <span class="text-muted" id="runDetailTitle" style="font-weight:400"></span></div>
-            <ol id="runTimeline" class="run-timeline"></ol>
-          </div>
-          <div class="glass-card" style="padding:14px;min-height:200px;display:flex;flex-direction:column">
-            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">步骤详情</div>
-            <div id="runStepDetail" class="text-muted" style="font-size:12px">点击左侧时间线某步查看参数 / 输出 / diff / 产物。</div>
-            <!-- V3 终端 -->
-            <div id="runTermView" style="display:none;margin-top:10px">
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px" id="runTermMeta"></div>
-              <pre id="runTermBody" style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto"></pre>
-            </div>
-            <!-- V4 diff -->
-            <div id="runDiffView" style="display:none;margin-top:10px">
-              <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
-                <label style="font-size:11px;color:var(--text-muted)"><input type="radio" name="runDiffMode" value="unified" checked> unified</label>
-                <label style="font-size:11px;color:var(--text-muted)"><input type="radio" name="runDiffMode" value="split"> split</label>
-                <span class="text-muted" id="runDiffStat" style="font-size:11px;margin-left:auto"></span>
-              </div>
-              <pre id="runDiffBody" style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11.5px;line-height:1.6;white-space:pre;overflow:auto;max-height:260px"></pre>
-            </div>
-            <!-- V5 产物 -->
-            <div id="runArtifactView" style="display:none;margin-top:10px">
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">产物（exec 大输出落盘）</div>
-              <a id="runArtifactLink" style="font-size:12px;color:var(--accent-cyan);text-decoration:none" target="_blank">查看 / 下载 artifact</a>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 会话条（agent_sessions 持久化） -->
-      <div class="glass-card" style="padding:14px;margin-top:14px">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-          <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">会话</span>
-          <div id="sessionChips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-          <button class="btn-ghost" id="sessionNewBtn" style="padding:4px 10px;font-size:12px">＋ 新建</button>
-        </div>
-        <div id="sessionMessages" class="text-muted" style="font-size:12px;line-height:1.8;white-space:pre-wrap;max-height:180px;overflow:auto">选择会话查看历史（仅呈现；agent 发消息自动追加）。</div>
-      </div>
-    </section>
 
     <!-- 审批三键弹窗（B1：功能未启用 → 三键接 501 占位；拒绝键即时本地标 ✋，不静默放行） -->
     <div class="modal-overlay" id="approvalModal">
@@ -4835,7 +4695,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="modal-body" style="font-size:13px">
           <div id="approvalRisk" style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-bottom:10px;background:rgba(245,158,11,0.15);color:var(--warning)">L?</div>
           <div id="approvalTarget" style="font-size:12px;color:var(--text-primary);line-height:1.7;margin-bottom:10px"></div>
-          <details id="approvalArgs" style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">参数 JSON（折叠）</summary><pre id="approvalArgsBody" style="margin:6px 0 0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto"></pre></details>
+          <details id="approvalArgs" style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">参数（折叠）</summary><pre id="approvalArgsBody" style="margin:6px 0 0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto"></pre></details>
           <div id="approvalFeedback" style="display:none;padding:8px 12px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:var(--text-primary);font-size:12px;margin-bottom:10px"></div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="btn-ghost" id="approvalDenyBtn" style="padding:6px 14px;font-size:12px">拒绝</button>
@@ -4849,8 +4709,14 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 
     <!-- ===== Page: Tasks 任务看板（v1.1 七态状态机）===== -->
     <section class="page" id="page-tasks">
+      <div class="subnav">
+        <button class="subtab" role="tab" data-view="cards" aria-selected="true">卡片工作流</button>
+        <button class="subtab" role="tab" data-view="runs" aria-selected="false">执行过程<span class="subtab-badge" id="runsBadge" style="display:none">0</span></button>
+      </div>
+
+      <div class="subview on" data-view="cards" role="tabpanel">
       <div class="toolbar">
-        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">多 Agent 任务看板</span>
+        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">多智能体任务看板</span>
         <span class="text-muted" style="font-size:12px">卡片工作流 · CAS 认领 + 租约 + 依赖提升</span>
         <div style="margin-left:auto;display:flex;gap:6px" id="tasksViewTabs" role="tablist" aria-label="任务视图">
           <!-- ★ P4 简化批：恢复「列式看板」视图 —— 拖一下卡片即可改状态（右键改状态对小白不可发现） -->
@@ -4916,6 +4782,70 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <!-- 旧任务视图（/api/tasks 七态，含 done 列）：自 2026-09-13 起任务地图为唯一入口，本容器默认隐藏
            —— 避免与地图重复展示已完成任务；showTaskView('legacy') 需要时仍会恢复为 grid -->
       <div id="tasksBoard" style="display:none;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+      </div>
+
+      <!-- Slice C4：原「执行中心」整段并入本子视图，DOM id 全部保留，故 app.js 渲染/绑定零改动 -->
+      <div class="subview" data-view="runs" role="tabpanel">
+
+        <div class="toolbar">
+          <span style="font-size:14px;font-weight:600;color:var(--text-primary)">智能体执行中心</span>
+          <span class="text-muted" style="font-size:12px">工具调用过程 · 实时 SSE · 产物与 diff · 会话</span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <button class="btn-ghost" id="runsRefreshBtn" style="padding:5px 12px;font-size:12px">刷新</button>
+          </div>
+        </div>
+
+        <!-- V1 运行卡片板（横排四态卡；点击定位到下方时间线） -->
+        <div class="glass-card" style="padding:14px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">运行（内存保留最近 50 个）</div>
+          <div id="runBoard" style="display:flex;flex-wrap:wrap;gap:10px">
+            <div id="runBoardEmpty" class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「智能体」页发一条指令（带会话）即在此实时展开。</div>
+          </div>
+        </div>
+
+        <!-- V2 时间线 + V3 终端 + V4 diff + V5 产物（选中 run 后填充） -->
+        <div id="runDetailWrap" style="display:none">
+          <div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px">
+            <div class="glass-card" style="padding:14px;min-height:200px">
+              <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">工具调用时间线 <span class="text-muted" id="runDetailTitle" style="font-weight:400"></span></div>
+              <ol id="runTimeline" class="run-timeline"></ol>
+            </div>
+            <div class="glass-card" style="padding:14px;min-height:200px;display:flex;flex-direction:column">
+              <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">步骤详情</div>
+              <div id="runStepDetail" class="text-muted" style="font-size:12px">点击左侧时间线某步查看参数 / 输出 / diff / 产物。</div>
+              <!-- V3 终端 -->
+              <div id="runTermView" style="display:none;margin-top:10px">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px" id="runTermMeta"></div>
+                <pre id="runTermBody" style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto"></pre>
+              </div>
+              <!-- V4 diff -->
+              <div id="runDiffView" style="display:none;margin-top:10px">
+                <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
+                  <label style="font-size:11px;color:var(--text-muted)"><input type="radio" name="runDiffMode" value="unified" checked> 统一视图</label>
+                  <label style="font-size:11px;color:var(--text-muted)"><input type="radio" name="runDiffMode" value="split"> 分屏</label>
+                  <span class="text-muted" id="runDiffStat" style="font-size:11px;margin-left:auto"></span>
+                </div>
+                <pre id="runDiffBody" style="margin:0;padding:8px;border-radius:8px;background:rgba(15,23,42,0.04);border:1px solid var(--border-glass);font-size:11.5px;line-height:1.6;white-space:pre;overflow:auto;max-height:260px"></pre>
+              </div>
+              <!-- V5 产物 -->
+              <div id="runArtifactView" style="display:none;margin-top:10px">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">产物（exec 大输出落盘）</div>
+                <a id="runArtifactLink" style="font-size:12px;color:var(--accent-cyan);text-decoration:none" target="_blank">查看 / 下载产物</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 会话条（agent_sessions 持久化） -->
+        <div class="glass-card" style="padding:14px;margin-top:14px">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+            <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">会话</span>
+            <div id="sessionChips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+            <button class="btn-ghost" id="sessionNewBtn" style="padding:4px 10px;font-size:12px">＋ 新建</button>
+          </div>
+          <div id="sessionMessages" class="text-muted" style="font-size:12px;line-height:1.8;white-space:pre-wrap;max-height:180px;overflow:auto">选择会话查看历史（仅呈现；智能体发消息自动追加）。</div>
+        </div>
+      </div>
     </section>
   </main>
 </div>
@@ -4984,7 +4914,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
           </select>
         </div>
         <div class="form-field" id="projectField">
-          <label>项目 scope</label>
+          <label>项目作用域</label>
           <input type="text" id="memProject" value="global" placeholder="global">
         </div>
       </div>
@@ -5038,7 +4968,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     <div class="command-palette-input-wrap">
       <span class="command-palette-icon">⌘</span>
       <input type="text" id="commandInput" placeholder="输入命令或搜索…" autocomplete="off">
-      <span class="command-palette-hint">ESC 关闭</span>
+      <span class="command-palette-hint">按 Esc 关闭</span>
     </div>
     <div class="command-list" id="commandList"></div>
   </div>
@@ -5079,26 +5009,26 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
     <div class="term-panes" id="termPanes">
       <div class="term-pane" data-pane="1">
         <div class="term-pane-head">
-          <span class="term-pane-title">Pane 1</span>
-          <select class="term-cwd" aria-label="Pane 1 工作目录"></select>
+          <span class="term-pane-title">窗格 1</span>
+          <select class="term-cwd" aria-label="窗格 1 工作目录"></select>
           <button class="btn-ghost term-clear" style="padding:3px 9px;font-size:11px">清空</button>
         </div>
-        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="Pane 1 输出"></pre>
+        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="窗格 1 输出"></pre>
         <div class="term-input-row">
-          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="Pane 1 命令输入" autocomplete="off" spellcheck="false">
+          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="窗格 1 命令输入" autocomplete="off" spellcheck="false">
           <button class="btn-primary term-run" style="padding:6px 16px;font-size:12px">执行</button>
           <button class="btn-danger term-stop" style="padding:6px 14px;font-size:12px" hidden>停止</button>
         </div>
       </div>
       <div class="term-pane" data-pane="2" hidden>
         <div class="term-pane-head">
-          <span class="term-pane-title">Pane 2</span>
-          <select class="term-cwd" aria-label="Pane 2 工作目录"></select>
+          <span class="term-pane-title">窗格 2</span>
+          <select class="term-cwd" aria-label="窗格 2 工作目录"></select>
           <button class="btn-ghost term-clear" style="padding:3px 9px;font-size:11px">清空</button>
         </div>
-        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="Pane 2 输出"></pre>
+        <pre class="term-out" role="log" aria-live="off" tabindex="0" aria-label="窗格 2 输出"></pre>
         <div class="term-input-row">
-          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="Pane 2 命令输入" autocomplete="off" spellcheck="false">
+          <input class="term-input" placeholder="输入命令回车执行（↑ 历史）" aria-label="窗格 2 命令输入" autocomplete="off" spellcheck="false">
           <button class="btn-primary term-run" style="padding:6px 16px;font-size:12px">执行</button>
           <button class="btn-danger term-stop" style="padding:6px 14px;font-size:12px" hidden>停止</button>
         </div>
@@ -5112,9 +5042,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 <div class="modal-overlay" id="designDrawer">
   <div class="modal term-modal">
     <div class="modal-header">
-      <div class="modal-title">🎯 Design Mode<span class="term-hint">点真实浏览器里的元素 → HTML + CSS + 裁剪截图 进 Agent prompt</span></div>
+      <div class="modal-title">🎯 设计模式<span class="term-hint">点真实浏览器里的元素 → HTML + CSS + 裁剪截图 进智能体提示词</span></div>
       <span class="wb-gh-badge" id="designStatusBadge" aria-live="polite">未启动</span>
-      <button class="modal-close" id="designClose" aria-label="关闭 Design Mode">×</button>
+      <button class="modal-close" id="designClose" aria-label="关闭设计模式">×</button>
     </div>
     <div class="design-body">
       <div class="design-url-row">
@@ -5123,7 +5053,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <button class="btn-ghost" id="designNavBtn" style="padding:6px 14px;font-size:12px" hidden>换页</button>
         <button class="btn-danger" id="designKillBtn" style="padding:6px 14px;font-size:12px" hidden>关闭会话</button>
       </div>
-      <div class="design-hint">会弹出独立 Chrome 窗口：移动鼠标高亮元素，<b>点击即拾取</b>（HTML + 计算样式 + 元素裁剪截图）。结果实时回传到下方列表，可一键附进 Agent 输入框。</div>
+      <div class="design-hint">会弹出独立 Chrome 窗口：移动鼠标高亮元素，<b>点击即拾取</b>（HTML + 计算样式 + 元素裁剪截图）。结果实时回传到下方列表，可一键附进智能体输入框。</div>
       <div class="design-picks" id="designPicks"><div class="wb-gh-empty">暂无拾取结果 —— 打开页面后在 Chrome 窗口里点选元素。</div></div>
     </div>
     <div class="term-foot">调试端口仅监听 127.0.0.1（随机端口 + 独立临时 profile，不碰你的浏览器配置）；拾取结果只留最近 10 条；关闭会话即杀进程树并清临时目录。协议白名单 http/https/file。</div>
@@ -5199,7 +5129,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="settings-desc">导出所有记忆为 JSON 备份文件</div>
           </div>
           <div class="settings-control">
-            <button class="btn-ghost" id="exportAllBtn" style="padding:6px 14px;font-size:12px">导出 JSON</button>
+            <button class="btn-ghost" id="exportAllBtn" style="padding:6px 14px;font-size:12px">导出备份文件</button>
           </div>
         </div>
         <div class="settings-item">
@@ -5242,8 +5172,8 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="settings-section-title">🤖 LLM 配置</div>
         <div class="settings-item">
           <div class="settings-label">
-            <div class="settings-name">地址 URL</div>
-            <div class="settings-desc">采集提炼 + 内置 agent 共用的模型接口。<b>保存即时生效，无需重启内核</b></div>
+            <div class="settings-name">地址</div>
+            <div class="settings-desc">采集提炼 + 内置智能体共用的模型接口。<b>保存即时生效，无需重启内核</b></div>
           </div>
           <div class="settings-control" style="flex-direction:column;align-items:stretch;width:100%;gap:6px">
             <input type="text" id="cfgLlmUrl" placeholder="https://api.deepseek.com/v1 或 http://127.0.0.1:11434/v1（base 与完整端点都支持）" style="width:100%;padding:7px 10px;border:1px solid var(--border-glass);border-radius:6px;background:var(--bg-card);color:var(--text-secondary);font-family:var(--font-mono);font-size:12px">
@@ -5360,9 +5290,9 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
         <div class="form-field">
           <label>类型</label>
           <select id="srcKind">
-            <option value="memory">记忆 memory</option>
-            <option value="rule">规则 rule</option>
-            <option value="convo">对话 convo</option>
+            <option value="memory">记忆</option>
+            <option value="rule">规则</option>
+            <option value="convo">对话</option>
           </select>
         </div>
       </div>
@@ -5417,19 +5347,19 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       </div>
       <div class="form-row">
         <div class="form-field">
-          <label>接收方 assignee</label>
+          <label>接收方</label>
           <input type="text" id="taskAssignee" placeholder="如 codex / claude / unassigned">
         </div>
         <div class="form-field">
           <label>状态</label>
           <select id="taskStatus">
-            <option value="pending">待处理 pending</option>
-            <option value="in_progress">进行中 in_progress</option>
-            <option value="blocked">阻塞 blocked</option>
-            <option value="review">待审核 review</option>
-            <option value="done">已完成 done</option>
-            <option value="failed">失败 failed</option>
-            <option value="cancelled">已取消 cancelled</option>
+            <option value="pending">待处理</option>
+            <option value="in_progress">进行中</option>
+            <option value="blocked">阻塞</option>
+            <option value="review">待审核</option>
+            <option value="done">已完成</option>
+            <option value="failed">失败</option>
+            <option value="cancelled">已取消</option>
           </select>
         </div>
       </div>
@@ -5484,5 +5414,6 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 </div>
 
 <script src="./app.js"></script>
+<script src="./canvas-editor.js"></script>
 </body>
 </html>

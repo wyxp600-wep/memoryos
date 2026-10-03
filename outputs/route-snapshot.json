@@ -1,9 +1,9 @@
 {
   "token": "snapshot-token-fixed",
   "meta": {
-    "generatedAt": "2026-10-03T16:47:20.568Z",
+    "generatedAt": "2026-10-03T19:22:55.199Z",
     "node": "v24.18.1",
-    "gitRev": "063b668",
+    "gitRev": "62b822e",
     "gitDirty": true,
     "envDriftRoutes": [
       "/api/scan-agents",
@@ -20,7 +20,10 @@
     ]
   },
   "routeTable": [
+    "DELETE /api/agent-profiles/:id",
     "DELETE /api/agent/sessions/:id",
+    "DELETE /api/card-edges/:id",
+    "DELETE /api/card-types/:key",
     "DELETE /api/cards/:id",
     "DELETE /api/cards/:id/links",
     "DELETE /api/cards/:id/memory",
@@ -32,7 +35,9 @@
     "DELETE /api/working",
     "DELETE /api/worktrees/:name",
     "GET /",
+    "GET /api/agent-cards/:id/state",
     "GET /api/agent-creds",
+    "GET /api/agent-profiles",
     "GET /api/agent/:id/connect-guide",
     "GET /api/agent/runs",
     "GET /api/agent/runs/:id",
@@ -48,6 +53,7 @@
     "GET /api/artifacts/:id",
     "GET /api/audit",
     "GET /api/backlinks",
+    "GET /api/card-types",
     "GET /api/cards",
     "GET /api/cards/:id",
     "GET /api/cards/:id/annotations",
@@ -105,7 +111,9 @@
     "GET /app.js",
     "GET /echarts.min.js",
     "HEAD /",
+    "HEAD /api/agent-cards/:id/state",
     "HEAD /api/agent-creds",
+    "HEAD /api/agent-profiles",
     "HEAD /api/agent/:id/connect-guide",
     "HEAD /api/agent/runs",
     "HEAD /api/agent/runs/:id",
@@ -121,6 +129,7 @@
     "HEAD /api/artifacts/:id",
     "HEAD /api/audit",
     "HEAD /api/backlinks",
+    "HEAD /api/card-types",
     "HEAD /api/cards",
     "HEAD /api/cards/:id",
     "HEAD /api/cards/:id/annotations",
@@ -178,6 +187,7 @@
     "HEAD /app.js",
     "HEAD /echarts.min.js",
     "POST /api/agent-creds",
+    "POST /api/agent-profiles",
     "POST /api/agent/:id/connect",
     "POST /api/agent/chat",
     "POST /api/agent/config",
@@ -193,6 +203,8 @@
     "POST /api/agent/sessions/:id/summarize",
     "POST /api/archive",
     "POST /api/artifacts/upload",
+    "POST /api/card-edges",
+    "POST /api/card-types",
     "POST /api/cards",
     "POST /api/cards/:id/accept",
     "POST /api/cards/:id/annotations",
@@ -205,6 +217,7 @@
     "POST /api/cards/:id/position",
     "POST /api/cards/:id/push-to-task",
     "POST /api/cards/:id/refine",
+    "POST /api/cards/:id/retype",
     "POST /api/cards/:id/status",
     "POST /api/cards/:id/to-memory",
     "POST /api/cards/apply-plan",
@@ -246,7 +259,9 @@
     "POST /api/working",
     "POST /api/worktrees",
     "POST /v1/embeddings",
+    "PUT /api/agent-profiles/:id",
     "PUT /api/agent/sessions/:id",
+    "PUT /api/card-types/:key",
     "PUT /api/cards/:id",
     "PUT /api/memory/:id",
     "PUT /api/notes/:id"
@@ -256,8 +271,8 @@
       "path": "/",
       "status": 200,
       "contentType": "text/html",
-      "contentLength": 266236,
-      "sha256": "1f5f28f4ef9e4b93",
+      "contentLength": 266280,
+      "sha256": "fdc67a56dfd1b0d6",
       "body": "<!DOCTYPE html>\r\n<html lang=\"zh-CN\">\r\n<head>\r\n<meta charset=\"UTF-8\">\r\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\r\n<meta http-equiv=\"Cache-Control\" content=\"no-store, no-cache, must-revalidate, max-age=0\">\r\n<meta http-equiv=\"Pragma\" content=\"no-cache\">\r\n<meta http-equiv=\"Expires\" content=\"0\">\r\n<title>MemoryOS — 跨工具 AI Agent 共享记忆系统</title>\r\n<!-- ★ P2-perf：字体本地化 —— 移除 miaoda.feishu.cn 远程字体（离线可用 + 无外发请求）；本机已装同名 webfont 时仍优先生效，否则回落系统字体 -->\r\n\r\n<style>\r\n/* ===== CSS Variables — 米白 #FCF9E8 + 星光蓝 #41BBC8 浅色主题 ===== */\r\n:root {\r\n  --bg-deep: #FCF9E8;\r\n  --bg-base: #F5F1E0;\r\n  --bg-card: rgba(255, 255, 255, 0.72);\r\n  --bg-card-hover: rgba(255, 255, 255, 0.92);\r\n  --border-glass: rgba(65, 187, 200, 0.2);\r\n  --border-glow: rgba(65, 187, 200, 0.45);\r\n  --text-primary: #1a2e35;\r\n  --text-secondary: #4a6570;\r\n  --text-muted: #8aa0aa;\r\n  --accent-cyan: #41BBC8;\r\n  --accent-purple: #2a9daf;\r\n  --accent-blue: #5ec9d6;\r\n  --success: #16a34a;\r\n  --warning: #d97706;\r\n  --danger: #dc2626;\r\n  --archived: #6b7280;\r\n  --merged: #7c3aed;\r\n  --superseded: #d97706;\r\n  --radius-lg: 20px;\r\n  --radius-md: 14px;\r\n  --radius-sm: 8px;\r\n  --sidebar-w: 260px;\r\n  /* ★ P2-perf：字体本地化 —— 系统字体回落栈（Windows 微软雅黑 / macOS 苹方） */\r\n  --font-display: 'Space Grotesk', 'Noto Sans SC', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;\r\n  --font-body: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Space Grotesk', system-ui, sans-serif;\r\n  --font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;\r\n}\r\n\r\n/* ===== Dark Theme ===== */\r\n[data-theme=\"dark\"] {\r\n  --bg-deep: #0a0f14;\r\n  --bg-base: #0f1620;\r\n  --bg-card: rgba(20, 30, 42, 0.85);\r\n  --bg-card-hover: rgba(28, 40, 56, 0.95);\r\n  --border-glass: rgba(65, 187, 200, 0.15);\r\n  --border-glow: rgba(65, 187, 200, 0.4);\r\n  --text-primary: #e2e8f0;\r\n  --text-secondary: #94a3b8;\r\n  --text-muted: #64748b;\r\n  --accent-cyan: #22d3ee;\r\n  --accent-purple: #a78bfa;\r\n  --accent-blue: #38bdf8;\r\n  --success: #34d399;\r\n  --warning: #fbbf24;\r\n  --danger: #f87171;\r\n  --archived: #64748b;\r\n  --merged: #c084fc;\r\n  --superseded: #fbbf24;\r\n}\r\n[data-theme=\"dark\"] body {\r\n  background: linear-gradient(160deg, #0a0f14 0%, #0f1620 45%, #0c1420 100%);\r\n}\r\n[data-theme=\"dark\"] .glass-card { background: rgba(20, 30, 42, 0.85); }\r\n[data-theme=\"dark\"] .modal { background: rgba(15, 22, 32, 0.98); }\r\n[data-theme=\"dark\"] .form-field textarea,\r\n[data-theme=\"dark\"] .form-field input,\r\n[data-theme=\"dark\"] .form-field select { background: rgba(15, 22, 32, 0.8); color: #e2e8f0; }\r\n[data-theme=\"dark\"] .status-bar-track { background: rgba(255,255,255,0.06); }\r\n[data-theme=\"dark\"] .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }\r\n[data-theme=\"dark\"] .global-loading { background: rgba(10,15,20,0.85); }\r\n[data-theme=\"dark\"] .topbar { background: rgba(15, 22, 32, 0.85); border-bottom-color: rgba(255,255,255,0.08); }\r\n[data-theme=\"dark\"] .nav-item { color: rgba(226,232,240,0.7); }\r\n[data-theme=\"dark\"] .nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }\r\n[data-theme=\"dark\"] .nav-item.active { background: rgba(65,187,200,0.15); color: #41bbc8; }\r\n[data-theme=\"dark\"] .nav-group-title { color: rgba(226,232,240,0.4); }\r\n[data-theme=\"dark\"] .logo-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .logo-sub { color: rgba(226,232,240,0.5); }\r\n[data-theme=\"dark\"] .page-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .card-title { color: #e2e8f0; }\r\n[data-theme=\"dark\"] .data-table th { color: rgba(226,232,240,0.6); border-bottom-color: rgba(255,255,255,0.08); }\r\n[data-theme=\"dark\"] .data-table td { color: rgba(226,232,240,0.85); border-bottom-color: rgba(255,255,255,0.05); }\r\n[data-theme=\"dark\"] .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }\r\n[data-theme=\"dark\"] .filter-btn { color: rgba(226,232,240,0.6); border-color: rgba(255,255,255,0.1); }\r\n[data-theme=\"dark\"] .filter-btn:hover { color: #e2e8f0; border-color: rgba(255,255,255,0.2); }\r\n[data-theme=\"dark\"] .filter-btn.active { ba«truncated»"
     },
     {
@@ -344,9 +359,17 @@
       "path": "/api/cards/graph",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 46,
-      "sha256": "9b4d05ee76932292",
-      "body": "{\"ok\":true,\"auto\":false,\"nodes\":[],\"links\":[]}"
+      "contentLength": 57,
+      "sha256": "7496b1a98ad24069",
+      "body": "{\"ok\":true,\"auto\":false,\"nodes\":[],\"links\":[],\"edges\":[]}"
+    },
+    {
+      "path": "/api/card-types",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 801,
+      "sha256": "844dbe25cfa8a1d1",
+      "body": "{\"ok\":true,\"types\":[{\"type_key\":\"agent\",\"label\":\"智能体\",\"color\":null,\"builtin\":1,\"can_dispatch_out\":0,\"can_dispatch_in\":1,\"can_inject_out\":0,\"can_inject_in\":0,\"meta\":null,\"created_at\":\"«ts»\"},{\"type_key\":\"doc\",\"label\":\"文档\",\"color\":null,\"builtin\":1,\"can_dispatch_out\":0,\"can_dispatch_in\":0,\"can_inject_out\":0,\"can_inject_in\":0,\"meta\":null,\"created_at\":\"«ts»\"},{\"type_key\":\"handoff\",\"label\":\"交接文档\",\"color\":null,\"builtin\":1,\"can_dispatch_out\":0,\"can_dispatch_in\":0,\"can_inject_out\":1,\"can_inject_in\":0,\"meta\":null,\"created_at\":\"«ts»\"},{\"type_key\":\"task\",\"label\":\"任务\",\"color\":null,\"builtin\":1,\"can_dispatch_out\":1,\"can_dispatch_in\":0,\"can_inject_out\":0,\"can_inject_in\":1,\"meta\":null,\"created_at\":\"«ts»\"}]}"
     },
     {
       "path": "/api/hygiene/suggestions",
@@ -360,9 +383,9 @@
       "path": "/api/health",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 448,
-      "sha256": "bdf45c74bee17d73",
-      "body": "{\"ok\":true,\"db\":{\"pageCount\":98,\"freelist\":0,\"freelistPct\":0,\"sizeMb\":0.4,\"autoVacuum\":0},\"a1\":{\"enforce\":false,\"envCredential\":false,\"activeCredentials\":0},\"analyze\":{\"ts\":\"«volatile»\",\"stat1Exists\":false,\"stat1Rows\":0,\"fresh\":false},\"vacuum\":{\"ts\":\"«volatile»\",\"enabled\":false},\"queries\":{\"enabled\":true,\"total\":123,\"slow\":0,\"sampled\":123,\"slowMs\":50,\"busyRetry\":0,\"p50\":\"«volatile»\",\"p95\":\"«volatile»\",\"max\":\"«volatile»\",\"slowTop\":[]},\"daemon\":{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true}}"
+      "contentLength": 449,
+      "sha256": "720edaa25d7ef86d",
+      "body": "{\"ok\":true,\"db\":{\"pageCount\":108,\"freelist\":0,\"freelistPct\":0,\"sizeMb\":0.4,\"autoVacuum\":0},\"a1\":{\"enforce\":false,\"envCredential\":false,\"activeCredentials\":0},\"analyze\":{\"ts\":\"«volatile»\",\"stat1Exists\":false,\"stat1Rows\":0,\"fresh\":false},\"vacuum\":{\"ts\":\"«volatile»\",\"enabled\":false},\"queries\":{\"enabled\":true,\"total\":125,\"slow\":0,\"sampled\":125,\"slowMs\":50,\"busyRetry\":0,\"p50\":\"«volatile»\",\"p95\":\"«volatile»\",\"max\":\"«volatile»\",\"slowTop\":[]},\"daemon\":{\"lastRun\":\"«volatile»\",\"hoursSince\":\"«volatile»\",\"stale\":true}}"
     },
     {
       "path": "/api/funnel",
@@ -461,6 +484,14 @@
       "body": "{\"agents\":[],\"total\":0}"
     },
     {
+      "path": "/api/agent-profiles",
+      "status": 200,
+      "contentType": "application/json",
+      "contentLength": 25,
+      "sha256": "a83eebc82d906af9",
+      "body": "{\"ok\":true,\"profiles\":[]}"
+    },
+    {
       "path": "/api/audit",
       "status": 200,
       "contentType": "application/json",
@@ -552,9 +583,9 @@
       "path": "/api/ingest/sources",
       "status": 200,
       "contentType": "application/json",
-      "contentLength": 21088,
-      "sha256": "cd1e7338c379d4d3",
-      "body": "{\"sources\":[{\"id\":\"codex-rules\",\"agent\":\"codex\",\"name\":\"Codex 规则 default.rules\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1811,\"level\":\"L1\"},{\"id\":\"codex-agents\",\"agent\":\"codex\",\"name\":\"Codex 全局约束 AGENTS.md\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":6682,\"level\":\"L1\"},{\"id\":\"codex-mem-raw\",\"agent\":\"codex\",\"name\":\"Codex 原始记忆 raw_memories\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":37,\"level\":\"L1\"},{\"id\":\"codex-mem-diff\",\"agent\":\"codex\",\"name\":\"Codex 工作区差异记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":140,\"level\":\"L1\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2132336,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7610789,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1907665,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":12692345,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7163773,\"level\":\"L2\"},{\"id\":\"claude-config\",\"agent\":\"claude\",\"name\":\"Claude 配置 config.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":29,\"level\":\"L2\"},{\"id\":\"claude-settings\",\"agent\":\"claude\",\"name\":\"Claude 设置 settings.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":14616,\"level\":\"L2\"},{\"id\":\"wb-memory\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy MEMORY\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":13643,\"level\":\"L1\"},{\"id\":\"wb-user\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy USER\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":401,\"level\":\"L1\"},{\"id\":\"wb-soul\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy SOUL\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1792,\"level\":\"L1\"},{\"id\":\"wb-identity\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy IDENTITY\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":496,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":254,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3053,\"level\":\"L1\"},{\"id\":\"trae-user-profile\",\"agent\":\"trae\",\"name\":\"Trae 用户画像 user_profile\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":6068,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7959,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":4677,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":2679,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7237,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":1322,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3080,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3194,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1375,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3475,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3406,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2192,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1798,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1661,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7523,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent«truncated»"
+      "contentLength": 21266,
+      "sha256": "163720c5b63a68b9",
+      "body": "{\"sources\":[{\"id\":\"codex-rules\",\"agent\":\"codex\",\"name\":\"Codex 规则 default.rules\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1811,\"level\":\"L1\"},{\"id\":\"codex-agents\",\"agent\":\"codex\",\"name\":\"Codex 全局约束 AGENTS.md\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":6682,\"level\":\"L1\"},{\"id\":\"codex-mem-raw\",\"agent\":\"codex\",\"name\":\"Codex 原始记忆 raw_memories\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":37,\"level\":\"L1\"},{\"id\":\"codex-mem-diff\",\"agent\":\"codex\",\"name\":\"Codex 工作区差异记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":140,\"level\":\"L1\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1383631,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2132336,\"level\":\"L2\"},{\"id\":\"zcode-log\",\"agent\":\"zcode\",\"name\":\"ZCode 对话日志 jsonl\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7610789,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1907665,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":12692345,\"level\":\"L2\"},{\"id\":\"zcode-agents\",\"agent\":\"zcode\",\"name\":\"ZCode 会话 agents\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":7163773,\"level\":\"L2\"},{\"id\":\"claude-config\",\"agent\":\"claude\",\"name\":\"Claude 配置 config.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":29,\"level\":\"L2\"},{\"id\":\"claude-settings\",\"agent\":\"claude\",\"name\":\"Claude 设置 settings.json\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":14616,\"level\":\"L2\"},{\"id\":\"wb-memory\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy MEMORY\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":13643,\"level\":\"L1\"},{\"id\":\"wb-user\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy USER\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":401,\"level\":\"L1\"},{\"id\":\"wb-soul\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy SOUL\",\"kind\":\"rule\",\"path\":\"«path»\",\"size\":1792,\"level\":\"L1\"},{\"id\":\"wb-identity\",\"agent\":\"workbuddy\",\"name\":\"WorkBuddy IDENTITY\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":496,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":254,\"level\":\"L1\"},{\"id\":\"wbai-memory\",\"agent\":\"workbuddy-ai\",\"name\":\"WorkBuddy AI UUID 记忆\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3053,\"level\":\"L1\"},{\"id\":\"trae-user-profile\",\"agent\":\"trae\",\"name\":\"Trae 用户画像 user_profile\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":6068,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7959,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":4677,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":2679,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":7237,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":1322,\"level\":\"L1\"},{\"id\":\"trae-project-mem\",\"agent\":\"trae\",\"name\":\"Trae 项目记忆 project_memory\",\"kind\":\"memory\",\"path\":\"«path»\",\"size\":3080,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3194,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1375,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3475,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":3406,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":2192,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1798,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"agent\":\"trae\",\"name\":\"Trae 会话主题 topics\",\"kind\":\"convo\",\"path\":\"«path»\",\"size\":1661,\"level\":\"L1\"},{\"id\":\"trae-topics\",\"age«truncated»"
     },
     {
       "path": "/api/ingest/custom-sources",
@@ -633,8 +664,8 @@
       "status": 200,
       "contentType": "application/json",
       "contentLength": 633,
-      "sha256": "bb065d6a73f7bc03",
-      "body": "{\"ok\":true,\"workspace\":\"«path»\",\"root\":\"«path»\",\"policy\":\"默认共享工作区；仅在并行任务真实冲突时创建隔离 worktree（Orca 原则 #4519），完成后及时清理\",\"items\":[{\"path\":\"C:«path»\",\"name\":\"MemoryOS\",\"main\":true,\"head\":\"063b668e34b2aef6f52cdc0fbecbfec46f95e732\",\"branch\":\"main\",\"detached\":false,\"bare\":false,\"cardId\":null},{\"path\":\"C:«path»\",\"name\":\"goby\",\"main\":false,\"head\":\"063b668e34b2aef6f52cdc0fbecbfec46f95e732\",\"branch\":\"goby\",\"detached\":false,\"bare\":false,\"cardId\":null}]}"
+      "sha256": "014cb209dbb79057",
+      "body": "{\"ok\":true,\"workspace\":\"«path»\",\"root\":\"«path»\",\"policy\":\"默认共享工作区；仅在并行任务真实冲突时创建隔离 worktree（Orca 原则 #4519），完成后及时清理\",\"items\":[{\"path\":\"C:«path»\",\"name\":\"MemoryOS\",\"main\":true,\"head\":\"62b822e5ffd1e364002fe414f4ca1968a96cd4f0\",\"branch\":\"main\",\"detached\":false,\"bare\":false,\"cardId\":null},{\"path\":\"C:«path»\",\"name\":\"goby\",\"main\":false,\"head\":\"063b668e34b2aef6f52cdc0fbecbfec46f95e732\",\"branch\":\"goby\",\"detached\":false,\"bare\":false,\"cardId\":null}]}"
     },
     {
       "path": "/api/usage-health",
@@ -803,6 +834,13 @@
       "body": "{\"ok\":false,\"error\":\"agent '1' 未扫描到\"}"
     },
     {
+      "path": "/api/agent-cards/:id/state",
+      "probedUrl": "/api/agent-cards/1/state",
+      "status": 404,
+      "sha256": "3ba25bbd1df83bbb",
+      "body": "{\"ok\":false,\"error\":\"智能体卡不存在\"}"
+    },
+    {
       "path": "/api/github/card/:id/state",
       "probedUrl": "/api/github/card/1/state",
       "status": 404,
@@ -858,6 +896,7 @@
       "POST /api/cards/:id/annotations",
       "HEAD /api/cards/:id/annotations",
       "POST /api/cards/:id/refine",
+      "POST /api/cards/:id/retype",
       "HEAD /api/cards/:id/events",
       "POST /api/cards/:id/links",
       "DELETE /api/cards/:id/links",
@@ -867,6 +906,12 @@
       "POST /api/cards/:id/to-memory",
       "POST /api/cards/:id/position",
       "POST /api/cards/:id/push-to-task",
+      "HEAD /api/card-types",
+      "POST /api/card-types",
+      "PUT /api/card-types/:key",
+      "DELETE /api/card-types/:key",
+      "POST /api/card-edges",
+      "DELETE /api/card-edges/:id",
       "HEAD /api/hygiene/suggestions",
       "POST /api/hygiene/apply",
       "HEAD /api/health",
@@ -908,6 +953,11 @@
       "HEAD /api/agent/:id/connect-guide",
       "HEAD /api/agent-creds",
       "POST /api/agent-creds",
+      "HEAD /api/agent-cards/:id/state",
+      "HEAD /api/agent-profiles",
+      "POST /api/agent-profiles",
+      "PUT /api/agent-profiles/:id",
+      "DELETE /api/agent-profiles/:id",
       "HEAD /api/audit",
       "POST /api/memory",
       "POST /api/memory/hit",

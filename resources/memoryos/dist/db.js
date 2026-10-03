@@ -311,6 +311,63 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatches_active ON dispatches(memory_id)
 CREATE INDEX IF NOT EXISTS idx_dispatches_agent ON dispatches(agent, state);
 CREATE INDEX IF NOT EXISTS idx_dispatches_lease ON dispatches(lease_expires_at) WHERE state='active';
 
+-- ═══ 节点画布（P0，2026-10-04）：类型注册表 / 卡片边 / 智能体档案（只增不改，drop 即回滚）═══
+-- 卡片类型注册表：内置四种种子不可改删；连线方向校验按四个端口行为档位判定（先建卡后选型交互的必需件）
+CREATE TABLE IF NOT EXISTS card_types (
+  type_key         TEXT PRIMARY KEY,               -- 'task'|'agent'|'handoff'|'doc' + 自定义（禁 aux 前缀）
+  label            TEXT NOT NULL,                  -- 显示名
+  color            TEXT,                           -- 徽标色
+  builtin          INTEGER NOT NULL DEFAULT 0,     -- 内置类型不可改删
+  can_dispatch_out INTEGER NOT NULL DEFAULT 0,     -- 可发起派发边
+  can_dispatch_in  INTEGER NOT NULL DEFAULT 0,     -- 可接收派发边
+  can_inject_out   INTEGER NOT NULL DEFAULT 0,     -- 可发起前情注入边
+  can_inject_in    INTEGER NOT NULL DEFAULT 0,     -- 可接收前情注入边
+  meta             TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+INSERT OR IGNORE INTO card_types(type_key,label,builtin,can_dispatch_out,can_dispatch_in,can_inject_out,can_inject_in) VALUES
+  ('task','任务',1,1,0,0,1),
+  ('agent','智能体',1,0,1,0,0),
+  ('handoff','交接文档',1,0,0,1,0),
+  ('doc','文档',1,0,0,0,0);
+
+-- 智能体档案：纯配置实体（无位置无状态）——Agent 卡 = cards.kind='agent' 投影卡 + meta.profile_id 指向此表
+CREATE TABLE IF NOT EXISTS agent_profiles (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  name             TEXT NOT NULL,                  -- 卡片显示名
+  agent_key        TEXT,                           -- scanAgents() id；NULL=待选
+  channel          TEXT NOT NULL DEFAULT 'queue',  -- 'cli'|'cdp'|'queue'（探测定档；UIA 仅作 CDP 内部兜底，不设独立通道）
+  workspace        TEXT,                           -- 工作区绝对路径
+  model            TEXT,                           -- 模型名
+  context_tokens   INTEGER,                        -- 上下文配置
+  reasoning        TEXT,                           -- 推理强度（按 agent 枚举）
+  concurrency      INTEGER NOT NULL DEFAULT 1,     -- 串行队列上限（仅约束直控/驾驶通道）
+  launch_overrides TEXT,                           -- JSON：启动参数模板 / CDP 选择器热修描述
+  meta             TEXT,                           -- carrier_missing 等对账标记
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_profiles_key ON agent_profiles(agent_key);
+
+-- 卡片边：派发边（任务→智能体，锚定工作证，换代链可审计）与前情注入边（交接→任务）
+-- status 为纯投影字段（真源在 dispatches），边表永不参与对账裁决
+CREATE TABLE IF NOT EXISTS card_edges (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id   INTEGER NOT NULL,                    -- cards.id
+  target_id   INTEGER NOT NULL,                    -- cards.id
+  kind        TEXT NOT NULL CHECK (kind IN ('dispatch','inject')),
+  dispatch_id INTEGER,                             -- kind='dispatch' 时锚定 dispatches.id
+  status      TEXT NOT NULL DEFAULT 'active',      -- active|superseded|completed|cancelled
+  meta        TEXT,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_card_edges_source ON card_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_card_edges_target ON card_edges(target_id);
+-- 同一任务卡→同一智能体卡同时最多一条 active 派发边（幂等连线）
+CREATE UNIQUE INDEX IF NOT EXISTS uq_card_edges_active_dispatch ON card_edges(source_id, target_id) WHERE kind='dispatch' AND status='active';
+-- 同一交接文档对同一任务卡最多注入一次
+CREATE UNIQUE INDEX IF NOT EXISTS uq_card_edges_inject ON card_edges(source_id, target_id) WHERE kind='inject';
+
 -- ★ R4-1（第四轮评审）：长期治理保留策略归档目标表（只归档不删除，对齐 v1.1 纪律）
 CREATE TABLE IF NOT EXISTS card_events_archive (
   id          INTEGER PRIMARY KEY,

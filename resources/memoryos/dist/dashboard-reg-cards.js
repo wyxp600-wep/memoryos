@@ -5,6 +5,7 @@ import { logUsage, logDaemon, writeMemory, listWorkingMemory, setWorkingMemory, 
 import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { randomBytes } from "node:crypto";
 import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
+import { scanAgents } from "./scan.js"; // 节点画布：智能体卡载体在位探测（agent_key 对账）
 export function registerCards(app, ctx) {
     const { db, restricted, RESTRICTED } = ctx;
     // ═══════════════════════════════════════════════════════════════════════════
@@ -24,7 +25,7 @@ export function registerCards(app, ctx) {
         cancelled: [],
         archived: [],
     };
-    const CARD_LINK_KINDS = ["depends", "blocks", "relates", "spawned_by", "duplicates"];
+    const CARD_LINK_KINDS = ["depends", "blocks", "relates", "spawned_by", "duplicates", "handoff"]; // ★ P4：handoff=交接文档挂边（任务卡→交接卡，图上派生视觉边）
     /** M6：卡片 kind → sector 映射（cards/:id/to-memory 用） */
     const CARD_TO_SECTOR = {
         task: "social",
@@ -246,8 +247,47 @@ export function registerCards(app, ctx) {
             }
         }
         let settled = false;
-        if (info.dispatchId)
+        if (info.dispatchId) {
             settled = settleDispatch(db, info.dispatchId, info.ok ? "succeeded" : "failed", detail || (info.runId ? `run ${info.runId}` : "dispatch-agent"));
+            // ★ 节点画布：派发边随工作证终态翻投影状态（边表永不裁决，只跟随真源）
+            try {
+                db.prepare(`UPDATE card_edges SET status=? WHERE dispatch_id=? AND kind='dispatch' AND status='active'`)
+                    .run(info.ok ? "completed" : "cancelled", info.dispatchId);
+            }
+            catch { /* 边表缺失时不得反噬收口 */ }
+        }
+        else {
+            // ★ 卡级派发（无关联任务记忆 → 无工作证）：按源卡翻边，防边永远停在 active
+            try {
+                db.prepare(`UPDATE card_edges SET status=? WHERE source_id=? AND kind='dispatch' AND status='active'`)
+                    .run(info.ok ? "completed" : "cancelled", cardId);
+            }
+            catch { /* 同上 */ }
+        }
+        // ★ P4 交接文档卡：run 收口即把结论落成 handoff 卡并挂边（任务卡 --handoff--> 交接卡）。
+        //   有任务记忆则优先提取其「→ 结论(AGENT)：」段（task_done 回写），否则用收口 detail；
+        //   失败不反噬收口。消费规则：下游注入取 dispatch generation 最新的那张（D9）。
+        try {
+            const memRow = (c.ref_kind === "memory" && c.ref_id
+                ? db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(c.ref_id)
+                : undefined) ??
+                db.prepare(`SELECT m.id id, m.content content FROM card_memory cm JOIN memories m ON m.id=cm.memory_id WHERE cm.card_id=? AND cm.relation='dispatch' LIMIT 1`).get(cardId);
+            let body = (String(info.answer ?? "").trim()) || detail; // 优先级：任务记忆结论 > run 最终回复 > 收口 detail
+            if (memRow?.content) {
+                const idx = String(memRow.content).lastIndexOf("→ 结论(AGENT)：");
+                if (idx >= 0)
+                    body = String(memRow.content).slice(idx + "→ 结论(AGENT)：".length).trim().slice(0, 800) || detail;
+            }
+            if (body) {
+                const hIns = db.prepare(`INSERT INTO cards(board,kind,title,body,status,meta) VALUES ('default','handoff',?,?,'done',?)`)
+                    .run(`交接文档 · ${String(c.title ?? "").slice(0, 80)}`.slice(0, 120), body,
+                        JSON.stringify({ from_card: cardId, run_id: info.runId ?? null, dispatch_id: info.dispatchId ?? null, outcome: info.ok ? "succeeded" : "failed" }));
+                db.prepare(`INSERT OR IGNORE INTO links(vault_root,src_kind,src_id,dst_kind,dst_id,kind) VALUES (NULL,'card',?,'card',?,'handoff')`)
+                    .run(cardId, Number(hIns.lastInsertRowid));
+                writeCardEvent(Number(hIns.lastInsertRowid), info.actor || "dispatch-agent", "create", null, "done", `交接文档生成（run ${info.runId ?? "无"}）`);
+            }
+        }
+        catch { /* 交接生成失败不得反噬收口 */ }
         return { ok: true, statusChanged, settled };
     }
     ctx.finalizeCardDispatch = finalizeCardDispatch;
@@ -550,7 +590,10 @@ export function registerCards(app, ctx) {
         const title = String(b.title ?? "").trim();
         if (!title)
             return reply.code(400).send({ ok: false, error: "卡片标题不能为空" });
-        const kind = String(b.kind ?? "task").trim() || "task";
+        // ★ 节点画布（D11 先建卡后选型）：缺省改为中性文档卡；kind 必须在类型注册表内（含自定义类型）
+        const kind = String(b.kind ?? "doc").trim() || "doc";
+        if (!db.prepare(`SELECT 1 x FROM card_types WHERE type_key=?`).get(kind))
+            return reply.code(400).send({ ok: false, error: `未知卡片类型：${kind}` });
         const status = CARD_STATES.includes(String(b.status ?? "")) ? String(b.status) : "triage";
         const ins = db
             .prepare(`INSERT INTO cards(board,kind,title,body,status,assignee,priority,meta)
@@ -680,6 +723,7 @@ export function registerCards(app, ctx) {
         const taskId = memRow ? Number(memRow.id) : null;
         const lock = randomBytes(12).toString("hex");
         let dsp = null;
+        let dispatchEdgeId = null; // 节点画布：本次派发写下的边（连线派发时返回给前端）
         txBegin(); // 认领 + 建工作证一笔事务：任一步失败整笔回滚（事件先入队、COMMIT 后推）
         try {
             const info = db
@@ -696,6 +740,17 @@ export function registerCards(app, ctx) {
                 //   done 头经 E-0(review→in_progress) 投影回退。task_assign 建卡本就双写，此处幂等补齐同一口径。
                 db.prepare(`INSERT OR IGNORE INTO card_memory(card_id, memory_id, relation) VALUES (?,?,'dispatch')`).run(id, taskId);
             }
+            // ★ 节点画布（D3/D11 连线派发）：任务卡→智能体卡派发边锚定本次工作证；同对旧 active 边翻 superseded。
+            //   与认领/工作证同一事务：目标卡校验失败整笔回滚，不留半截边。
+            const agentCardId = Number(b.agent_card_id) || 0;
+            if (agentCardId) {
+                if (!db.prepare(`SELECT id FROM cards WHERE id=? AND kind='agent'`).get(agentCardId))
+                    throw new Error("目标智能体卡不存在（须为智能体类型投影卡）");
+                db.prepare(`UPDATE card_edges SET status='superseded' WHERE source_id=? AND target_id=? AND kind='dispatch' AND status='active'`).run(id, agentCardId);
+                const eIns = db.prepare(`INSERT INTO card_edges(source_id,target_id,kind,dispatch_id,status) VALUES (?,?,'dispatch',?,'active')`)
+                    .run(id, agentCardId, dsp ? dsp.id : null);
+                dispatchEdgeId = Number(eIns.lastInsertRowid);
+            }
             writeCardEvent(id, agent, "dispatch", "ready", "running", dsp
                 ? `一键派发（工作证 gen=${dsp.generation}${dsp.superseded ? `，取代 #${dsp.superseded}` : ""} · run 启动中）`
                 : "一键派发（无关联任务记忆，仅卡级认领 · run 启动中）");
@@ -707,12 +762,19 @@ export function registerCards(app, ctx) {
             return reply.code(409).send({ ok: false, error: String(e instanceof Error ? e.message : e) });
         }
         syncCardToTask(id, { assignee: agent }); // 头回写 running + assignee（与 /claim 同口径）
+        // ★ P4 前情注入：本卡的 active 注入边 → 上游交接文档进 run 提示词头部（下游开局即有上下文）
+        const handoffs = db.prepare(`SELECT h.title title, h.body body FROM card_edges e JOIN cards h ON h.id = e.source_id
+            WHERE e.target_id=? AND e.kind='inject' AND e.status='active' ORDER BY e.id`).all(id);
+        const handoffBlock = handoffs.length
+            ? `【前情提要（来自上游交接文档，全文按需检索）】\n` + handoffs.map((h) => `· ${h.title}：${String(h.body ?? "").slice(0, 600)}`).join("\n")
+            : "";
         // 起 run：提示词内嵌卡片正文（agent 无卡片读工具），并给足收口指令
         const message = [
             `【一键派发】你被指派处理 MemoryOS 看板卡片 #${id}（认领人 ${agent}）。`,
             taskId
                 ? `关联任务 #${taskId}，工作证 dispatch_key=${lock}：干完必须调用 task_done(memory_id=${taskId}, conclusion="<≤200字结论>", dispatch_key="${lock}")。`
                 : `本卡未关联任务记忆：不要调用 task_done，结论直接写在最终回复里。`,
+            ...(handoffBlock ? [handoffBlock] : []),
             `标题：${String(c.title ?? "").slice(0, 120)}`,
             `正文：${String(c.body ?? "").trim().slice(0, 2500) || "（空卡：先自行调研再给可执行结论）"}`,
             `要求：① 先查上下文（memory_search/memory_read，或 task_next 看全局任务）再动手；② 结论须可验收，不确定处显式标注不确定性；③ 中途不要改卡片状态（由系统按 run 终态自动收口）。`,
@@ -732,6 +794,8 @@ export function registerCards(app, ctx) {
                 db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running' AND claim_lock=?`).run(id, lock);
                 if (dsp)
                     releaseDispatch(db, dsp.id, `起 run 失败：${e instanceof Error ? e.message : e}`);
+                if (dispatchEdgeId)
+                    db.prepare(`UPDATE card_edges SET status='cancelled' WHERE id=? AND status='active'`).run(dispatchEdgeId);
                 writeCardEvent(id, agent, "dispatch_failed", "running", "ready", String(e instanceof Error ? e.message : e).slice(0, 160));
                 txCommit();
             }
@@ -743,6 +807,7 @@ export function registerCards(app, ctx) {
             ok: true, id, runId: started.runId, status: started.status, cap: started.cap ?? null,
             queueAhead: started.queueAhead ?? null, agent, assignee: agent, taskId,
             dispatch: dsp ? { id: dsp.id, key: lock, generation: dsp.generation, superseded: dsp.superseded ?? null } : null,
+            edgeId: dispatchEdgeId, // 节点画布：本次连线派发写下的边
         });
     });
     // —— 状态流转（H3 ②：WHERE status=expected_from 前置校验 + 白名单）——
@@ -1170,11 +1235,31 @@ export function registerCards(app, ctx) {
                         : "active";
             return { ...n, bucket };
         });
+        // ★ 节点画布：边持久化实体（card_edges）随图返回；智能体卡附载体在位标记（探测失败降级不阻断出图）
+        let edges = [];
+        try {
+            edges = db.prepare(`SELECT id, source_id, target_id, kind, dispatch_id, status FROM card_edges ORDER BY id`).all()
+                .map((e) => ({ ...e, source_id: serializable(e.source_id), target_id: serializable(e.target_id) }));
+        }
+        catch { /* 旧库未迁移时降级为无边 */ }
+        try {
+            const scanKeys = scanKeysSafe();
+            if (scanKeys)
+                for (const n of nodesWithBucket) {
+                    if (n.kind !== "agent")
+                        continue;
+                    const pid = Number(n.meta?.profile_id) || 0;
+                    const prof = pid ? db.prepare(`SELECT agent_key FROM agent_profiles WHERE id=?`).get(pid) : null;
+                    n.profileMissing = !prof || !scanKeys.has(String(prof.agent_key ?? ""));
+                }
+        }
+        catch { /* 载体探测失败不标记，宁报在线不误报缺失 */ }
         return {
             ok: true,
             auto: String(req.query.auto ?? "0") !== "0",
             nodes: nodesWithBucket.map((n) => ({ ...n, id: serializable(n.id) })),
             links: links.map((l) => ({ ...l, src_id: serializable(l.src_id), dst_id: serializable(l.dst_id) })),
+            edges,
         };
     });
     // 拖拽位置持久化：meta.map_pos[view]（h 横屏 / v 竖屏），返回 {ok}
@@ -1496,5 +1581,324 @@ export function registerCards(app, ctx) {
             throw e;
         }
         return { ok: true, ...out };
+    });
+
+    // ═══════════ 节点画布（P0，2026-10-04）：类型注册表 / 改型 / 边 / 智能体档案 ═══════════
+    // 设计依据：D4（Agent 卡 = cards.kind='agent' 投影卡 + meta.profile_id）、D11（先建卡后选型）、
+    //           连线方向按 card_types 四端口行为档位判定；可回滚 = drop card_types/card_edges/agent_profiles 三张新表。
+    const CARD_TYPE_FLAGS = ["can_dispatch_out", "can_dispatch_in", "can_inject_out", "can_inject_in"];
+    const BUILTIN_TYPE_KEYS = new Set(["task", "agent", "handoff", "doc"]);
+    const PROFILE_CHANNELS = ["cli", "cdp", "queue"]; // UIA 仅作 CDP 内部兜底，不设独立通道（D10）
+
+    function typeRowOf(key) {
+        return db.prepare(`SELECT * FROM card_types WHERE type_key=?`).get(String(key));
+    }
+    /** 智能体投影卡 → 档案行（meta.profile_id 反查） */
+    function profileOfCard(c) {
+        const pid = Number(readCardMeta(c).profile_id) || 0;
+        return pid ? db.prepare(`SELECT * FROM agent_profiles WHERE id=?`).get(pid) : null;
+    }
+    function projectionCardOfProfile(profileId) {
+        for (const r of db.prepare(`SELECT id, meta FROM cards WHERE kind='agent'`).all()) {
+            try {
+                const m = JSON.parse(r.meta ?? "{}");
+                if (Number(m.profile_id) === Number(profileId))
+                    return Number(r.id);
+            }
+            catch { /* meta 非法忽略 */ }
+        }
+        return null;
+    }
+    /** 载体在位探测（60s TTL 缓存）：scanAgents 的 CLI 版本探测走 spawnSync 很慢，
+     *  graph 每请求都扫会拖慢画布刷新数秒；失败按 TTL 退避，防雪崩重试。返回 null=探测失败。 */
+    let _scanCache = { keys: null, at: 0 };
+    function scanKeysSafe() {
+        const now = Date.now();
+        if (_scanCache.keys && now - _scanCache.at < 60000)
+            return _scanCache.keys;
+        if (!_scanCache.keys && now - _scanCache.at < 60000)
+            return null; // 上次探测失败未过期 → 继续按失败口径
+        try {
+            const res = scanAgents();
+            _scanCache = { keys: new Set((res?.agents ?? []).map((a) => String(a.id ?? ""))), at: now };
+        }
+        catch {
+            _scanCache = { keys: null, at: now };
+        }
+        return _scanCache.keys;
+    }
+    function validProfileChannel(v) {
+        return PROFILE_CHANNELS.includes(String(v ?? "")) ? String(v) : "queue";
+    }
+
+    app.get("/api/card-types", async () => {
+        return { ok: true, types: db.prepare(`SELECT * FROM card_types ORDER BY builtin DESC, type_key`).all() };
+    });
+
+    app.post("/api/card-types", async (req, reply) => {
+        const b = req.body ?? {};
+        const key = String(b.type_key ?? "").trim();
+        if (!/^[a-z][a-z0-9_]{1,31}$/.test(key))
+            return reply.code(400).send({ ok: false, error: "类型标识需为小写字母开头、2-32 位的小写字母/数字/下划线" });
+        if (BUILTIN_TYPE_KEYS.has(key) || key.startsWith("aux"))
+            return reply.code(409).send({ ok: false, error: "该标识为系统保留，不能用作自定义类型" });
+        const label = String(b.label ?? "").trim();
+        if (!label)
+            return reply.code(400).send({ ok: false, error: "类型显示名不能为空" });
+        if (typeRowOf(key))
+            return reply.code(409).send({ ok: false, error: `类型已存在：${key}` });
+        db.prepare(`INSERT INTO card_types(type_key,label,color,builtin,can_dispatch_out,can_dispatch_in,can_inject_out,can_inject_in,meta)
+            VALUES (?,?,?,0,?,?,?,?,?)`)
+            .run(key, label, String(b.color ?? "").trim() || null,
+                ...CARD_TYPE_FLAGS.map((f) => (b[f] ? 1 : 0)), b.meta ? JSON.stringify(b.meta) : null);
+        return { ok: true, type_key: key };
+    });
+
+    app.put("/api/card-types/:key", async (req, reply) => {
+        const row = typeRowOf(String(req.params.key));
+        if (!row)
+            return reply.code(404).send({ ok: false, error: "类型不存在" });
+        if (row.builtin)
+            return reply.code(409).send({ ok: false, error: "系统内置类型不可修改" });
+        const b = req.body ?? {};
+        const label = b.label !== undefined ? String(b.label).trim() : row.label;
+        if (!label)
+            return reply.code(400).send({ ok: false, error: "类型显示名不能为空" });
+        db.prepare(`UPDATE card_types SET label=?, color=?, can_dispatch_out=?, can_dispatch_in=?, can_inject_out=?, can_inject_in=? WHERE type_key=?`)
+            .run(label,
+                b.color !== undefined ? (String(b.color).trim() || null) : row.color,
+                ...CARD_TYPE_FLAGS.map((f) => (b[f] !== undefined ? (b[f] ? 1 : 0) : (Number(row[f]) ? 1 : 0))),
+                row.type_key);
+        return { ok: true, type_key: row.type_key };
+    });
+
+    app.delete("/api/card-types/:key", async (req, reply) => {
+        const row = typeRowOf(String(req.params.key));
+        if (!row)
+            return reply.code(404).send({ ok: false, error: "类型不存在" });
+        if (row.builtin)
+            return reply.code(409).send({ ok: false, error: "系统内置类型不可删除" });
+        const used = Number(db.prepare(`SELECT COUNT(*) n FROM cards WHERE kind=?`).get(row.type_key).n);
+        if (used > 0)
+            return reply.code(409).send({ ok: false, error: `仍有 ${used} 张卡片使用该类型，不能删除` });
+        db.prepare(`DELETE FROM card_types WHERE type_key=?`).run(row.type_key);
+        return { ok: true };
+    });
+
+    // 改型（先建卡后选型的核心端点；PUT /api/cards/:id 不支持改 kind，故单列）
+    app.post("/api/cards/:id/retype", async (req, reply) => {
+        const id = Number(req.params.id);
+        const c = readCard(id);
+        if (!c)
+            return reply.code(404).send({ ok: false, error: "卡片不存在" });
+        const b = req.body ?? {};
+        const kind = String(b.kind ?? "").trim();
+        const t = typeRowOf(kind);
+        if (!t)
+            return reply.code(400).send({ ok: false, error: `未知卡片类型：${kind}` });
+        if (c.kind === kind)
+            return { ok: true, id, kind, unchanged: true };
+        if (String(c.status) === "running")
+            return reply.code(409).send({ ok: false, error: "卡片执行中，不能改型" });
+        const activeEdge = db.prepare(`SELECT id FROM card_edges WHERE (source_id=? OR target_id=?) AND kind='dispatch' AND status='active'`).get(id, id);
+        if (activeEdge)
+            return reply.code(409).send({ ok: false, error: "卡片存在进行中的派发连线，不能改型" });
+        const meta = readCardMeta(c);
+        // 切入智能体卡：请求内直接建档案（一步到位，免两跳）
+        if (kind === "agent" && !meta.profile_id) {
+            const p = b.profile ?? {};
+            const name = String(p.name ?? c.title ?? "").trim();
+            if (!name)
+                return reply.code(400).send({ ok: false, error: "切换为智能体卡需要提供名称（profile.name）" });
+            const ins = db.prepare(`INSERT INTO agent_profiles(name,agent_key,channel,workspace,model,context_tokens,reasoning,launch_overrides)
+                VALUES (?,?,?,?,?,?,?,?)`)
+                .run(name, String(p.agent_key ?? "").trim() || null, validProfileChannel(p.channel),
+                    String(p.workspace ?? "").trim() || null, String(p.model ?? "").trim() || null,
+                    Number(p.context_tokens) > 0 ? Math.floor(Number(p.context_tokens)) : null,
+                    String(p.reasoning ?? "").trim() || null, p.launch_overrides ? JSON.stringify(p.launch_overrides) : null);
+            meta.profile_id = Number(ins.lastInsertRowid);
+        }
+        // 切出智能体卡：档案随卡删除（配置不留孤儿）
+        if (String(c.kind) === "agent" && kind !== "agent" && meta.profile_id) {
+            db.prepare(`DELETE FROM agent_profiles WHERE id=?`).run(Number(meta.profile_id));
+            delete meta.profile_id;
+        }
+        // ★ meta 必须随改型写回：切入 agent 时 profile_id 只在此处落库（否则投影卡永远找不到档案）
+        db.prepare(`UPDATE cards SET kind=?, meta=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+            .run(kind, JSON.stringify(meta), id);
+        if (kind === "task" && !CARD_STATES.includes(String(c.status)))
+            db.prepare(`UPDATE cards SET status='triage' WHERE id=?`).run(id); // 非法态兜底进任务状态机
+        writeCardEvent(id, "human:dashboard", "retype", String(c.kind), kind, `改型 ${c.kind} → ${kind}`);
+        return { ok: true, id, kind, profile_id: meta.profile_id ?? null };
+    });
+
+    app.get("/api/agent-profiles", async () => {
+        const rows = db.prepare(`SELECT * FROM agent_profiles ORDER BY id`).all();
+        const cardByProfile = new Map();
+        for (const r of db.prepare(`SELECT id, meta, status FROM cards WHERE kind='agent'`).all()) {
+            try {
+                const m = JSON.parse(r.meta ?? "{}");
+                if (m.profile_id)
+                    cardByProfile.set(Number(m.profile_id), { card_id: Number(r.id), status: String(r.status ?? "") });
+            }
+            catch { /* meta 非法忽略 */ }
+        }
+        const keys = scanKeysSafe();
+        return {
+            ok: true,
+            profiles: rows.map((p) => ({
+                ...p,
+                card: cardByProfile.get(Number(p.id)) ?? null,
+                carrier_missing: keys ? (p.agent_key ? !keys.has(String(p.agent_key)) : false) : false,
+            })),
+        };
+    });
+
+    app.post("/api/agent-profiles", async (req, reply) => {
+        const b = req.body ?? {};
+        const name = String(b.name ?? "").trim();
+        if (!name)
+            return reply.code(400).send({ ok: false, error: "智能体卡名称不能为空" });
+        const channel = validProfileChannel(b.channel);
+        txBegin(); // 档案 + 投影卡一笔事务：不留孤儿半截
+        let profileId = 0, cardId = 0;
+        try {
+            const ins = db.prepare(`INSERT INTO agent_profiles(name,agent_key,channel,workspace,model,context_tokens,reasoning,concurrency,launch_overrides,meta)
+                VALUES (?,?,?,?,?,?,?,?,?,?)`)
+                .run(name, String(b.agent_key ?? "").trim() || null, channel,
+                    String(b.workspace ?? "").trim() || null, String(b.model ?? "").trim() || null,
+                    Number(b.context_tokens) > 0 ? Math.floor(Number(b.context_tokens)) : null,
+                    String(b.reasoning ?? "").trim() || null,
+                    Number(b.concurrency) > 0 ? Math.floor(Number(b.concurrency)) : 1,
+                    b.launch_overrides ? JSON.stringify(b.launch_overrides) : null,
+                    b.meta ? JSON.stringify(b.meta) : null);
+            profileId = Number(ins.lastInsertRowid);
+            const meta = { profile_id: profileId };
+            const pos = b.meta?.map_pos;
+            if (pos && Number.isFinite(Number(pos.x)) && Number.isFinite(Number(pos.y)))
+                meta.map_pos = { c: { x: Math.round(Number(pos.x)), y: Math.round(Number(pos.y)) } };
+            const cIns = db.prepare(`INSERT INTO cards(board,kind,title,body,status,meta) VALUES ('default','agent',?,NULL,'todo',?)`)
+                .run(name, JSON.stringify(meta));
+            cardId = Number(cIns.lastInsertRowid);
+            writeCardEvent(cardId, "human:dashboard", "create", null, "todo", `新建智能体卡 ${name}`);
+            txCommit();
+        }
+        catch (e) {
+            try { txRollback(); }
+            catch { /* 无事务可回滚 */ }
+            return reply.code(500).send({ ok: false, error: String(e instanceof Error ? e.message : e) });
+        }
+        return { ok: true, profile_id: profileId, card_id: cardId };
+    });
+
+    app.put("/api/agent-profiles/:id", async (req, reply) => {
+        const p = db.prepare(`SELECT * FROM agent_profiles WHERE id=?`).get(Number(req.params.id));
+        if (!p)
+            return reply.code(404).send({ ok: false, error: "智能体档案不存在" });
+        const b = req.body ?? {};
+        const cardId = projectionCardOfProfile(p.id);
+        if (cardId) {
+            const busy = db.prepare(`SELECT id FROM card_edges WHERE target_id=? AND kind='dispatch' AND status='active'`).get(cardId);
+            if (busy)
+                return reply.code(409).send({ ok: false, error: "该智能体卡有进行中的派发，执行完再改配置" });
+        }
+        const name = b.name !== undefined ? String(b.name).trim() : p.name;
+        if (!name)
+            return reply.code(400).send({ ok: false, error: "名称不能为空" });
+        db.prepare(`UPDATE agent_profiles SET name=?, agent_key=?, channel=?, workspace=?, model=?, context_tokens=?, reasoning=?, concurrency=?, launch_overrides=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+            .run(name,
+                b.agent_key !== undefined ? (String(b.agent_key).trim() || null) : p.agent_key,
+                b.channel !== undefined ? validProfileChannel(b.channel) : p.channel,
+                b.workspace !== undefined ? (String(b.workspace).trim() || null) : p.workspace,
+                b.model !== undefined ? (String(b.model).trim() || null) : p.model,
+                b.context_tokens !== undefined ? (Number(b.context_tokens) > 0 ? Math.floor(Number(b.context_tokens)) : null) : p.context_tokens,
+                b.reasoning !== undefined ? (String(b.reasoning).trim() || null) : p.reasoning,
+                b.concurrency !== undefined ? (Number(b.concurrency) > 0 ? Math.floor(Number(b.concurrency)) : 1) : p.concurrency,
+                b.launch_overrides !== undefined ? (b.launch_overrides ? JSON.stringify(b.launch_overrides) : null) : p.launch_overrides,
+                p.id);
+        if (cardId && b.name !== undefined) // 投影卡标题随档案名同步
+            db.prepare(`UPDATE cards SET title=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(name, cardId);
+        return { ok: true, id: p.id };
+    });
+
+    app.delete("/api/agent-profiles/:id", async (req, reply) => {
+        const p = db.prepare(`SELECT * FROM agent_profiles WHERE id=?`).get(Number(req.params.id));
+        if (!p)
+            return reply.code(404).send({ ok: false, error: "智能体档案不存在" });
+        const cardId = projectionCardOfProfile(p.id);
+        if (cardId) {
+            const busy = db.prepare(`SELECT id FROM card_edges WHERE target_id=? AND kind='dispatch' AND status='active'`).get(cardId);
+            if (busy)
+                return reply.code(409).send({ ok: false, error: "该智能体卡有进行中的派发，不能删除" });
+            db.prepare(`DELETE FROM card_edges WHERE source_id=? OR target_id=?`).run(cardId, cardId);
+            db.prepare(`DELETE FROM cards WHERE id=?`).run(cardId);
+        }
+        db.prepare(`DELETE FROM agent_profiles WHERE id=?`).run(p.id);
+        return { ok: true };
+    });
+
+    // 前情注入边（派发边只由 dispatch-agent 在派发事务内创建，避免绕过唯一 active/fencing）
+    app.post("/api/card-edges", async (req, reply) => {
+        const b = req.body ?? {};
+        const kind = String(b.kind ?? "").trim();
+        if (kind !== "inject")
+            return reply.code(400).send({ ok: false, error: "此端点仅创建前情注入边（派发边由「派发」动作自动建立）" });
+        const sourceId = Number(b.source_id) || 0, targetId = Number(b.target_id) || 0;
+        if (!sourceId || !targetId)
+            return reply.code(400).send({ ok: false, error: "缺少边端点（source_id/target_id）" });
+        if (sourceId === targetId)
+            return reply.code(400).send({ ok: false, error: "不能连接到自身" });
+        const s = readCard(sourceId), t = readCard(targetId);
+        if (!s || !t)
+            return reply.code(404).send({ ok: false, error: "边端点卡片不存在" });
+        const st = typeRowOf(String(s.kind)), tt = typeRowOf(String(t.kind));
+        if (!st?.can_inject_out)
+            return reply.code(409).send({ ok: false, error: `「${st?.label ?? s.kind}」类型不能发起前情注入` });
+        if (!tt?.can_inject_in)
+            return reply.code(409).send({ ok: false, error: `「${tt?.label ?? t.kind}」类型不能接收前情注入` });
+        try {
+            const ins = db.prepare(`INSERT INTO card_edges(source_id,target_id,kind,status) VALUES (?,?,'inject','active')`).run(sourceId, targetId);
+            return { ok: true, id: Number(ins.lastInsertRowid) };
+        }
+        catch {
+            return reply.code(409).send({ ok: false, error: "该交接文档已注入此任务（重复连线）" });
+        }
+    });
+
+    app.delete("/api/card-edges/:id", async (req, reply) => {
+        const e = db.prepare(`SELECT * FROM card_edges WHERE id=?`).get(Number(req.params.id));
+        if (!e)
+            return reply.code(404).send({ ok: false, error: "边不存在" });
+        if (e.kind === "dispatch")
+            return reply.code(409).send({ ok: false, error: "派发边是历史链的一部分，不可手删（随派发终态自动翻状态）" });
+        db.prepare(`DELETE FROM card_edges WHERE id=?`).run(e.id);
+        return { ok: true };
+    });
+
+    // 智能体卡状态唯一出口：档位/载体在位/队列深度（前端禁自行探测进程，见报告 §5.4）
+    app.get("/api/agent-cards/:id/state", async (req, reply) => {
+        const id = Number(req.params.id);
+        const c = readCard(id);
+        if (!c || String(c.kind) !== "agent")
+            return reply.code(404).send({ ok: false, error: "智能体卡不存在" });
+        const p = profileOfCard(c);
+        const keys = scanKeysSafe();
+        const queue = db.prepare(`
+            SELECT e.id edge_id, e.source_id card_id, k.title, d.generation, d.heartbeat_at, d.lease_expires_at
+            FROM card_edges e
+            LEFT JOIN dispatches d ON d.id = e.dispatch_id
+            LEFT JOIN cards k ON k.id = e.source_id
+            WHERE e.target_id=? AND e.kind='dispatch' AND e.status='active'
+            ORDER BY e.id`).all(id);
+        return {
+            ok: true, id,
+            name: p?.name ?? c.title,
+            channel: p?.channel ?? "queue",
+            agent_key: p?.agent_key ?? null,
+            workspace: p?.workspace ?? null, model: p?.model ?? null, reasoning: p?.reasoning ?? null, context_tokens: p?.context_tokens ?? null,
+            carrier_missing: p ? (keys ? (p.agent_key ? !keys.has(String(p.agent_key)) : false) : false) : true,
+            queue_depth: queue.length,
+            queue,
+        };
     });
 }
