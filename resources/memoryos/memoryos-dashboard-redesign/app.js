@@ -2129,7 +2129,14 @@
         <div class="notes-item-title">${esc(n.title)}${n.origin === 'user' ? '<span class="nbadge">自建</span>' : ''}</div>
         <div class="notes-item-sub">${esc(n.rel_path || '')}</div>
       </div>`).join('');
-    $$('#notesRailList .notes-item').forEach(el => el.onclick = () => selectNote(Number(el.dataset.nid)));
+    $$('#notesRailList .notes-item').forEach(el => {
+      // ★ a11y P0-1（2026-10-03）：整行点击的笔记项须键盘可达 —— role=button + tabIndex + Enter/Space 激活
+      //   （此前仅 .onclick，属「可点但键盘不可聚焦」；随 vault 笔记增多首次被 a11y 门禁暴露）
+      el.setAttribute('role', 'button');
+      el.tabIndex = 0;
+      el.onclick = () => selectNote(Number(el.dataset.nid));
+      el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } };
+    });
   }
 
   function noteGraphTheme() {
@@ -4823,7 +4830,7 @@
     const mems = (card.memories || []).map(m => `记忆#${m.memory_id}（${m.relation}）`).join('<br>') || '—';
     $('#modalBody').innerHTML = `
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border-glass);padding-bottom:10px;margin-bottom:12px">
-        ${[['body','正文'],['comments','评论'],['events','事件'],['links','关联']].map(([k, t]) => `<button class="btn-ghost" data-ctab="${k}" style="padding:5px 14px;font-size:12px;${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
+        ${[['body','正文'],['comments','评论'],['events','事件'],['links','关联'],['workspace','工作区']].map(([k, t]) => `<button class="btn-ghost" data-ctab="${k}" style="padding:5px 14px;font-size:12px;${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
       </div>
       <div id="cardTabBody"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
@@ -4876,6 +4883,211 @@
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">事件时间线（${evs.length}）</div>
         ${evs.length ? evs.map(ev => `<div style="display:flex;gap:8px;padding:4px 0;font-size:12px"><span class="mono" style="color:var(--text-muted);font-size:10px;white-space:nowrap">${fmtDate(ev.created_at)}</span><span style="color:var(--text-primary)">${esc(ev.action)}${ev.from_status ? ` <span style="color:var(--text-muted)">${esc(ev.from_status)} → ${esc(ev.to_status || '')}</span>` : ''}</span></div>`).join('') : '<div style="padding:10px 0;color:var(--text-muted);font-size:12px">暂无事件</div>'}`;
     };
+    /* ══ ★ Orca 融合 P1（2026-10-03 CLAIM §5）：工作区 Tab ══
+       worktree 编排（创建/清理，共享优先原则）+ 只读 diff（手写 unified 解析，零第三方依赖）
+       + 行级批注（存 card_comments，结构化前缀）+ 一键回传 Agent（汇总为卡片评论） */
+    let _wbCh = null, _wbAnns = [], _wbFileFilter = '';
+    /** unified diff → 行对象；side：add/ctx=新行(1)、del=旧行(0) */
+    const wbParseDiff = (text) => {
+      const rows = [];
+      let file = null, oldNo = 0, newNo = 0;
+      for (const ln of String(text || '').split('\n')) {
+        if (ln.startsWith('+++ ')) { file = ln.slice(4).replace(/^b\//, ''); rows.push({ t: 'meta', text: ln }); continue; }
+        if (ln.startsWith('--- ') || ln.startsWith('diff --git ') || ln.startsWith('index ') || ln.startsWith('old mode') || ln.startsWith('new mode') || ln.startsWith('Binary files')) { rows.push({ t: 'meta', text: ln }); continue; }
+        if (ln.startsWith('@@')) {
+          const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(ln);
+          if (m) { oldNo = +m[1]; newNo = +m[2]; }
+          rows.push({ t: 'hunk', text: ln }); continue;
+        }
+        if (ln.startsWith('+')) { rows.push({ t: 'add', file, line: newNo, side: 1, text: ln }); newNo++; continue; }
+        if (ln.startsWith('-')) { rows.push({ t: 'del', file, line: oldNo, side: 0, text: ln }); oldNo++; continue; }
+        if (ln.startsWith('\\')) { rows.push({ t: 'meta', text: ln }); continue; }
+        if (ln === '') continue;
+        rows.push({ t: 'ctx', file, line: newNo, lineOld: oldNo, side: 1, text: ln });
+        oldNo++; newNo++;
+      }
+      return rows;
+    };
+    let _wbRows = [];
+    const wbRenderDiff = () => {
+      const box = document.getElementById('wbDiff');
+      if (!box) return;
+      if (!_wbCh) { box.innerHTML = `<div style="padding:10px;color:var(--text-muted);font-size:12px">加载变更…</div>`; return; }
+      if (!_wbCh.files || !_wbCh.files.length) { box.innerHTML = `<div style="padding:10px;color:var(--text-muted);font-size:12px">工作区干净，无变更 ✓</div>`; return; }
+      if (!_wbCh.diff) {
+        box.innerHTML = `<div style="padding:10px;color:var(--text-muted);font-size:12px">有 ${_wbCh.files.length} 处文件变动，但 diff 为空（多为未跟踪新文件 —— 新文件不在 git diff 输出内，可先在 worktree 内 git add -N 后刷新）</div>`;
+        return;
+      }
+      _wbRows = wbParseDiff(_wbCh.diff);
+      // 批注按 file|line 分组（ctx 行同时挂新旧行号）
+      const annByKey = {};
+      for (const a of _wbAnns) {
+        const k = a.path + '|' + a.line;
+        (annByKey[k] = annByKey[k] || []).push(a);
+      }
+      let html = '';
+      for (const r of _wbRows) {
+        if (r.t === 'meta' || r.t === 'hunk') {
+          html += `<div class="wb-line wb-${r.t}"><span class="wb-gutter"></span><span class="wb-gutter"></span><code>${esc(r.text)}</code></div>`;
+          continue;
+        }
+        const cls = r.t === 'add' ? 'wb-add' : r.t === 'del' ? 'wb-del' : '';
+        const g1 = r.t === 'del' ? r.line : r.t === 'ctx' ? r.lineOld : '';
+        const g2 = r.t !== 'del' ? r.line : '';
+        const keys = [r.file + '|' + r.line];
+        if (r.t === 'ctx') keys.push(r.file + '|' + r.lineOld);
+        html += `<div class="wb-line ${cls}"><span class="wb-gutter">${g1 === '' ? '' : esc(String(g1))}</span><span class="wb-gutter">${g2 === '' ? '' : esc(String(g2))}</span><code>${esc(r.text)}</code><button class="wb-mark" data-file="${esc(r.file || '')}" data-line="${r.line}" data-side="${r.side}" aria-label="批注 ${esc(r.file || '')} 第${r.line}行">✎</button></div>`;
+        const seen = new Set();
+        for (const k of keys) {
+          for (const a of (annByKey[k] || [])) {
+            if (seen.has(a.id)) continue;
+            seen.add(a.id);
+            html += `<div class="wb-ann"><span class="wb-ann-who">${esc(a.author || '')}<br>${fmtDate(a.created_at)}</span><span>${a.side ? '' : '<b>[旧] </b>'}${esc(a.body)}</span></div>`;
+          }
+        }
+      }
+      box.innerHTML = html;
+      box.onclick = (e) => {
+        const b = e.target.closest('.wb-mark');
+        if (!b) return;
+        document.querySelectorAll('.wb-ann-form').forEach(f => f.remove());
+        const file = b.dataset.file, line = Number(b.dataset.line), side = Number(b.dataset.side);
+        const row = b.closest('.wb-line');
+        if (!row) return;
+        const form = document.createElement('div');
+        form.className = 'wb-ann-form';
+        form.innerHTML = `
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">批注 ${esc(file)}:${line}（${side ? '新行' : '旧行'}）</div>
+          <textarea aria-label="行级批注内容" placeholder="写给 Agent 的意见（存入卡片评论，可一键回传）"></textarea>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+            <button class="btn-ghost" data-wb-cancel style="padding:4px 12px;font-size:11px">取消</button>
+            <button class="btn-primary" data-wb-ok style="padding:4px 12px;font-size:11px">提交批注</button>
+          </div>`;
+        row.after(form);
+        const ta = form.querySelector('textarea');
+        ta.focus();
+        form.querySelector('[data-wb-cancel]').onclick = () => form.remove();
+        form.querySelector('[data-wb-ok]').onclick = async () => {
+          const text = (ta.value || '').trim();
+          if (!text) { toast('批注内容不能为空'); return; }
+          const res = await fetch(`/api/cards/${id}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: file, line, side, body: text, author: 'human:dashboard' }) });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) { toast(j.error || '批注失败'); return; }
+          _wbAnns.push({ id: Date.now(), path: file, line, side, body: text, author: 'human:dashboard', created_at: new Date().toISOString() });
+          wbRenderDiff();
+          wbRenderAnns();
+          toast('批注已提交');
+        };
+      };
+    };
+    const wbRenderAnns = () => {
+      const box = document.getElementById('wbAnnList');
+      if (!box) return;
+      box.innerHTML = _wbAnns.length
+        ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">行级批注（${_wbAnns.length}）</div>` + _wbAnns.map(a => `<div style="font-size:11px;padding:3px 0;color:var(--text-primary)"><span class="mono" style="color:var(--accent-cyan)">${esc(a.path)}:${a.line}</span> <span style="color:var(--text-muted)">${esc(a.author || '')}</span> ${esc(a.body)}</div>`).join('')
+        : '';
+    };
+    const _wbLoadChanges = async (name) => {
+      const q = _wbFileFilter ? `?file=${encodeURIComponent(_wbFileFilter)}` : '';
+      const res = await fetch(`/api/worktrees/${encodeURIComponent(name)}/changes${q}`).catch(() => null);
+      const box = document.getElementById('wbDiff');
+      if (!res) { if (box) box.innerHTML = `<div style="padding:10px;color:#ef4444;font-size:12px">内核未响应</div>`; return; }
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { if (box) box.innerHTML = `<div style="padding:10px;color:#ef4444;font-size:12px">${esc(j.error || '读取变更失败')}</div>`; return; }
+      _wbCh = j;
+      // 文件 chips（带批注计数；点选过滤 diff，再点取消）
+      const chipBox = document.getElementById('wbFiles');
+      if (chipBox) {
+        const annCount = {};
+        for (const a of _wbAnns) annCount[a.path] = (annCount[a.path] || 0) + 1;
+        chipBox.innerHTML = (j.files || []).map(f => {
+          const st = f.untracked ? '未跟踪' : f.conflicted ? '冲突' : ((f.index || '') + (f.worktree || ''));
+          return `<button class="wb-files-chip${_wbFileFilter === f.path ? ' on' : ''}" data-f="${esc(f.path)}" aria-label="按文件过滤 diff：${esc(f.path)}">${esc(f.path)} <span style="color:var(--text-muted)">${esc(st)}</span>${annCount[f.path] ? `<span class="wb-badge">✎${annCount[f.path]}</span>` : ''}</button>`;
+        }).join('') || '<span style="color:var(--text-muted)">无变动文件</span>';
+        chipBox.querySelectorAll('.wb-files-chip').forEach(ch => ch.onclick = () => {
+          _wbFileFilter = _wbFileFilter === ch.dataset.f ? '' : ch.dataset.f;
+          _wbLoadChanges(name);
+        });
+      }
+      wbRenderDiff();
+    };
+    const renderWorkspace = async () => {
+      bodyBox.innerHTML = `<div style="padding:14px 0;color:var(--text-muted);font-size:12px">加载工作区…</div>`;
+      // ★ 每次重取卡片：闭包里的 card 是打开弹窗时的快照 —— 创建/清理 worktree 后其 meta/workspace 已变，用旧快照会渲染错态
+      const fresh = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
+      const fcard = (fresh && fresh.card) ? fresh.card : card;
+      let wtItems = [], policy = '';
+      try {
+        const r0 = await fetch('/api/worktrees').then(x => x.json());
+        if (!r0.ok || !Array.isArray(r0.items)) { bodyBox.innerHTML = `<div style="padding:14px 0;color:#ef4444;font-size:12px">${esc(r0.error || '工作区列表读取失败')}</div>`; return; }
+        wtItems = r0.items; policy = r0.policy || '';
+      } catch { bodyBox.innerHTML = `<div style="padding:14px 0;color:#ef4444;font-size:12px">内核未响应</div>`; return; }
+      let cm = {};
+      try { cm = JSON.parse(fcard.meta || '{}'); } catch { cm = {}; }
+      const want = cm.worktree || (fcard.workspace_kind === 'worktree' && fcard.workspace ? String(fcard.workspace).split(/[\\/]/).pop() : '');
+      const mine = wtItems.find(w => w.name === want) || null;
+      _wbCh = null; _wbFileFilter = ''; _wbRows = [];
+      const aj = await fetch(`/api/cards/${id}/annotations`).then(x => x.json()).catch(() => ({ annotations: [] }));
+      _wbAnns = aj.annotations || [];
+      const others = wtItems.filter(w => !w.main && w.name !== want);
+      if (!mine) {
+        bodyBox.innerHTML = `
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.8">
+            本卡未关联隔离工作区 —— <b style="color:var(--text-primary)">默认共享主工作区</b>（并行任务发生真实冲突时才需要隔离，见 Orca 原则）。<br>
+            本仓现有隔离区：${others.length ? others.map(w => esc(w.name)).join('、') : '无'}${policy ? `<br><span style="opacity:.75">${esc(policy)}</span>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn-ghost" id="wbCreateBtn" style="padding:6px 14px;font-size:12px">创建工作区并关联本卡</button>
+          </div>`;
+        const cb = $('#wbCreateBtn');
+        if (cb) cb.onclick = async () => {
+          const v = await askForm({ title: '创建隔离 worktree（分支 wt/<名称>，落在 .worktrees/ 内）', okText: '创建', fields: [{ key: 'name', label: '名称', required: true, placeholder: '如 fix-1234' }] });
+          if (!v) return;
+          const res = await fetch('/api/worktrees', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: v.name, cardId: id }) });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) { toast(j.error || '创建失败'); return; }
+          toast(`已创建 ${j.name}（${j.branch}）`);
+          renderWorkspace();
+        };
+        return;
+      }
+      bodyBox.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px">
+          <span class="mono" style="color:var(--accent-cyan)">● ${esc(mine.name)}</span>
+          <span class="mono" style="color:var(--text-muted)">${esc(mine.branch || '')}${mine.detached ? '（detached）' : ''}</span>
+          <span style="flex:1"></span>
+          <button class="btn-ghost" id="wbRefreshBtn" style="padding:5px 12px;font-size:12px">刷新变更</button>
+          <button class="btn-ghost" id="wbSendBackBtn" style="padding:5px 12px;font-size:12px" title="把行级批注汇总为一条卡片评论，供 Agent 下轮读取">回传批注给 Agent</button>
+          <button class="btn-danger" id="wbRemoveBtn" style="padding:5px 12px;font-size:12px">清理工作区</button>
+        </div>
+        <div id="wbFiles" style="margin-top:10px;font-size:11px"></div>
+        <div id="wbAnnList" style="margin-top:6px"></div>
+        <div class="wb-diff" id="wbDiff" style="margin-top:8px"><div style="padding:10px;color:var(--text-muted);font-size:12px">加载变更…</div></div>`;
+      wbRenderAnns();
+      $('#wbRefreshBtn').onclick = () => _wbLoadChanges(mine.name);
+      $('#wbSendBackBtn').onclick = async () => {
+        if (!_wbAnns.length) { toast('暂无行级批注'); return; }
+        const lines = _wbAnns.map(a => `- ${a.path}:${a.line}（${a.side ? '新行' : '旧行'}）${a.body}`).join('\n');
+        const res = await fetch(`/api/cards/${id}/comment`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: `【diff 批注回传 · ${mine.name}】\n${lines}`, author: 'human:dashboard' }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(j.error || '回传失败'); return; }
+        toast(`已回传 ${_wbAnns.length} 条批注（Agent 下轮可见评论）`);
+      };
+      $('#wbRemoveBtn').onclick = async () => {
+        const v = await askForm({
+          title: `清理工作区 ${mine.name}（分支保留可回滚；有未提交改动会被拒绝，勾选强制可忽略）`, okText: '清理',
+          fields: [{ key: 'force', label: '强制（输入 1 = 忽略未提交改动）', placeholder: '留空 = 脏区拒绝' }],
+        });
+        if (!v) return;
+        const res = await fetch(`/api/worktrees/${encodeURIComponent(mine.name)}${v.force === '1' ? '?force=1' : ''}`, { method: 'DELETE' }).catch(() => null);
+        if (!res) { toast('内核未响应'); return; }
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(j.error || '清理失败'); return; }
+        toast('已清理 ' + mine.name);
+        renderWorkspace();
+      };
+      _wbLoadChanges(mine.name);
+    };
     const showTab = (k) => {
       _cardTab = k;
       $$('#modalBody [data-ctab]').forEach(b => {
@@ -4886,6 +5098,7 @@
       if (k === 'body') renderBody();
       else if (k === 'links') renderLinks();
       else if (k === 'comments') renderComments();
+      else if (k === 'workspace') renderWorkspace();
       else renderEvents();
     };
     // ★ 2026-09-14 查漏：打开新卡片时重置 Tab 为正文，避免沿用上一张卡片的 Tab（评论/事件）
@@ -5629,6 +5842,45 @@
     if (agentInited) return;
     agentInited = true;
     const input = $('#agentInput'), btn = $('#agentSendBtn'), clear = $('#agentClearBtn');
+    // ★ Orca 融合 P0（2026-10-03）：附件上传 —— 拖入输入框或点 📎（移动端 WebView 无拖拽，按钮兜底）
+    //   落 artifacts（≤5MB，零依赖 base64 通道）；≤64KB 文本同时内联进 prompt，Agent 直接可读
+    const attachFile = async (file) => {
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { toast('文件超过 5MB 上限'); return; }
+      toast(`上传 ${file.name} …`);
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let bin = '';
+        const CH = 0x8000; // 分块转换，避免 String.fromCharCode(...bytes) 大文件爆调用栈
+        for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+        const res = await fetch('/api/artifacts/upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: file.name, data: btoa(bin) }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j.ok) { toast(j.error || '上传失败'); return; }
+        let insert = `[附件 artifact:${j.name}](${j.url})`;
+        const isText = /^text\/|^application\/(json|javascript|xml|yaml|x-yaml)/.test(file.type || '')
+          || /\.(md|txt|js|ts|jsx|tsx|json|csv|log|html?|css|py|sh|ya?ml|xml|sql|bat|ps1)$/i.test(file.name);
+        if (isText && file.size <= 64 * 1024) {
+          const txt = await file.text();
+          insert += `\n内容（${file.name}，${file.size}B）：\n\`\`\`\n${txt}\n\`\`\``;
+        } else if (isText) {
+          insert += `（大文本未内联，可先分片或让 Agent 提示用户查看）`;
+        }
+        if (input) { input.value = (input.value ? input.value.replace(/\s*$/, '\n') : '') + insert + '\n'; input.focus(); }
+        toast(`已附加 ${file.name}（${j.size}B）`);
+      } catch (e) { toast('上传异常：' + String(e && e.message || e).slice(0, 80)); }
+    };
+    const attachBtn = $('#agentAttachBtn'), fileInput = $('#agentFileInput'), zone = $('#agentInputZone');
+    if (attachBtn && fileInput) attachBtn.onclick = () => fileInput.click();
+    if (fileInput) fileInput.onchange = () => { const f = fileInput.files && fileInput.files[0]; fileInput.value = ''; if (f) attachFile(f); };
+    if (zone) {
+      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add('drag-over'); }));
+      ['dragleave', 'dragend'].forEach(t => zone.addEventListener(t, e => { if (t === 'dragleave' && zone.contains(e.relatedTarget)) return; zone.classList.remove('drag-over'); }));
+      zone.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation(); zone.classList.remove('drag-over');
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) attachFile(f);
+      });
+    }
     // ★ 2026-09-20：发送按钮双态 —— 运行中点击=停止当前生成，空闲=发送
     if (btn) btn.onclick = () => { if (btn.dataset.sending === '1') _agentAbortCurrent(); else agentSend(); };
     if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); agentSend(); } });

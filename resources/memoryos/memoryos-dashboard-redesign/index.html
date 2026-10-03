@@ -3272,6 +3272,52 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   /* ★ 2026-09-20：发送按钮运行中双态为「停止」—— 红色描边，点击中止当前 run */
   .agent-chat-input .btn-primary.agent-stop-btn { background: rgba(239,68,68,0.14); color: #ef4444; border: 1px solid rgba(239,68,68,0.45); }
   [data-theme="dark"] .agent-chat-input .btn-primary.agent-stop-btn { background: rgba(239,68,68,0.2); color: #fca5a5; }
+  /* ★ Orca 融合 P0：附件按钮 + 拖拽落区高亮 */
+  .agent-chat-input .agent-attach-btn { height: 42px; min-width: 42px; padding: 0 10px; font-size: 15px; line-height: 1; }
+  .agent-chat-input.drag-over { outline: 2px dashed var(--accent-cyan); outline-offset: 3px; border-radius: 10px; background: rgba(65,187,200,0.07); }
+
+  /* ===== Orca 融合 P1：卡片工作区 Tab（worktree / diff / 行级批注）===== */
+  .wb-diff {
+    max-height: 460px; overflow: auto; border: 1px solid var(--border-glass);
+    border-radius: 8px; background: var(--bg-card); font-family: var(--font-mono, Consolas, monospace);
+    font-size: 11px; line-height: 1.55;
+  }
+  .wb-line { display: flex; align-items: flex-start; gap: 0; white-space: pre; }
+  .wb-line code { flex: 1; padding: 0 8px; white-space: pre; min-width: 0; }
+  .wb-gutter {
+    flex: none; width: 34px; padding: 0 6px 0 4px; text-align: right;
+    color: var(--text-muted); opacity: 0.65; user-select: none; font-size: 10px; line-height: inherit;
+  }
+  .wb-line.wb-add { background: rgba(16,185,129,0.10); }
+  .wb-line.wb-del { background: rgba(239,68,68,0.10); }
+  .wb-line.wb-hunk { background: rgba(65,187,200,0.12); color: var(--accent-cyan); }
+  .wb-line.wb-meta { color: var(--text-muted); opacity: 0.8; }
+  .wb-line:hover .wb-mark { opacity: 1; }
+  .wb-mark {
+    flex: none; opacity: 0; border: none; background: none; cursor: pointer;
+    color: var(--accent-cyan); font-size: 11px; padding: 0 6px; line-height: inherit; transition: opacity .12s;
+  }
+  .wb-mark:focus-visible { opacity: 1; outline: 1px solid var(--accent-cyan); }
+  .wb-line.wb-hunk .wb-mark, .wb-line.wb-meta .wb-mark { display: none; }
+  .wb-ann {
+    display: flex; gap: 8px; align-items: flex-start; white-space: normal;
+    padding: 5px 10px 5px 74px; background: rgba(245,158,11,0.10);
+    border-left: 3px solid #f59e0b; font-family: inherit; font-size: 11px; color: var(--text-primary);
+  }
+  .wb-ann .wb-ann-who { flex: none; color: var(--text-muted); font-size: 10px; }
+  .wb-ann-form { padding: 8px 10px; background: rgba(65,187,200,0.06); border-top: 1px dashed var(--border-glass); white-space: normal; }
+  .wb-ann-form textarea {
+    width: 100%; box-sizing: border-box; min-height: 42px; padding: 6px 8px; font-size: 12px;
+    background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-glass);
+    border-radius: 6px; resize: vertical; outline: none; font-family: inherit;
+  }
+  .wb-files-chip {
+    display: inline-flex; gap: 6px; align-items: center; margin: 0 6px 6px 0; padding: 3px 9px;
+    border: 1px solid var(--border-glass); border-radius: 999px; font-size: 10px;
+    background: var(--bg-card); color: var(--text-primary); cursor: pointer;
+  }
+  .wb-files-chip.on { border-color: rgba(65,187,200,0.5); color: var(--accent-cyan); background: rgba(65,187,200,0.12); }
+  .wb-files-chip .wb-badge { color: #f59e0b; }
 
   /* ===== 更多功能面板 ===== */
   .more-panel {
@@ -4555,9 +4601,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <!-- ★ 批次⑤：去掉行内 max-height/overflow 内滚，改由 #agentChat 统一滚动（内联后不嵌套滚动条） -->
             <div id="agentRunLiveTimeline" class="run-cards" role="log" aria-live="polite" aria-label="agent 执行过程"></div>
           </div>
-          <div class="agent-chat-input">
-            <textarea id="agentInput" rows="2" aria-label="给 agent 下指令" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行）"></textarea>
+          <div class="agent-chat-input" id="agentInputZone">
+            <textarea id="agentInput" rows="2" aria-label="给 agent 下指令" placeholder="给 agent 下指令（Enter 发送，Shift+Enter 换行；文件可拖入或点 📎 附加）"></textarea>
+            <button class="btn-ghost agent-attach-btn" id="agentAttachBtn" aria-label="附加文件" title="附加文件（拖入输入框也可上传）">📎</button>
             <button class="btn-primary" id="agentSendBtn">发送</button>
+            <input type="file" id="agentFileInput" style="display:none" tabindex="-1" aria-hidden="true">
           </div>
         </div>
       </div>

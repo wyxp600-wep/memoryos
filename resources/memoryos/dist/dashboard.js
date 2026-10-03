@@ -37,6 +37,7 @@ import { registerDesktop } from "./dashboard-reg-desktop.js";
 import { registerStatic } from "./dashboard-reg-static.js";
 import { registerCards } from "./dashboard-reg-cards.js";
 import { registerKnowledge } from "./dashboard-reg-knowledge.js";
+import { registerWorkbench } from "./dashboard-reg-workbench.js";
 const DEFAULT_PORT = 8787;
 /** 人工/编辑/新建允许的 type（含规则页 rule） */
 const ALLOWED_TYPES = ["decision", "experience", "pitfall", "convention", "rule"];
@@ -239,6 +240,24 @@ process.once("exit", () => { try { _agentMcp?.close(); } catch { /* 已断 */ } 
 export function buildApp(db, opts = {}) {
     const app = Fastify({ logger: false });
     installAccessControl(app, opts.token ?? process.env.MEMORY_TOKEN ?? null);
+    /* ★ Orca 融合 P0（2026-10-03）：JSON content-type 容错 —— 客户端对无体请求（典型：DELETE /api/worktrees/:name）
+     *  常仍带 `content-type: application/json`（axios / 部分 SDK / 封装 fetch 的默认行为），fastify 默认解析器在
+     *  **路由前**直接 400（FST_ERR_CTP_EMPTY_JSON），路由层收不到请求。替换为：空体 → {}（交各 handler 做业务校验，
+     *  报更精确的 400 文案）；非法 JSON → 维持 400（statusCode=400，code=FST_ERR_CTP_INVALID_JSON 同义）。
+     *  grep 全仓无测试依赖旧「空体 400」语义（FST_ERR_CTP_EMPTY_JSON 零命中），故为纯增益容错。 */
+    app.removeContentTypeParser("application/json");
+    app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+        const s = typeof body === "string" ? body.trim() : "";
+        if (!s)
+            return done(null, {});
+        try {
+            done(null, JSON.parse(s));
+        }
+        catch (e) {
+            e.statusCode = 400;
+            done(e);
+        }
+    });
     // 本机 Dashboard，仅 loopback，禁用默认错误体（避免泄漏路径）
     app.setNotFoundHandler((_req, reply) => reply.type("text/html; charset=utf-8").code(404).send("Not Found"));
     /* ★ P2-1（T12）：统一错误处理器。
@@ -271,6 +290,7 @@ export function buildApp(db, opts = {}) {
     registerStatic(app, ctx);
     registerCards(app, ctx);
     registerKnowledge(app, ctx);
+    registerWorkbench(app, ctx); // Orca 融合 P0+P1：worktree 编排 / diff / 行级批注 / 拖拽上传（2026-10-03 CLAIM §5）
 
     return app;
 }

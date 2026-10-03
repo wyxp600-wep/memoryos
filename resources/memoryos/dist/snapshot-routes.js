@@ -46,6 +46,7 @@ const ENV_DRIFT_ROUTES = new Set([
     "/api/agent/status",                // 含当前工具面（随 MCP 注册数变化）与连接数
     "/api/rules/project-candidates",    // 扫 ~/Desktop|~/WorkBuddy|~/Documents 目录 + hasAgents(AGENTS.md 是否存在)
     "/api/skills/status",               // 上报宿主机 skill 文件目录（~60 条 *__skillhub，随 DSH/会话更新 skill 文件而变；2026-09-16 实测 +40B）
+    "/api/worktrees",                   // 上报磁盘真实 worktree 列表（建/删即变，与代码行为无关；2026-10-03 workbench 域新增）
 ]);
 
 /* ── 固定夹具（全部确定性：显式给 created_at，避免"同秒并列"以外的抖动） ── */

@@ -20,6 +20,9 @@ locales/
 # ---- 2. 一次性归档区（保留在磁盘，不进版本库）----
 archive/
 
+# ---- 2b. 隔离 worktree 检出区（workbench 域并行编排；元数据在 .git/worktrees/，此处只忽略检出内容）----
+.worktrees/
+
 # ---- 3. 历史包袱与整目录备份 ----
 _old/
 _backup_memoryos-*/
