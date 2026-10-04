@@ -33,6 +33,22 @@ const CLI_PRESETS = {
         useStdin: true,
         modelArgs: (m) => (m ? ["--model", m] : []),
     },
+    // ★ 2026-10-05 P4 载体点亮：mimocode（scan id=mimocode / 别名 mimo）= Xiaomi MiMo CLI。
+    //   实证（本机）：`mimo run` 支持位置参数与 stdin 管道两种提示词形态、--pure 免外部插件、
+    //   -m 走 provider/model 形式；凭据在 ~/.local/share/mimocode/auth.json（providers whoami 核实）。
+    //   dsh 不适用 CLI 直控（profile 启动器，无 headless 单次模式）→ 走队列通道，不建预设。
+    mimocode: {
+        cmd: "mimo",
+        args: ["run", "--pure"], // 提示词走 stdin（实测管道可用）
+        useStdin: true,
+        modelArgs: (m) => (m ? ["-m", m] : []),
+    },
+    mimo: {
+        cmd: "mimo",
+        args: ["run", "--pure"],
+        useStdin: true,
+        modelArgs: (m) => (m ? ["-m", m] : []),
+    },
 };
 const HEARTBEAT_MS = 60000;
 const DEFAULT_TIMEOUT_MS = 30 * 60000;
