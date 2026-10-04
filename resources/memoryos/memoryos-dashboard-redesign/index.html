@@ -1564,6 +1564,17 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
 /* ★ 2026-09-13 任务地图交互增强：连线手柄 / 辅助卡 / 拖拽态 / 目标高亮 / 状态 chips / 菜单标题 */
 .task-map-node { cursor: grab; }
 .task-map-node.dragging { cursor: grabbing; opacity: 0.92; z-index: 30; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+/* ★ 2026-10-05 智能体卡醒目化：紫色描边 + 🤖 角标（新建后一眼认出「这是智能体卡」） */
+/* ★ 2026-10-05：特异度 + !important —— 下方「科技描边」段的
+ *  .task-map-node { border: 1px solid … !important; } 是 !important 声明，
+ *  会无条件压过这里普通声明（无论顺序/特异度），导致智能体卡紫描边从未生效、
+ *  与普通任务卡完全同色（用户「智能体卡不明显」）。 */
+.task-map-node.task-map-node--agent { border: 1.5px solid #8b5cf6 !important; }
+.task-map-kind-chip {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(139, 92, 246, 0.14); color: #7c3aed;
+  border: 1px solid rgba(139, 92, 246, 0.45); font-size: 10px; font-weight: 600; line-height: 14px;
+}
 .task-map-node-link {
   position: absolute; right: -11px; top: 50%; transform: translateY(-50%);
   width: 22px; height: 22px; border-radius: 50%;

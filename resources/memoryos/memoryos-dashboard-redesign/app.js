@@ -4339,6 +4339,8 @@
     hasView: false,
     bound: false,
     drag: null,
+    gesture: null, // ★ 2026-10-05：进行中的画布手势（'drag' 拖卡 / 'link' 拖连线）；非 null 时 renderTaskMap 延后（防 SSE 重渲打断拖拽）
+    renderQueued: false, // 手势期被挡下的重渲标记，手势结束补跑
     vertical: false,
     suppressClick: false, // ★ 2026-09-13：拖动结束后的误点抑制（避免拖动节点后误触 openCardDetail）
   };
@@ -4653,9 +4655,11 @@
       button.setAttribute('aria-label', `打开卡片 #${node.id} ${node.title}`);
       // 辅助卡样式（虚线小卡）；注意 classList.add 不接受空串，非 aux 不加类
       if (isAux) button.classList.add('task-map-node-aux');
+      // ★ 2026-10-05：智能体卡醒目化（用户报「新建后不知是不是智能体卡」）：紫色描边 + 🤖 角标
+      if (nk === 'agent' && !isAux) button.classList.add('task-map-node--agent');
       button.innerHTML = `
         <span class="task-map-node-top">
-          <span>#${node.id}${taskId ? ' · ' + esc(taskId) : ''}</span>
+          <span>#${node.id}${taskId ? ' · ' + esc(taskId) : ''}${nk === 'agent' ? '<span class="task-map-kind-chip">🤖 智能体</span>' : ''}</span>
           <span class="task-map-node-status">${esc(status.label)}</span>
         </span>
         <span class="task-map-node-title">${esc(node.title)}</span>
@@ -4853,6 +4857,9 @@
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
       el.classList.remove('dragging');
+      // ★ 2026-10-05：手势收尾——清手势标记，补跑被挡下的 SSE 重渲（数据已新）
+      _taskMapState.gesture = null;
+      if (_taskMapState.renderQueued) { _taskMapState.renderQueued = false; renderTaskMap(); }
       if (!moved) return;
       const x = Math.round(startLeft + (ev.clientX - sx) / scale);
       const y = Math.round(startTop + (ev.clientY - sy) / scale);
@@ -4866,6 +4873,7 @@
       renderTaskMapEdges();
     };
     el.classList.add('dragging');
+    _taskMapState.gesture = 'drag'; // 手势守卫：拖拽期间挡住 SSE 触发的整幅重渲
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
@@ -4909,6 +4917,9 @@
       window.removeEventListener('pointerup', up);
       tmp.remove();
       document.querySelectorAll('.task-map-node.link-target').forEach(n => n.classList.remove('link-target'));
+      // ★ 2026-10-05：连线手势收尾——清手势标记，补跑被挡下的 SSE 重渲
+      _taskMapState.gesture = null;
+      if (_taskMapState.renderQueued) { _taskMapState.renderQueued = false; renderTaskMap(); }
       if (hoverId) {
         fetch(`/api/cards/${srcCardId}/links`, {
           method: 'POST', headers: { 'content-type': 'application/json' },
@@ -4919,6 +4930,7 @@
         }).catch(() => toast('连线失败（网络）'));
       }
     };
+    _taskMapState.gesture = 'link'; // 手势守卫：连线拖拽期间挡住 SSE 整幅重渲
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
@@ -5074,6 +5086,10 @@
     if (!canvas) return;
     bindTaskMapControls();
     const seq = ++_taskMapState.seq;
+    // ★ 2026-10-05：手势守卫——卡片拖拽/连线进行中的 SSE 重渲会把被拖元素整体销毁
+    //   （用户感知「卡片不能拖动/拖完弹回」；执行中卡片状态事件推得频繁，几乎必中）。
+    //   手势期只记「待重渲」，手势结束由拖拽收尾立即触发（本函数重取 graph，数据更新）。
+    if (_taskMapState.gesture) { _taskMapState.renderQueued = true; return; }
     if (!_taskMapState.data.nodes.length) {
       const nodesEl = $('#taskMapNodes');
       if (nodesEl) nodesEl.innerHTML = '<div style="padding:40px;color:var(--text-muted);font-size:12px">加载卡片…</div>';
@@ -6019,6 +6035,11 @@
           <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">保存</button>
         </div>
       </div>`;
+      // ★ 2026-10-05 补挂载：原实现 createElement + innerHTML + 绑事件后**从不 appendChild**，
+      //   向导因此永远不可见 —— 点「＋ → 类型选智能体 → 创建」和「⚙️ 编辑智能体配置」都毫无反应
+      //   （ov 在 Promise 闭包内，调用方拿不到引用，只能自挂载；对照同结构的 askForm 1242 行）。
+      //   无异常日志的原因：q('name').focus() 对未挂载元素是安全 no-op，静默失败。
+      document.body.appendChild(ov);
       const ta = ov.querySelector('[data-k="launch_overrides"]'); if (ta) ta.value = lo0;
       const q = k => ov.querySelector(`[data-k="${k}"]`);
       let done = false;
@@ -6052,7 +6073,9 @@
           const r = await fetch('/api/agent-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) { toast(`智能体卡创建失败：${j.error || r.status}`); return; }
-          toast(`已创建智能体卡 #${j.card_id}（档案 #${j.profile_id}）`);
+          // ★ 2026-10-05：建卡后指位——用户「新建的智能体卡不明显，不知是不是智能体卡」：
+          //   明说长什么样（紫色描边+🤖角标）+ 放在哪（执行者区=右侧列，可拖走）
+          toast(`已创建智能体卡「${body.name}」#${j.card_id}：它是带 🤖 角标的紫色卡片，默认排在「执行者区」（任务流右侧一列）；想摆哪就拖到哪`);
           close(true); refreshCurrentTaskView(); return;
         }
         // edit：PUT 整对象；launch_overrides 仅当高级栏填了才传（否则端点保留旧值）
@@ -6129,6 +6152,9 @@
       ov.querySelector('[data-cancel]').onclick = () => close(null);
       ov.querySelector('[data-ok]').onclick = submit;
       ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      // ★ 2026-10-05 补挂载：与 openAgentWizard 同因——缺 appendChild，
+      //   「＋ → 类型选「＋ 新建自定义类型…」」点开后同样什么都不显示。
+      document.body.appendChild(ov);
       q('label').focus();
     });
   }
@@ -6362,12 +6388,31 @@
 
   // 执行终端（SSE：/api/agent-cards/:id/exec/stream；弹层关闭钩子统一断流，防 EventSource 泄漏）
   let _agentPopClosers = [];
+  /** ★ 2026-10-05：「执行失败是什么意思」大白话——按日志关键词映射原因+怎么办（不替用户猜，给路径） */
+  function plainFailHint(logText) {
+    const t = String(logText).slice(-4000);
+    const rules = [
+      [/Not logged in|please run .{0,12}login|未登录/i, '这个工具还没在本机登录', '先登录一次（终端运行该工具的 /login，或按它自己的登录提示），再重新派任务'],
+      [/\b429\b|rate.?limit|too many requests|quota/i, '模型被限流了（调用太频繁或配额用完）', '等几分钟再派一次，或在该工具里换一个有配额的模型'],
+      [/MISSING_CREDENTIAL|API[_\s-]?key/i, '这个工具缺 API 密钥/凭据', '把密钥填进该工具的凭据设置（或环境变量），再派发'],
+      [/无法定位|provider-builtins|provider config|No provider/i, '这个工具找不到自己的模型配置', '先正常打开一次该工具的桌面版（让它生成配置），再派发'],
+      [/is not recognized|not found|No such file|ENOENT|无法找到|无法找到/i, '没找到这个工具或它的文件', '确认工具已安装；路径不对的在「⚙️ 编辑智能体配置」里改'],
+      [/timed ?out|超时/i, '任务跑太久被自动停了', '在「⚙️ 编辑智能体配置」把超时分钟调大'],
+    ];
+    for (const [re, why, fix] of rules) {
+      if (re.test(t)) {
+        return `<div style="background:#fff7e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>${why}<br><span style="color:var(--text-secondary)">怎么办：${fix}</span><br><span style="color:var(--text-muted)">详细技术日志在上面，点开可查</span></div>`;
+      }
+    }
+    return `<div style="background:#fff7e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>工具跑完但没干成事（退出码非 0）被系统判为失败。<br><span style="color:var(--text-secondary)">怎么办：</span>看上面日志里标 [err] 的行找线索；也可以右键智能体卡「⚙️ 编辑智能体配置」核对工具与凭据</div>`;
+  }
   function agentCardTerm(cardId) {
     closeAgentPops();
     const ov = agentOverlay(`⌨ 执行终端 · 卡片 #${cardId}`,
-      `<pre style="height:260px;overflow:auto;background:rgba(0,0,0,.25);color:#c7d3e0;font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;word-break:break-all"></pre><div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
+      `<pre style="height:260px;overflow:auto;background:var(--bg-deep,#f5f1e0);color:var(--text-primary,#1a2e35);border:1px solid var(--border-glass,#41bbc833);font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;word-break:break-all"></pre><div class="ap-hint"></div><div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
       [{ act: 'stop', label: '停止执行' }, { act: 'close', label: '关闭' }]);
     const term = ov.querySelector('pre');
+    const hintBox = ov.querySelector('.ap-hint');
     const status = ov.querySelector('.ap-st');
     const es = new EventSource(`/api/agent-cards/${cardId}/exec/stream`);
     _agentPopClosers.push(() => es.close());
@@ -6382,6 +6427,7 @@
     es.addEventListener('end', (e) => {
       const d = JSON.parse(e.data);
       status.textContent = d.status === 'done' ? '（已完成）' : '（已失败）';
+      if (d.status !== 'done') hintBox.innerHTML = plainFailHint(term.textContent); // 失败才给「人话」解释
       es.close();
     });
     es.onerror = () => { status.textContent = '（无执行记录或流已断开——队列通道/未直控时此处为空，属正常）'; es.close(); };
@@ -6393,18 +6439,29 @@
   }
 
   // 驾驶直播（SSE：/api/agent-cards/:id/live；CDP screencast 帧流；断开驾驶不杀用户的 App）
+  // ★ 2026-10-05：破图占位修复——<img> 无 src 时浏览器显破碎图标（用户报「背景颜色不对」）；
+  //   改为主题色占位块（等待中），收到首帧才切图；日志框同样改主题变量（原黑底浅字在浅色主题下是灰块）
   function agentCardLive(cardId) {
     closeAgentPops();
     const ov = agentOverlay(`📺 驾驶直播 · 卡片 #${cardId}`,
-      `<img alt="等待直播画面…" style="width:100%;border-radius:8px;background:rgba(0,0,0,.3);min-height:160px;display:block"><pre style="height:110px;overflow:auto;background:rgba(0,0,0,.25);color:#c7d3e0;font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;margin-top:6px"></pre><div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
+      `<div style="position:relative;border-radius:8px;overflow:hidden;background:var(--bg-deep,#f5f1e0);border:1px solid var(--border-glass,#41bbc833)">
+         <div class="lm-wait" style="min-height:180px;display:flex;align-items:center;justify-content:center;color:var(--text-muted,#8aa0aa);font-size:12px;line-height:1.7;text-align:center;padding:16px">正在等待直播画面…<br>（桌面软件连上后自动开始；还没拉起/未驾驶时这里一直是空的，属正常）</div>
+         <img class="lm-img" alt="驾驶直播画面" style="width:100%;display:none">
+       </div>
+       <pre style="height:110px;overflow:auto;background:var(--bg-deep,#f5f1e0);color:var(--text-primary,#1a2e35);border:1px solid var(--border-glass,#41bbc833);font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;margin-top:6px"></pre>
+       <div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
       [{ act: 'stop', label: '断开驾驶' }, { act: 'close', label: '关闭' }]);
-    const img = ov.querySelector('img');
+    const img = ov.querySelector('.lm-img');
+    const waitEl = ov.querySelector('.lm-wait');
     const term = ov.querySelector('pre');
     const status = ov.querySelector('.ap-st');
     const es = new EventSource(`/api/agent-cards/${cardId}/live`);
     _agentPopClosers.push(() => es.close());
     _agentPops.push(() => es.close());
-    es.addEventListener('frame', (e) => { img.src = 'data:image/jpeg;base64,' + JSON.parse(e.data).frame; });
+    es.addEventListener('frame', (e) => {
+      if (!img.src) { waitEl.style.display = 'none'; img.style.display = 'block'; } // 首帧才切图，避免破图
+      img.src = 'data:image/jpeg;base64,' + JSON.parse(e.data).frame;
+    });
     es.addEventListener('line', (e) => {
       term.textContent += JSON.parse(e.data).text + '\n';
       if (term.textContent.length > 30000) term.textContent = term.textContent.slice(-20000);

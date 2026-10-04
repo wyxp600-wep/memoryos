@@ -384,7 +384,8 @@ export function syncTaskBridge(db) {
     const out = { dispatched: 0, syncedDone: 0, syncedRunning: 0 };
     try {
         // 方向① ready 卡 → task 记忆
-        const ready = db.prepare(`SELECT id, title, body, priority FROM cards WHERE status='ready'`).all();
+        // ★ 2026-10-05：带出 meta —— 派生后写回必须**合并**而非覆盖（见 426 行注释）
+        const ready = db.prepare(`SELECT id, title, body, priority, meta FROM cards WHERE status='ready'`).all();
         for (const c of ready) {
             const already = db.prepare(`SELECT 1 FROM card_memory WHERE card_id=? AND relation='dispatch'`).get(c.id);
             if (already)
@@ -423,7 +424,19 @@ export function syncTaskBridge(db) {
                 source_ref: `card:${c.id}`,
             });
             db.prepare(`INSERT INTO card_memory(card_id, memory_id, relation) VALUES (?,?,?)`).run(c.id, row.id, "dispatch");
-            db.prepare(`UPDATE cards SET meta=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(JSON.stringify({ dispatch_memory_id: row.id }), c.id);
+            // ★ 2026-10-05：meta 必须**合并写回**（原为 JSON.stringify({dispatch_memory_id}) 整体覆盖）。
+            //   覆盖的实证后果：智能体卡的 profile_id（载体/通道的唯一绑定依据）与任务卡的 map_pos
+            //   （用户拖拽定位）被一并抹掉 —— 智能体卡随后在任务地图被误判「⚠️ 载体缺失」、
+            //   派发被前端按 carrier_missing 拦死；任务卡拖完位置被这轮派生悄悄清空。
+            let curMeta = {};
+            try {
+                const parsed = JSON.parse(c.meta || "{}");
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+                    curMeta = parsed;
+            }
+            catch { /* meta 非法：从空对象起，保底不让派生链断（原实现同样丢弃） */ }
+            curMeta.dispatch_memory_id = row.id;
+            db.prepare(`UPDATE cards SET meta=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(JSON.stringify(curMeta), c.id);
             out.dispatched++;
         }
         // 方向② task 状态记忆 → 关联卡片同步（done→done, in_progress→running）

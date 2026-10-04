@@ -1295,8 +1295,11 @@ export function registerCards(app, ctx) {
                     if (n.kind !== "agent")
                         continue;
                     const pid = Number(n.meta?.profile_id) || 0;
-                    const prof = pid ? db.prepare(`SELECT agent_key FROM agent_profiles WHERE id=?`).get(pid) : null;
-                    n.profileMissing = !prof || !scanKeys.has(String(prof.agent_key ?? ""));
+                    // ★ 2026-10-05：与 agent-profiles / agent-cards/:id/state 统一走 carrierMissingOf。
+                    //   原实现只比 scanKeys：launch_overrides 已给 exe/cmd 的档案、以及 queue 通道/
+                    //   未绑档案的智能体卡，都在任务地图被误报「⚠️ 载体缺失」。
+                    const prof = pid ? db.prepare(`SELECT agent_key, channel, launch_overrides FROM agent_profiles WHERE id=?`).get(pid) : null;
+                    n.profileMissing = carrierMissingOf(prof, scanKeys);
                 }
         }
         catch { /* 载体探测失败不标记，宁报在线不误报缺失 */ }
@@ -1673,6 +1676,35 @@ export function registerCards(app, ctx) {
         }
         return _scanCache.keys;
     }
+    /** 档案是否已显式指定可执行文件（launch_overrides.exe/cmd）——指定了就不算「载体缺失」
+     *  （如 opencode 完整 exe 路径 / zcode node+cjs 路径：不在 scan 清单但可用）。 */
+    function profileHasOverrideExe(p) {
+        try {
+            const raw = p?.launch_overrides;
+            const ov = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+            return !!(ov && (String(ov.exe ?? "").trim() || String(ov.cmd ?? "").trim()));
+        }
+        catch { return false; }
+    }
+    /** 载体缺失判定：不在扫描清单 且 未显式指定可执行文件 才算缺失（2026-10-05 修：
+     *  原实现只看扫描清单，launch_overrides 已给 exe/cmd 的档案被误报「载体缺失」）。 */
+    function carrierMissingFor(p, keys) {
+        if (!p?.agent_key)
+            return false;
+        if (!keys)
+            return false; // 探测失败按旧口径不误报
+        return !keys.has(String(p.agent_key)) && !profileHasOverrideExe(p);
+    }
+    /** 对外口径的「载体缺失」——只有真正要 spawn 外部载体的通道（cli/cdp）才检查。
+     *  queue 通道走 MemoryOS 内部 agent 领单（见 dispatch-agent：无档案即 channel="queue"），
+     *  不拉起任何外部 CLI，天然不缺载体。原实现在 queue/无档案时也报 true，
+     *  后果：未绑定档案的智能体卡在任务地图被标「⚠️ 载体缺失」、点派发被前端按 carrier_missing
+     *  拦死（而同一批卡走 API 却能正常派单）——即用户报的「为什么这么多不能用的」。 */
+    function carrierMissingOf(p, keys) {
+        if (String(p?.channel ?? "queue") === "queue")
+            return false;
+        return carrierMissingFor(p, keys);
+    }
     function validProfileChannel(v) {
         return PROFILE_CHANNELS.includes(String(v ?? "")) ? String(v) : "queue";
     }
@@ -1795,7 +1827,7 @@ export function registerCards(app, ctx) {
             profiles: rows.map((p) => ({
                 ...p,
                 card: cardByProfile.get(Number(p.id)) ?? null,
-                carrier_missing: keys ? (p.agent_key ? !keys.has(String(p.agent_key)) : false) : false,
+                carrier_missing: carrierMissingOf(p, keys),
             })),
         };
     });
@@ -1945,7 +1977,7 @@ export function registerCards(app, ctx) {
             channel: p?.channel ?? "queue",
             agent_key: p?.agent_key ?? null,
             workspace: p?.workspace ?? null, model: p?.model ?? null, reasoning: p?.reasoning ?? null, context_tokens: p?.context_tokens ?? null,
-            carrier_missing: p ? (keys ? (p.agent_key ? !keys.has(String(p.agent_key)) : false) : false) : true,
+            carrier_missing: carrierMissingOf(p, keys), // p=null → 落 queue 通道，不报缺失（见 carrierMissingOf）
             queue_depth: queue.length,
             queue,
         };
