@@ -149,6 +149,8 @@ try {
     ok("派发边随收口翻 completed", cliEdge?.status === "completed", JSON.stringify(cliEdge));
     const cliHandoff = (r.body.nodes || []).find(n => n.kind === "handoff" && String(n.body || "").includes("交接内容甲"));
     ok("分隔符协议解析出交接内容", !!cliHandoff, "未找到含交接内容的 handoff 卡");
+    ok("详版交接结构化分节齐全", !!cliHandoff && ["【结论】", "【执行信息】", "【完整日志】"].every(k => String(cliHandoff.body).includes(k)),
+        String(cliHandoff?.body ?? "").slice(0, 150));
     r = await j(null, "GET", `/api/agent-cards/${cliCardId}/exec`);
     ok("执行记录可查（done）", r.body.runs?.[0]?.status === "done", JSON.stringify(r.body).slice(0, 150));
     r = await j(null, "POST", `/api/agent-cards/${cliCardId}/exec/stop`);

@@ -68,7 +68,6 @@ export function registerKnowledge(app, ctx) {
             if (dispatchRuns.size > 200)
                 dispatchRuns.delete(dispatchRuns.keys().next().value); // ★ 删最旧而非 clear()：清空会让排队 run 中止时补收口失效
             dispatchRuns.set(handle.run.id, b.cardDispatch);
-            startRunHeartbeat(b.cardDispatch);
         }
         if (deferred) {
             runQueue.push({ handle, b });
@@ -138,6 +137,7 @@ export function registerKnowledge(app, ctx) {
         // ★ A1 一键派发：本 run 绑定的卡片（无绑定 = 普通对话 run，下面三条派发逻辑全部不触发）
         const cd = b.cardDispatch?.cardId ? b.cardDispatch : null;
         let doneSeen = false; // agent 是否已自行 task_done（没做 → 终态前强制收尾轮补一枪）
+        const touchedFiles = new Set(); // ★ P4 详版交接：本次 run 改动过的文件路径
         // 写文件类步骤的前后快照（diff 数据源在路由层注入；路径经 resolveInside 边界校验，越界不快照）
         // ★ 并行池：一轮可能含多个 file_write（L1 独占串行跑，但 tool_call 事件在前置门禁里先批量发）——
         //   快照按 FIFO 队列逐条配对（tool_result 按模型序到达，与创建序一致），单槽会被后一次覆盖而错配。
@@ -148,6 +148,8 @@ export function registerKnowledge(app, ctx) {
                 snapshotQueue.push({ path: p, before: readSnapshot(p) });
             }
             if (s.type === "tool_result" && s.tool === "file_write") {
+                if (s.artifactPath)
+                    touchedFiles.add(String(s.artifactPath)); // ★ P4 详版交接：收集改动文件清单
                 const snap = snapshotQueue.shift();
                 const sid = handle.run.steps.find((x) => x.tool === "file_write" && x.state === "pending")?.stepId;
                 if (sid != null && snap) {
@@ -160,6 +162,8 @@ export function registerKnowledge(app, ctx) {
             }
             handle.onStep(s);
             // 大输出：从工具结果全文提取 artifact 路径（exec-tools 截断时回传「完整输出：<abs>」）
+            if (s.type === "tool_result" && s.tool === "file_edit" && s.artifactPath)
+                touchedFiles.add(String(s.artifactPath));
             if (s.type === "tool_result" && s.result) {
                 const ap = extractArtifactPath(s.result);
                 if (ap) handle.run.steps[handle.run.steps.length - 1].artifactPath = ap;
@@ -188,6 +192,7 @@ export function registerKnowledge(app, ctx) {
             }, 60000);
         };
         let runAnswer = ""; // ★ P4：run 最终回复（try 块内赋值，收口处生成交接卡用）
+        startRunHeartbeat(cd); // 派发 run 的租约续期（仅 cd 生效；定时器在收口 finally 清除）
         try {
             // ★ A1：中止运行 —— 传 AbortSignal（agent-core 轮次间 + LLM fetch 可中断；
             //   进行中的 mcp.callTool 跑完，不硬杀进程）。
@@ -235,7 +240,9 @@ export function registerKnowledge(app, ctx) {
                 const ok = handle.run.status === "done";
                 ctx.finalizeCardDispatch?.({
                     ...cd, ok, runId: handle.run.id,
-                    answer: ok ? runAnswer.slice(0, 1200) : undefined, // ★ P4：最终回复进交接卡
+                    answer: ok ? runAnswer.slice(0, 2400) : undefined, // ★ P4 详版交接：最终回复（上限放宽到 2400）
+                    files: ok ? [...touchedFiles].slice(0, 50) : undefined, // ★ P4 详版交接：改动文件清单
+                    durationMs: Date.now() - handle.run.startedAt, channel: "queue",
                     detail: ok
                         ? `一键派发完成（run ${handle.run.id}）`
                         : `一键派发失败（run ${handle.run.id}）：${handle.run.error ?? "未知错误"}`,

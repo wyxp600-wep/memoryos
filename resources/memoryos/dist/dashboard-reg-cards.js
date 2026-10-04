@@ -274,12 +274,26 @@ export function registerCards(app, ctx) {
                 ? db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(c.ref_id)
                 : undefined) ??
                 db.prepare(`SELECT m.id id, m.content content FROM card_memory cm JOIN memories m ON m.id=cm.memory_id WHERE cm.card_id=? AND cm.relation='dispatch' LIMIT 1`).get(cardId);
-            let body = (String(info.answer ?? "").trim()) || detail; // 优先级：任务记忆结论 > run 最终回复 > 收口 detail
+            // 核心结论：任务记忆「→ 结论(AGENT)：」段 > run 最终回复 > 收口 detail
+            let core = "";
             if (memRow?.content) {
                 const idx = String(memRow.content).lastIndexOf("→ 结论(AGENT)：");
                 if (idx >= 0)
-                    body = String(memRow.content).slice(idx + "→ 结论(AGENT)：".length).trim().slice(0, 800) || detail;
+                    core = String(memRow.content).slice(idx + "→ 结论(AGENT)：".length).trim().slice(0, 2000);
             }
+            if (!core)
+                core = String(info.answer ?? "").trim().slice(0, 2400);
+            if (!core)
+                core = detail;
+            // ★ P4 详版交接：结构化分节，下游开局即有完整上下文（总量上限 4000）
+            const parts = [`【结论】${core}`];
+            if (info.files?.length)
+                parts.push(`【改动文件】\n${info.files.map((f) => `- ${f}`).join("\n")}`);
+            const dur = Number(info.durationMs) > 0 ? ` · 耗时 ${Math.round(Number(info.durationMs) / 1000)}s` : "";
+            parts.push(`【执行信息】run ${info.runId ?? "无"}${info.dispatchId ? ` · 工作证 #${info.dispatchId}` : ""}${dur}${info.channel ? ` · ${info.channel} 通道` : ""}`);
+            if (info.logFile)
+                parts.push(`【完整日志】${info.logFile}`);
+            const body = parts.join("\n").slice(0, 4000);
             if (body) {
                 const hIns = db.prepare(`INSERT INTO cards(board,kind,title,body,status,meta) VALUES ('default','handoff',?,?,'done',?)`)
                     .run(`交接文档 · ${String(c.title ?? "").slice(0, 80)}`.slice(0, 120), body,
@@ -769,9 +783,13 @@ export function registerCards(app, ctx) {
         const handoffs = db.prepare(`SELECT h.title title, h.body body FROM card_edges e JOIN cards h ON h.id = e.source_id
             WHERE e.target_id=? AND e.kind='inject' AND e.status='active' ORDER BY e.id`).all(id);
         const handoffBlock = handoffs.length
-            ? (`【前情提要（来自上游交接文档，全文按需检索）】\n` + handoffs.map((h) => `· ${h.title}：${String(h.body ?? "").slice(0, 600)}`).join("\n")).slice(0, 1200) // ★ 总量截断：多注入边叠加不能撞 run 提示词上限
+            ? (`【前情提要（来自上游交接文档，全文按需检索）】\n` + handoffs.map((h) => `· ${h.title}：\n${String(h.body ?? "").slice(0, 1500)}`).join("\n---\n")).slice(0, 3000) // ★ 详版注入：单条 1500/总量 3000（有界，防撞 run 提示词上限）
             : "";
         // 起 run：提示词内嵌卡片正文（agent 无卡片读工具），并给足收口指令
+        // ★ P2/P3 通道分流：智能体卡 channel='cli' → CLI 直控执行器；'cdp' → CDP 驾驶执行器；queue → 内部 agent run
+        // （计算必须先于 message 构建——交接要求行按通道分支引用 channel）
+        const agentProfile = agentCardId ? profileOfCard(db.prepare(`SELECT * FROM cards WHERE id=?`).get(agentCardId)) : null;
+        const channel = agentProfile ? String(agentProfile.channel) : "queue";
         const message = [
             `【一键派发】你被指派处理 MemoryOS 看板卡片 #${id}（认领人 ${agent}）。`,
             taskId
@@ -781,10 +799,9 @@ export function registerCards(app, ctx) {
             `标题：${String(c.title ?? "").slice(0, 120)}`,
             `正文：${String(c.body ?? "").trim().slice(0, 2500) || "（空卡：先自行调研再给可执行结论）"}`,
             `要求：① 先查上下文（memory_search/memory_read，或 task_next 看全局任务）再动手；② 结论须可验收，不确定处显式标注不确定性；③ 中途不要改卡片状态（由系统按 run 终态自动收口）。`,
+            // ★ CLI 通道收口靠分隔符协议（D7）：提示词里明确详版交接的分节要求
+            ...(channel === "cli" ? [`交接要求：结束前必须输出 <<<HANDOFF>>> … <</HANDOFF>>> 详版交接段，分节写：【结论】【改动文件】【踩坑与规避】【遗留与建议】，尽量具体，写全给下一个人看。`] : []),
         ].join("\n");
-        // ★ P2/P3 通道分流：cli → CLI 直控执行器；cdp → CDP 驾驶执行器；queue → 内部 agent run
-        const agentProfile = agentCardId ? profileOfCard(db.prepare(`SELECT * FROM cards WHERE id=?`).get(agentCardId)) : null;
-        const channel = agentProfile ? String(agentProfile.channel) : "queue";
         let started;
         try {
             if (channel === "cli") {

@@ -177,21 +177,23 @@ export function registerCliExec(app, ctx) {
         let answer = "";
         const m = all.match(/<<<HANDOFF>>>([\s\S]*?)(?:<<\/HANDOFF>>>|$)/);
         if (m?.[1]?.trim())
-            answer = m[1].trim().slice(0, 1200);
+            answer = m[1].trim().slice(0, 2400); // ★ P4 详版交接：上限放宽到 2400
         else {
             const tail = all.trim().slice(-1000);
             answer = tail || detail;
             pushLine(job, "sys", "[执行器] 未按约定输出交接段（<<<HANDOFF>>>），已用输出尾部兜底");
         }
+        const logFile = path.join(logDir, `${job.runId}.log`);
         try {
-            fs.writeFileSync(path.join(logDir, `${job.runId}.log`), all, "utf8");
-            pushLine(job, "sys", `[执行器] 全量日志：${path.join(logDir, job.runId + ".log")}`);
+            fs.writeFileSync(logFile, all, "utf8");
+            pushLine(job, "sys", `[执行器] 全量日志：${logFile}`);
         }
         catch { /* 日志落盘失败不影响收口 */ }
         try {
             ctx.finalizeCardDispatch?.({
                 cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId,
-                answer, detail: `${detail}（CLI 直控 ${job.cmd}）`,
+                answer, channel: "cli", durationMs: job.finishedAt - job.startedAt, logFile,
+                detail: `${detail}（CLI 直控 ${job.cmd}）`,
             });
         }
         catch (e) {
