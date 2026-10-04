@@ -71,6 +71,20 @@ const CLI_PRESETS = {
         promptAsArg: true,
         modelArgs: (m) => (m ? ["-m", m] : []),
     },
+    // ★ 2026-10-05 P4 载体点亮：zcode = ZCode 桌面版自带 CLI（无独立可执行文件，
+    //   本体为 CJS 包 <ZCode安装目录>\resources\glm\zcode.cjs，需 node 执行；本机实证路径
+    //   %LOCALAPPDATA%\Programs\ZCode\resources\glm\zcode.cjs）。
+    //   无头一次性：`zcode -p "<任务>"`（缺省 yolo 权限模式、--cwd 定工作区、--locale zh-CN）。
+    //   预设保持通用语义（cmd=node + 空 args + promptFlag="-p"：任务文本作 -p 的值紧跟旗标）；
+    //   完整 cjs 路径由档案 launch_overrides.args 提供（机器相关路径不入仓库预设）。
+    //   实证（2026-10-05）：管线通（CLI 拉起 → 模型网关调用），当日 provider 429 限流为唯一缺口；
+    //   CDP 通道被 ZCode 应用级单实例锁挡死（主实例运行时二实例 ~1.5s 自退，实证 2s 采样）。
+    zcode: {
+        cmd: "node",
+        args: [],
+        useStdin: false,
+        promptFlag: "-p",
+    },
 };
 const HEARTBEAT_MS = 60000;
 const DEFAULT_TIMEOUT_MS = 30 * 60000;
@@ -128,11 +142,14 @@ export function registerCliExec(app, ctx) {
         let args = ov?.args ?? (preset ? [...preset.args, ...(preset.modelArgs?.(p.model) ?? [])] : []);
         if (!ov && !preset && p.reasoning)
             args = [...args, "--reasoning", String(p.reasoning)]; // 无预设的自定义 CLI：推理强度按通用flag尽力传
-        // ★ 提示词作位置参数（promptAsArg，如 dsh headless / opencode run：该 CLI 无 stdin 模式）：
-        //   任务文本追加为 args 末位单参数。win32 shell:true 路径经 quote() 统一预引号，
-        //   多词任务保持单个参数不被 cmd /s 拆散。显式意图标志（ov 或 preset 声明）即追加，
-        //   与 launch_overrides.args 共存（档案级自定义参数 + 预设 CLI 的位置参数语义）。
-        if (ov?.promptAsArg ?? preset?.promptAsArg ?? false)
+        // ★ 提示词两种交付形态：
+        //   ① promptFlag（zcode -p <任务> 型）：[flag, 任务文本] 插入 args 末两位（文本紧跟旗标）；
+        //   ② promptAsArg（dsh/opencode 位置参数型）：任务文本追加为 args 末位单参数。
+        //   win32 shell:true 路径经 quote() 统一预引号，多词任务保持单个参数不被 cmd /s 拆散。
+        const promptFlag = ov?.promptFlag ?? preset?.promptFlag;
+        if (promptFlag)
+            args = [...args, String(promptFlag), String(job.message ?? "")];
+        else if (ov?.promptAsArg ?? preset?.promptAsArg ?? false)
             args = [...args, String(job.message ?? "")];
         const cwd = p.workspace || os.homedir();
         job.cwd = cwd;
