@@ -265,7 +265,8 @@ export function registerMemoryTools(server, ctx) {
                 return wAbort;
             // 离线降级：本条以无向量落库 → 置 embedding_stale=1，待嵌入端点恢复由 daemon reembedStale 补算
             if (embedFailed && row && row.id) {
-                try { db.prepare(`UPDATE memories SET embedding_stale=1 WHERE id=? AND embedding_stale=0`).run(row.id); } catch { /* 标记失败不阻断写库 */ }
+                try { db.prepare(`UPDATE memories SET embedding_stale=1 WHERE id=? AND embedding_stale=0`).run(row.id); }
+                catch (e) { console.error(`[memoryos] embedding_stale 标记失败（id=${row.id}；主写入不受阻，待 daemon reembedStale 补算）：`, e?.message ?? e); }
             }
             if (plan.kind === "idem")
                 return `幂等键命中：#${plan.id} 已存在且内容一致，本次未重复写入。` + stateReceipt({ op: "memory_write_idempotent", id: plan.id }) + _taskNote + _gate;

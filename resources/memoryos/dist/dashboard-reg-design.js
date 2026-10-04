@@ -204,7 +204,7 @@ export function registerDesign(app, ctx) {
     async function rmProfile(dir) {
         for (let i = 0; i < 6; i++) {
             try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); return; }
-            catch { await sleep(150); }
+            catch (e) { console.error(`[design] 清临时 profile 失败（重试 ${i + 1}/6）：`, e?.message ?? e); await sleep(150); }
         }
     }
 
