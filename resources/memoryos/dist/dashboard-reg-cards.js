@@ -593,12 +593,16 @@ export function registerCards(app, ctx) {
         const ping = setInterval(() => send(": ping\n\n"), 25000);
         cardSubs.add(send);
         ensureEvtPoller(); // 有订阅者才跑跨进程事件补流
-        req.raw.on("close", () => {
+        const detach = () => {
             clearInterval(ping);
             cardSubs.delete(send);
             if (!cardSubs.size)
                 stopEvtPoller();
-        });
+        };
+        req.raw.on("close", detach);
+        // ★ 写已断开的响应是异步 emit('error')，try/catch 抓不到；无监听 = 未捕获异常把整个
+        //   dashboard 打死（同 streamJobSSE 那处的崩法）。故必须就地降级。
+        reply.raw.on("error", detach);
     });
     app.post("/api/cards", async (req, reply) => {
         if (RESTRICTED)
@@ -809,15 +813,19 @@ export function registerCards(app, ctx) {
             if (channel === "cli") {
                 if (typeof ctx.startCliRun !== "function")
                     throw new Error("CLI 直控执行器未就绪"); // ★ 抛出走统一回滚分支（503 早退会留下已认领的 running 卡+工作证）
+                // ★ agent 必须透传：收口 finalizeCardDispatch 按 assignee===actor 比对，漏传则回退默认
+                //   "dispatch-agent"，与派发时写进 assignee 的 agent 名不等 → 状态翻转被静默跳过，
+                //   卡永远停 running、锁不释放（queue 通道 cardDispatch.actor 本就传，CLI/CDP 漏了）。
                 started = await ctx.startCliRun({
-                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
+                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message, agent,
                 });
             }
             else if (channel === "cdp") {
                 if (typeof ctx.startCdpRun !== "function")
                     throw new Error("CDP 驾驶执行器未就绪"); // 同上
+                // 同上：CDP 通道同样必须透传 agent，否则收口比对失败、卡滞留 running（见 CLI 分支注释）
                 started = await ctx.startCdpRun({
-                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message,
+                    cardId: id, agentCardId, profile: agentProfile, dispatchId: dsp ? dsp.id : null, dispatchKey: lock, taskId, message, agent,
                 });
             }
             else {

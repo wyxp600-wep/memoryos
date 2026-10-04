@@ -672,8 +672,12 @@ export function registerKnowledge(app, ctx) {
             "connection": "keep-alive",
         });
         reply.raw.write(": agent-run stream\n\n");
+        // ★ 写失败是异步 'error' 事件，无监听即未捕获异常 → 整服务崩（run 反馈流断开不能拖死看板）
+        reply.raw.on("error", () => { /* 单条客户端流故障，交给 close 走 unsub */ });
         let sent = Number(req.headers["last-event-id"] || 0);
         const flush = (type, data, seq) => {
+            if (reply.raw.writableEnded || reply.raw.destroyed) // 已收流后仍可能有事件回补 → 防 write after end
+                return;
             reply.raw.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
         };
         try {

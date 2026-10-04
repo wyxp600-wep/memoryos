@@ -47,7 +47,14 @@ export function findJobByCard(jobs, cardId, { runningOnly = false, runId = "" } 
 export function streamJobSSE(reply, job, { intervalMs = 1500, ping = false, extraFlush } = {}) {
     reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
     let sent = 0;
-    const write = (event, data) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    // ★ 收口后再写会抛 ERR_STREAM_WRITE_AFTER_END，且它是 ServerResponse 的 'error' 事件、
+    //   无人监听 → 整个 dashboard 进程被未捕获异常打死（实测 2026-10-05：一次 CLI run 收口即崩，
+    //   日志 stack 落在 cliexec finish 的 waiters.forEach）。故 write 必须自防护。
+    const write = (event, data) => {
+        if (reply.raw.writableEnded || reply.raw.destroyed)
+            return;
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
     const flush = () => {
         while (sent < job.lines.length)
             write("line", job.lines[sent++]);
@@ -59,16 +66,24 @@ export function streamJobSSE(reply, job, { intervalMs = 1500, ping = false, extr
     };
     const interval = setInterval(() => {
         flush();
-        if (ping)
+        if (ping && !reply.raw.writableEnded && !reply.raw.destroyed)
             reply.raw.write(": ping\n\n");
     }, intervalMs);
     const cleanup = () => {
         clearInterval(interval);
+        // ★ 必须把自己从 waiters 摘掉：cleanup 只 end 了响应，此时 socket 的 'close' 还没来得及触发
+        //   （摘除逻辑在 close 里），finish 随后的 waiters.forEach 会再次 flush → write after end → 崩。
+        job.waiters = (job.waiters ?? []).filter((w) => w !== flush);
         reply.raw.end();
     };
     job.waiters = job.waiters ?? [];
     job.waiters.push(flush);
     reply.raw.on("close", () => {
+        clearInterval(interval);
+        job.waiters = (job.waiters ?? []).filter((w) => w !== flush);
+    });
+    // ★ 客户端半途断开（页面刷新/rd.cancel）产生的写错误降级为安静关闭，绝不冒泡成进程崩溃
+    reply.raw.on("error", () => {
         clearInterval(interval);
         job.waiters = (job.waiters ?? []).filter((w) => w !== flush);
     });

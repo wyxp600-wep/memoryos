@@ -111,6 +111,10 @@ export function registerCliExec(app, ctx) {
     function pushLine(job, stream, text) {
         // 全量原文独立累积（供 HANDOFF 解析与日志落盘，D7）；lines 只服务 SSE、可截断
         job.fullText = (job.fullText ?? "") + text + (text.endsWith("\n") ? "" : "\n");
+        // ★ 智能体真实输出单独累积（sys = 执行器注入的提示词/自述行）：HANDOFF 解析只能看输出，
+        //   否则会命中提示词里的模板本身（见 finish 注释）
+        if (stream !== "sys")
+            job.agentText = (job.agentText ?? "") + text + (text.endsWith("\n") ? "" : "\n");
         for (const line of String(text).split(/\r?\n/)) {
             job.lines.push({ stream, text: line, at: Date.now() });
         }
@@ -235,12 +239,17 @@ export function registerCliExec(app, ctx) {
         clearInterval(job.heartbeat);
         killTree(job);
         const all = job.fullText ?? job.lines.map((l) => l.text).join("\n"); // 全量原文（不受 SSE 缓冲截断影响）
+        // ★ 解析源必须是智能体真实输出（out/err），绝不能是 fullText：执行器注入的提示词本身
+        //   就带着模板 `<<<HANDOFF>>> … <</HANDOFF>>>`，正则首战命中它 → answer 恒为字面量 "…"，
+        //   智能体真正写的交接/结论被整段丢弃（交接卡【结论】永远是空壳，实测 2026-10-05）。
+        const src = (job.agentText ?? "").trim() ? job.agentText : all;
         let answer = "";
-        const m = all.match(/<<<HANDOFF>>>([\s\S]*?)(?:<<\/HANDOFF>>>|$)/);
-        if (m?.[1]?.trim())
-            answer = m[1].trim().slice(0, 2400); // ★ P4 详版交接：上限放宽到 2400
+        const m = src.match(/<<<HANDOFF>>>([\s\S]*?)(?:<<\/HANDOFF>>>|$)/);
+        const cand = m?.[1]?.trim() ?? "";
+        if (cand && cand !== "…")
+            answer = cand.slice(0, 2400); // ★ P4 详版交接：上限放宽到 2400
         else {
-            const tail = all.trim().slice(-1000);
+            const tail = src.trim().slice(-1000);
             answer = tail || detail;
             pushLine(job, "sys", "[执行器] 未按约定输出交接段（<<<HANDOFF>>>），已用输出尾部兜底");
         }
@@ -253,6 +262,10 @@ export function registerCliExec(app, ctx) {
         try {
             ctx.finalizeCardDispatch?.({
                 cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId,
+                // ★ actor 必须等于派发时写进 cards.assignee 的值：finalizeCardDispatch 以
+                //   `assignee===actor || assignee 为空` 决定是否翻状态+三清锁；缺省回退
+                //   "dispatch-agent" 会在 agent 名非缺省时静默跳过收口 → 卡永久 running。
+                actor: job.agent || "dispatch-agent",
                 answer, channel: "cli", durationMs: job.finishedAt - job.startedAt, logFile,
                 detail: `${detail}（CLI 直控 ${job.cmd}）`,
             });
@@ -281,11 +294,12 @@ export function registerCliExec(app, ctx) {
 
 
     /** 派发入口（dispatch-agent 路由到本执行器）：入队并返回 runId */
-    ctx.startCliRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message }) => {
+    ctx.startCliRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message, agent }) => {
         const runId = `cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const job = {
             runId, cardId, agentCardId: agentCardId ?? null, profileId: profile.id, dispatchId: dispatchId ?? null, dispatchKey: dispatchKey ?? null,
             taskId: taskId ?? null, message, profile, status: "queued", lines: [], startedAt: null, finishedAt: null,
+            agent: agent || "dispatch-agent", // ★ 收口比对用：须与卡上 assignee 同源（见 finish 的 actor）
         };
         jobs.set(runId, job);
         if (!queues.has(profile.id))

@@ -101,6 +101,9 @@ export function registerTerm(app, ctx) {
         });
         const send = (event, obj) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`); } catch { /* 已断 */ } };
         const ping = setInterval(() => { try { reply.raw.write(": ping\n\n"); } catch { /* 已断 */ } }, 25000);
+        // ★ 响应写失败是异步 'error' 事件（try/catch 不生效），不监听会未捕获 → 进程崩；只收流不杀子进程
+        reply.raw.on("error", () => clearInterval(ping));
+        reply.raw.on("close", () => clearInterval(ping));
 
         send("start", { runId, argv, cwd, timeoutMs });
         const [exe, ...rest] = argv;

@@ -238,7 +238,7 @@ export function registerCdpExec(app, ctx) {
             killTree(job.pid);
         pushLine(job, "sys", `[驾驶] 收口：${detail}`);
         try {
-            ctx.finalizeCardDispatch?.({ cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId, detail: `${detail}（CDP 驾驶）` });
+            ctx.finalizeCardDispatch?.({ cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId, actor: job.agent || "dispatch-agent", detail: `${detail}（CDP 驾驶）` });
         }
         catch (e) {
             pushLine(job, "sys", `[驾驶] 收口异常：${e instanceof Error ? e.message : e}`);
@@ -250,11 +250,12 @@ export function registerCdpExec(app, ctx) {
     }
 
     /** 派发入口：启动驾驶会话（不排队——每个驾驶会话独占一个 App 实例/端口） */
-    ctx.startCdpRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message }) => {
+    ctx.startCdpRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message, agent }) => {
         const runId = `cdp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const job = {
             runId, cardId, agentCardId: agentCardId ?? null, profileId: profile.id, dispatchId: dispatchId ?? null,
             taskId: taskId ?? null, message, profile, status: "queued", lines: [], frame: null, startedAt: null, finishedAt: null,
+            agent: agent || "dispatch-agent", // ★ 收口比对用：须与卡上 assignee 同源（见 finish 的 actor）
         };
         jobs.set(runId, job);
         // start 是 async：必须接住 rejection（launch_overrides 正则写错等不能崩整个 dashboard）
