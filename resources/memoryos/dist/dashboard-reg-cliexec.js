@@ -12,10 +12,12 @@
  *  - 杀树（D8）：taskkill /T /F 连带子进程；超时自动杀；孤儿预防=detached:false。
  *  - launch_overrides 可整体覆盖 {cmd,args,useStdin,timeoutMinutes}（隔离测试/自定义 CLI）。
  * ═══════════════════════════════════════════════════════════════════════════ */
-import { spawn, execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { renewCardLease } from "./db.js";
+import { killTree as killTreePid, pruneFinishedJobs, safeJson, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
 
 /** 已知 CLI 的启动预设（launch_overrides 可整体覆盖） */
 const CLI_PRESETS = {
@@ -116,12 +118,10 @@ export function registerCliExec(app, ctx) {
         job.pid = job.proc.pid ?? null;
         job.proc.stdin?.on("error", () => { }); // ★ CLI 提前退出时 stdin EPIPE 不能炸 dashboard
         pushLine(job, "sys", `[执行器] ${cmd} ${args.join(" ")} ｜ 工作区 ${cwd} ｜ PID ${job.pid ?? "?"}`);
-        // 心跳：续卡租约 + 工作证租约（防治理回收误杀长任务）
+        // 心跳：续卡租约 + 工作证租约（防治理回收误杀长任务；SQL 单点在 db.js renewCardLease）
         job.heartbeat = setInterval(() => {
             try {
-                db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes') WHERE id=? AND status='running'`).run(job.cardId);
-                if (job.dispatchId)
-                    ctx.touchDispatchLease?.(db, job.dispatchId, 10);
+                renewCardLease(db, job.cardId, job.dispatchId);
             }
             catch { /* 心跳失败不中断执行 */ }
         }, HEARTBEAT_MS);
@@ -156,13 +156,7 @@ export function registerCliExec(app, ctx) {
         if (!job.pid || job.killed)
             return;
         job.killed = true;
-        try {
-            if (process.platform === "win32")
-                execFile("taskkill", ["/PID", String(job.pid), "/T", "/F"], () => { /* 收口以 close 为准 */ });
-            else
-                job.proc?.kill("SIGKILL");
-        }
-        catch { /* 进程可能已退出 */ }
+        killTreePid(job.pid);
     }
 
     function fail(job, why) {
@@ -204,16 +198,8 @@ export function registerCliExec(app, ctx) {
             pushLine(job, "sys", `[执行器] 收口异常：${e instanceof Error ? e.message : e}`);
         }
         job.waiters?.forEach((w) => w());
-        pruneJobs();
+        pruneFinishedJobs(jobs, 20);
         pump(job.profileId);
-    }
-
-    /** 收口后的 job 只留最近 20 条（防常驻内存无界增长）；active/queued 永不清理 */
-    function pruneJobs() {
-        const finished = [...jobs.entries()].filter(([, j]) => j.status === "done" || j.status === "failed");
-        if (finished.length > 20)
-            for (const [id] of finished.slice(0, finished.length - 20))
-                jobs.delete(id);
     }
 
     /** 启动时清理 14 天前的历史日志（防 cli-logs 无界吃磁盘） */
@@ -230,14 +216,6 @@ export function registerCliExec(app, ctx) {
     }
     cleanOldLogs();
 
-    function safeJson(s) {
-        try {
-            return JSON.parse(s ?? "null");
-        }
-        catch {
-            return null;
-        }
-    }
 
     /** 派发入口（dispatch-agent 路由到本执行器）：入队并返回 runId */
     ctx.startCliRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message }) => {
@@ -257,53 +235,20 @@ export function registerCliExec(app, ctx) {
         return { runId, queued: job.status === "queued", queueAhead };
     };
 
-    // 实时执行流（SSE）：先重放缓冲，再持续推送；done/failed 即关闭
+    // 实时执行流（SSE）：先重放缓冲，再持续推送；done/failed 即关闭（骨架在 exec-util 单点）
     app.get("/api/agent-cards/:id/exec/stream", (req, reply) => {
         const cardId = Number(req.params.id);
         const runId = String(req.query.runId ?? "");
-        const job = [...jobs.values()].reverse().find((j) => (j.cardId === cardId || j.agentCardId === cardId) && (!runId || j.runId === runId));
+        const job = findJobByCard(jobs, cardId, { runId });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡没有执行记录" });
-        reply.raw.writeHead(200, {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-        });
-        let sent = 0;
-        const write = (event, data) => {
-            reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-        };
-        const flush = () => {
-            while (sent < job.lines.length) {
-                const l = job.lines[sent++];
-                write("line", { stream: l.stream, text: l.text });
-            }
-            if (job.status !== "running") {
-                write("end", { status: job.status, runId: job.runId });
-                cleanup();
-            }
-        };
-        const interval = setInterval(() => {
-            flush();
-            reply.raw.write(": ping\n\n");
-        }, 1500);
-        const cleanup = () => {
-            clearInterval(interval);
-            reply.raw.end();
-        };
-        job.waiters = job.waiters ?? [];
-        job.waiters.push(flush);
-        reply.raw.on("close", () => {
-            clearInterval(interval);
-            job.waiters = (job.waiters ?? []).filter((w) => w !== flush);
-        });
-        flush();
+        streamJobSSE(reply, job, { intervalMs: 1500, ping: true });
     });
 
     // 手动停止（杀树）
     app.post("/api/agent-cards/:id/exec/stop", async (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = [...jobs.values()].reverse().find((j) => (j.cardId === cardId || j.agentCardId === cardId) && j.status === "running");
+        const job = findJobByCard(jobs, cardId, { runningOnly: true });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡当前没有执行中的任务" });
         pushLine(job, "sys", "[执行器] 用户手动停止");

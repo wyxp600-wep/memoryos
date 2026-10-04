@@ -1976,6 +1976,14 @@ export function touchDispatchLease(db, dispatchId, minutes = 10) {
     return Number(r.changes ?? 0) > 0;
 }
 
+/** ★ 节点画布执行器共用：卡片租约 + 工作证租约一次性续期（原三处拷贝合一，字段口径以 knowledge 版为准）。
+ *  调用方自包 try/catch（打卡失败不中断执行）与 60s 定时器。 */
+export function renewCardLease(db, cardId, dispatchId) {
+    db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cardId);
+    if (dispatchId)
+        touchDispatchLease(db, dispatchId, 10);
+}
+
 /* ── ★ 批次 D1（2026-10-03）：request_id 幂等回执读写 ─────────────────────────
  * 两个函数只做「查 / 落」一件事，判定与返回文案由工具层（server-reg-task.js 单点包裹）负责——
  * 保持 db.js 无业务话术、工具层无 SQL，与既有分工一致。 */

@@ -8,7 +8,7 @@ import { resolveLlm, runAgent, buildSystemPrompt, callLlm } from "./agent-core.j
 import { unprotectSecret } from "./secret-store.js";
 import { createRunRegistry, readArtifact, extractArtifactPath, extractTaskHint, simpleDiff } from "./agent-runs.js";
 import { resolveInside } from "./exec-tools.js";
-import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit, updateMemory, logDaemon, touchDispatchLease } from "./db.js";
+import { listAgentSessions, getAgentSession, saveAgentSession, deleteAgentSession, appendAgentSession, compactAgentSession, allExecAudit, logExecAudit, updateMemory, logDaemon, touchDispatchLease, renewCardLease } from "./db.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -182,9 +182,7 @@ export function registerKnowledge(app, ctx) {
                 return;
             runHeartbeat = setInterval(() => {
                 try {
-                    db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cd.cardId);
-                    if (cd.dispatchId)
-                        touchDispatchLease(db, cd.dispatchId, 10);
+                    renewCardLease(db, cd.cardId, cd.dispatchId);
                 }
                 catch { /* 打卡失败不阻断 run */ }
             }, 60000);

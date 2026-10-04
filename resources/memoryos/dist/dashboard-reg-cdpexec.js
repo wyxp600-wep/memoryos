@@ -11,8 +11,9 @@
  *  - 收口复用 finalizeCardDispatch（结算/翻边/交接卡语义不变）。
  * 依赖：Node ≥22 内置 WebSocket 全局（runtime v24 实测可用），零新依赖。
  * ═══════════════════════════════════════════════════════════════════════════ */
-import { spawn, execFile } from "node:child_process";
-import { touchDispatchLease } from "./db.js";
+import { spawn } from "node:child_process";
+import { renewCardLease } from "./db.js";
+import { killTree, safeJson, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
 
 const HEARTBEAT_MS = 60000;
 const CDP_WAIT_DEFAULT_MS = 30000;
@@ -67,15 +68,6 @@ export function registerCdpExec(app, ctx) {
         });
     }
 
-    function killTree(pid) {
-        try {
-            if (process.platform === "win32")
-                execFile("taskkill", ["/PID", String(pid), "/T", "/F"], () => { });
-            else
-                process.kill(pid, "SIGKILL");
-        }
-        catch { /* 可能已退出 */ }
-    }
 
     /** 注入任务文本：chatSelector 找输入框 → 原生 setter 赋值 → input 事件 → 找发送按钮或回车 */
     const injectScript = (selector, sendSelector, text) => `
@@ -188,12 +180,10 @@ export function registerCdpExec(app, ctx) {
             if (job.status === "driving")
                 finish(job, false, "调试连接断开（应用可能被关闭）");
         });
-        // 心跳 + 会话上限
+        // 心跳 + 会话上限（SQL 单点在 db.js renewCardLease）
         job.heartbeat = setInterval(() => {
             try {
-                db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes') WHERE id=? AND status='running'`).run(job.cardId);
-                if (job.dispatchId)
-                    touchDispatchLease(db, job.dispatchId, 10);
+                renewCardLease(db, job.cardId, job.dispatchId);
             }
             catch { /* 不中断驾驶 */ }
         }, HEARTBEAT_MS);
@@ -256,13 +246,7 @@ export function registerCdpExec(app, ctx) {
         job.waiters?.forEach((w) => w("end"));
         job.waiters = [];
         // 收口后的会话只留最近 10 条（帧 base64 每条可达数百 KB，防常驻内存无界增长）
-        const finishedJobs = [...jobs.entries()].filter(([, j]) => j.status === "done" || j.status === "failed");
-        if (finishedJobs.length > 10)
-            for (const [id] of finishedJobs.slice(0, finishedJobs.length - 10))
-                jobs.delete(id);
-    }
-    function safeJson(s) {
-        try { return JSON.parse(s ?? "null"); } catch { return null; }
+        pruneFinishedJobs(jobs, 10);
     }
 
     /** 派发入口：启动驾驶会话（不排队——每个驾驶会话独占一个 App 实例/端口） */
@@ -281,40 +265,25 @@ export function registerCdpExec(app, ctx) {
     // 直播 SSE：帧 + 行 + 结束
     app.get("/api/agent-cards/:id/live", (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = [...jobs.values()].reverse().find((j) => j.cardId === cardId || j.agentCardId === cardId);
+        const job = findJobByCard(jobs, cardId);
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡没有驾驶会话" });
-        reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-        let sentLines = 0;
-        let lastFrame = null;
-        const write = (event, data) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-        const flush = () => {
-            while (sentLines < job.lines.length)
-                write("line", job.lines[sentLines++]);
-            if (job.frame && job.frame !== lastFrame) {
-                lastFrame = job.frame;
-                write("frame", { frame: job.frame });
-            }
-            if (job.status === "done" || job.status === "failed") {
-                write("end", { status: job.status, runId: job.runId });
-                cleanup();
-            }
-        };
-        const interval = setInterval(flush, 700);
-        const cleanup = () => { clearInterval(interval); reply.raw.end(); };
-        job.waiters = job.waiters ?? [];
-        job.waiters.push(flush);
-        reply.raw.on("close", () => {
-            clearInterval(interval);
-            job.waiters = (job.waiters ?? []).filter((w) => w !== flush);
+        let lastFrame = null; // 帧去重按连接独立
+        streamJobSSE(reply, job, {
+            intervalMs: 700,
+            extraFlush: (write) => {
+                if (job.frame && job.frame !== lastFrame) {
+                    lastFrame = job.frame;
+                    write("frame", { frame: job.frame });
+                }
+            },
         });
-        flush();
     });
 
     // 停止 = 断开驾驶连接并收口（不杀用户的 App）
     app.post("/api/agent-cards/:id/live/stop", async (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = [...jobs.values()].reverse().find((j) => (j.cardId === cardId || j.agentCardId === cardId) && (j.status === "driving" || j.status === "launching"));
+        const job = findJobByCard(jobs, cardId, { runningOnly: true });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡当前没有驾驶会话" });
         finish(job, false, "用户断开驾驶");
