@@ -59,6 +59,18 @@ const CLI_PRESETS = {
         useStdin: false,
         promptAsArg: true,
     },
+    // ★ 2026-10-05 P4 载体点亮：opencode = OpenCode CLI（桌面版自带
+    //   %LOCALAPPDATA%\Programs\@opencodedesktop\resources\opencode-cli.exe，PATH 无裸名）。
+    //   实证（本机 2026-10-05）：`opencode run --auto "<任务>"` 一次性无头 = message 走位置参数（无 stdin 模式）、
+    //   -m 走 provider/model 形式；登录态复用桌面版，本机免 key 直接可跑（e2e 输出 ok exit=0）。
+    //   本机注册档案时 launch_overrides.cmd 指向完整 exe 路径（裸名不在 PATH）。
+    opencode: {
+        cmd: "opencode",
+        args: ["run", "--auto"],
+        useStdin: false,
+        promptAsArg: true,
+        modelArgs: (m) => (m ? ["-m", m] : []),
+    },
 };
 const HEARTBEAT_MS = 60000;
 const DEFAULT_TIMEOUT_MS = 30 * 60000;
@@ -116,10 +128,11 @@ export function registerCliExec(app, ctx) {
         let args = ov?.args ?? (preset ? [...preset.args, ...(preset.modelArgs?.(p.model) ?? [])] : []);
         if (!ov && !preset && p.reasoning)
             args = [...args, "--reasoning", String(p.reasoning)]; // 无预设的自定义 CLI：推理强度按通用flag尽力传
-        // ★ 提示词作位置参数（promptAsArg，如 dsh headless：该 CLI 无 stdin 模式）：
+        // ★ 提示词作位置参数（promptAsArg，如 dsh headless / opencode run：该 CLI 无 stdin 模式）：
         //   任务文本追加为 args 末位单参数。win32 shell:true 路径经 quote() 统一预引号，
-        //   多词任务保持单个参数不被 cmd /s 拆散；launch_overrides.args 存在时以用户参数为准，不追加。
-        if (ov?.args === undefined && (ov?.promptAsArg ?? preset?.promptAsArg ?? false))
+        //   多词任务保持单个参数不被 cmd /s 拆散。显式意图标志（ov 或 preset 声明）即追加，
+        //   与 launch_overrides.args 共存（档案级自定义参数 + 预设 CLI 的位置参数语义）。
+        if (ov?.promptAsArg ?? preset?.promptAsArg ?? false)
             args = [...args, String(job.message ?? "")];
         const cwd = p.workspace || os.homedir();
         job.cwd = cwd;
