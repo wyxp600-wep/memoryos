@@ -3,7 +3,14 @@
  * 能力：channel='cdp' 的智能体卡派发 → 带参拉起桌面智能体（工作区目录 +
  *       --remote-debugging-port 独占端口）→ CDP 连入 renderer：
  *       ① screencast 帧流经 SSE 回填卡片"直播"画面；② 尽力把任务文本注入聊天输入框并
- *       回车（选择器可经 launch_overrides.chatSelector 配置）。
+ *       回车（选择器可经 launch_overrides.chatSelector 配置）；
+ *       ③ launch_overrides.openChat 配置了开面板按键 → 先探到面板没开才按（VS Code
+ *          Ctrl+Alt+I 是 toggle，盲按会把已开的面板关掉）；
+ *       ④ launch_overrides.injectVia:"cdp" → CDP 可信输入（Input.insertText 打字+回车），
+ *          用于没有 textarea 的应用（VS Code 聊天输入是 native-edit-context，DOM 赋值无效）；
+ *       ⑤ launch_overrides.trustWorkspace:true → 自动点"信任文件夹并继续"（改变用户安全
+ *          状态，必须显式 opt-in）；登录类前置（OAuth 引导）不自动化——探测到就降档并给
+ *          明确原因，不假装成功。
  * 纪律（设计报告 §5.3 / D8/D10）：
  *  - CDP 唯一主路径；注入失败不重试不 UIA 死磕，降档为"请手动粘贴任务文本"；
  *  - 结果回收不走界面：App 内智能体经 MemoryOS MCP task_done 回写，或用户手动收口；
@@ -86,6 +93,236 @@ export function registerCdpExec(app, ctx) {
         return { ok: true, how: "模拟回车" };
       })()`;
 
+    /* ── 驾驶注入链（D10：链路有界——最多一次按键 + 一次打字，不重试死磕）────── */
+
+    /** CDP 可信按键（rawKeyDown → char? → keyUp）：合成 DOM 事件骗不过应用快捷键 */
+    async function cdpKey(job, k) {
+        const base = { key: k.key, code: k.code || "", windowsVirtualKeyCode: k.keyCode || 0, nativeVirtualKeyCode: k.keyCode || 0, modifiers: k.modifiers || 0 };
+        await cdpCall(job, "Input.dispatchKeyEvent", { ...base, type: "rawKeyDown" }, 4000);
+        if (k.text)
+            await cdpCall(job, "Input.dispatchKeyEvent", { ...base, type: "char", text: k.text }, 4000);
+        await cdpCall(job, "Input.dispatchKeyEvent", { ...base, type: "keyUp" }, 4000);
+    }
+
+    /** CDP 可信点击（合成 element.click() 不触发应用内手势） */
+    async function cdpClick(job, x, y) {
+        await cdpCall(job, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 }, 4000);
+        await cdpCall(job, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 }, 4000);
+        await cdpCall(job, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 }, 4000);
+    }
+
+    /**
+     * 界面探测：面板是否开 / 输入面文本 / 信任弹窗 / 登录引导 / 焦点是否在输入面。
+     * 选择器可用 launch_overrides.chatContainer / chatText 覆盖（默认 VS Code 聊天面）。
+     */
+    async function probeUi(job, ov) {
+        const expr = `(() => {
+        const cs = ${JSON.stringify(ov?.chatContainer ?? ".chat-input-container")};
+        const ts = ${JSON.stringify(ov?.chatText ?? ".chat-input-container .view-line")};
+        const c = document.querySelector(cs);
+        const txt = Array.from(document.querySelectorAll(ts)).map(e => e.innerText || "").join("\\n");
+        const dlg = Array.from(document.querySelectorAll(".monaco-dialog-box, [role=dialog]"));
+        const trust = dlg.flatMap(d => Array.from(d.querySelectorAll("button, a, [role=button], .monaco-button")))
+          .find(b => /^(信任文件夹并继续|Trust Folder and Continue)\\b/i.test((b.innerText || "").trim()));
+        const signIn = dlg.some(d => /登录以使用|Sign in to use/i.test(d.innerText || ""));
+        const dialog = dlg.length > 0
+          ? (dlg.map(d => (d.innerText || "").replace(/\\n+/g, " | ").slice(0, 80))[0] || "")
+          : "";
+        const r = c ? c.getBoundingClientRect() : null;
+        const ae = document.activeElement;
+        return JSON.stringify({
+          panel: !!c, text: txt.slice(0, 80), dialog,
+          trust: trust ? { x: Math.round(trust.getBoundingClientRect().x + trust.getBoundingClientRect().width / 2),
+                           y: Math.round(trust.getBoundingClientRect().y + trust.getBoundingClientRect().height / 2) } : null,
+          signIn,
+          focused: !!(ae && ae.closest && ae.closest(cs)),
+          box: r && r.width > 0 ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : null
+        });
+      })()`;
+        try {
+            const res = await cdpCall(job, "Runtime.evaluate", { expression: expr, returnByValue: true }, 6000);
+            const v = res?.result?.value;
+            return typeof v === "string" ? JSON.parse(v) : null;
+        }
+        catch {
+            return null;
+        }
+    }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    /** ⑤ 工作区信任弹窗（配置 trustWorkspace:true 才自动点——默认不改用户安全状态） */
+    async function handleTrustDialog(job, ov) {
+        if (!ov?.trustWorkspace)
+            return false;
+        const ui = await probeUi(job, ov);
+        if (!ui?.trust)
+            return false;
+        pushLine(job, "sys", "[驾驶] 检测到工作区信任弹窗，按配置自动信任（launch_overrides.trustWorkspace=true）");
+        await cdpClick(job, ui.trust.x, ui.trust.y);
+        await sleep(1000);
+        return true;
+    }
+
+    /** DOM 注入（原路径，行为不变）：返回 {ok, how|why} */
+    async function domInject(job, ov, text) {
+        try {
+            const res = await cdpCall(job, "Runtime.evaluate", {
+                expression: injectScript(ov?.chatSelector ?? "", ov?.sendSelector ?? "", text),
+                returnByValue: true,
+            }, 8000);
+            const v = res?.result?.value;
+            return v?.ok ? { ok: true, how: v.how } : { ok: false, why: v?.why ?? "未知原因" };
+        }
+        catch (e) {
+            return { ok: false, why: `异常：${e.message}` };
+        }
+    }
+
+    /**
+     * 等应用界面就绪（可选）：launch_overrides.readySelector 命中才开始注入。
+     * 拉起后 CDP 秒连 ≠ 工作台就绪——VS Code 实测连上后 1.25s 按快捷键无反应，
+     * 必须等聊天等贡献加载完（默认等 15s，每 700ms 探一次，有界不算死磕）。
+     */
+    async function waitForReady(job, ov) {
+        const sel = ov?.readySelector;
+        if (!sel)
+            return { ok: true, waited: 0 };
+        const timeoutMs = ov?.readyTimeoutMs ?? 15000;
+        const deadline = Date.now() + timeoutMs;
+        const started = Date.now();
+        while (Date.now() < deadline) {
+            try {
+                const res = await cdpCall(job, "Runtime.evaluate", { expression: `!!document.querySelector(${JSON.stringify(sel)})`, returnByValue: true }, 4000);
+                if (res?.result?.value === true)
+                    return { ok: true, waited: Date.now() - started };
+            }
+            catch { /* 界面还没起来，继续等 */ }
+            await sleep(700);
+        }
+        return { ok: false, waited: Date.now() - started };
+    }
+
+    /**
+     * CDP 打字注入（injectVia:"cdp"）：
+     *  就绪等待 → 有界状态机（信任弹窗→点击 / 登录引导→降档 / 面板没开→按 openChat，最多按 openChat.attempts 次）
+     *  → 定焦点 → 清空 → Input.insertText → 落字校验 →（send!==false）回车。
+     * 每步失败立即降档返回原因，不循环重试（D10）。
+     */
+    async function cdpTypeInject(job, ov, text) {
+        const head = text.trim().replace(/\s+/g, "").slice(0, 6);
+        // ① 等界面就绪（没配 readySelector 就直接开始）
+        const ready = await waitForReady(job, ov);
+        if (!ready.ok)
+            return { ok: false, why: `应用界面未就绪（等 ${Math.round(ready.waited / 1000)}s 未见 readySelector ${ov.readySelector}）` };
+        if (ready.waited > 1000)
+            pushLine(job, "sys", `[驾驶] 界面就绪（等待 ${Math.round(ready.waited / 1000)}s）`);
+        // ② 有界状态机：处理弹窗与面板开关（最多 6 步，按键最多 attempts 次）
+        const maxPress = ov?.openChat ? (ov.openChat.attempts ?? 2) : 0;
+        let pressed = 0;
+        let escPressed = 0;
+        let ui = null;
+        for (let step = 0; step < 10; step++) {
+            ui = await probeUi(job, ov);
+            if (!ui)
+                return { ok: false, why: "界面探测失败（CDP 未返回值）" };
+            if (ui.trust && ov?.trustWorkspace) {
+                pushLine(job, "sys", "[驾驶] 检测到工作区信任弹窗，按配置自动点击（launch_overrides.trustWorkspace=true）");
+                await cdpClick(job, ui.trust.x, ui.trust.y);
+                await sleep(1000);
+                continue;
+            }
+            if (ui.signIn)
+                return { ok: false, why: "应用要求先登录（登录引导对话框挡住输入）——请在窗口里完成一次性登录后重新派发" };
+            // 未知模态（Git 仓库确认、更新提示等）→ Esc 关掉再探（有界 2 次；信任/登录对话框在此分支之前已分流）
+            if (ui.dialog && escPressed < 2) {
+                escPressed++;
+                pushLine(job, "sys", `[驾驶] 界面有对话框挡路，按 Esc 关闭（第 ${escPressed}/2 次）：${String(ui.dialog).slice(0, 60)}`);
+                await cdpKey(job, { key: "Escape", code: "Escape", keyCode: 27 });
+                await sleep(600);
+                continue;
+            }
+            if (ui.panel)
+                break;
+            if (ov?.openChat && pressed < maxPress) {
+                pressed++;
+                pushLine(job, "sys", `[驾驶] 会话面板未开，按 openChat（第 ${pressed}/${maxPress} 次）`);
+                await cdpKey(job, ov.openChat);
+                await sleep(ov.openChat.waitMs ?? 1200);
+                continue;
+            }
+            break; // 面板没开、也没有可按的了
+        }
+        if (!ui?.panel) {
+            const dialogHint = ui?.dialog ? `；有对话框未能关闭：${String(ui.dialog).slice(0, 60)}` : "";
+            return { ok: false, why: `未找到会话输入面（选择器 ${ov?.chatContainer ?? ".chat-input-container"}${ov?.openChat ? `，openChat 已按 ${pressed} 次仍未出现` : "，且未配置 openChat"}${dialogHint}）` };
+        }
+        if (ui.signIn)
+            return { ok: false, why: "应用要求先登录（登录引导对话框挡住输入）——请完成登录后重新派发" };
+        // ② 定焦点：点输入面中心；模态遮挡时点不进去 → 降档
+        if (!ui.focused) {
+            if (!ui.box)
+                return { ok: false, why: "会话输入面不可见（宽高为 0）" };
+            await cdpClick(job, ui.box.x, ui.box.y);
+            await sleep(400);
+            ui = await probeUi(job, ov);
+        }
+        if (!ui?.focused)
+            return { ok: false, why: "输入面无法获得焦点（可能有模态对话框遮挡）" };
+        // ③ 清空 → 打字 → 落字校验（不清空会把旧文本拼在前面）
+        await cdpKey(job, { key: "A", code: "KeyA", keyCode: 65, modifiers: 2 });
+        await sleep(150);
+        await cdpKey(job, { key: "Backspace", code: "Backspace", keyCode: 8 });
+        await sleep(150);
+        await cdpCall(job, "Input.insertText", { text }, 8000);
+        await sleep(500);
+        ui = await probeUi(job, ov);
+        const seen = String(ui?.text ?? "").replace(/\s+/g, "");
+        if (!head || !seen.includes(head))
+            return { ok: false, why: `打字未落入输入面（探到 ${JSON.stringify(String(ui?.text ?? "").slice(0, 30))}）` };
+        // ④ 回车发送（send:false 可关）
+        if (ov?.send === false)
+            return { ok: true, how: "CDP 打字（未发送）" };
+        await cdpKey(job, { key: "Enter", code: "Enter", keyCode: 13 });
+        // ★ 发送后才弹的登录引导（VS Code 在 submit 时触发）：实测比回车慢 >700ms，
+        //   所以有界轮询 3×900ms 抓它——文本进去了但 AI 不会应答，必须按失败如实报
+        ui = null;
+        for (let i = 0; i < 3; i++) {
+            await sleep(900);
+            ui = await probeUi(job, ov);
+            if (ui?.signIn)
+                return { ok: false, why: "文本已提交，但应用要求先登录（Copilot 登录引导在回车后弹出）——AI 不会应答，请完成一次性登录后重新派发" };
+        }
+        const left = String(ui?.text ?? "").replace(/\s+/g, "");
+        return { ok: true, how: left ? `CDP 打字+回车（输入面仍残留 ${left.length} 字，可能未发出）` : "CDP 打字+回车（输入面已清空=已提交）" };
+    }
+
+    /** 注入主链：信任弹窗 → dom 路径（原行为）或 cdp 打字路径 → 成败都给明确原因 */
+    async function driveInject(job, ov) {
+        const text = job.message.slice(0, 4000);
+        await handleTrustDialog(job, ov);
+        if (ov?.injectVia === "cdp") {
+            const r = await cdpTypeInject(job, ov, text);
+            pushLine(job, "sys", r.ok
+                ? `[驾驶] 任务文本已注入（${r.how}）`
+                : `[驾驶] 注入失败：${r.why}——已降档，请手动粘贴任务文本（D10）`);
+            return;
+        }
+        // DOM 路径：先注入；失败且配置了 openChat → 探到面板没开就按一下 → 再注入一次
+        let r = await domInject(job, ov, text);
+        if (!r.ok && ov?.openChat) {
+            const ui = await probeUi(job, ov);
+            if (!ui?.panel) {
+                await cdpKey(job, ov.openChat);
+                await sleep(ov.openChat.waitMs ?? 1200);
+                r = await domInject(job, ov, text);
+            }
+        }
+        pushLine(job, "sys", r.ok
+            ? `[驾驶] 任务文本已注入（${r.how}）——若未发出请手动补发`
+            : `[驾驶] 注入失败：${r.why}——已降档，请手动粘贴任务文本（D10）`);
+    }
+
     async function start(job) {
         job.status = "launching";
         const p = job.profile;
@@ -149,18 +386,9 @@ export function registerCdpExec(app, ctx) {
             cdpSend(job, "Page.enable", {});
             cdpSend(job, "Runtime.enable", {});
             cdpSend(job, "Page.startScreencast", { format: "jpeg", quality: 45, maxWidth: 1280, maxHeight: 800, everyNthFrame: 2 });
-            // 尽力注入任务文本（失败降档不重试，D10）
+            // 尽力注入任务文本（链路有界：信任弹窗 → dom/CDP 打字 → 降档，不重试死磕 D10）
             try {
-                const res = await cdpCall(job, "Runtime.evaluate", {
-                    expression: injectScript(ov?.chatSelector ?? "", ov?.sendSelector ?? "", job.message.slice(0, 4000)),
-                    returnByValue: true,
-                }, 8000);
-                const v = res?.result?.value;
-                if (v?.ok)
-                    pushLine(job, "sys", `[驾驶] 任务文本已注入（${v.how}）——若未发出请手动补发`);
-                else {
-                    pushLine(job, "sys", `[驾驶] 注入失败：${v?.why ?? "未知原因"}——已降档，请手动粘贴任务文本（D10）`);
-                }
+                await driveInject(job, ov);
             }
             catch (e) {
                 pushLine(job, "sys", `[驾驶] 注入异常：${e.message}——已降档，请手动粘贴任务文本`);
