@@ -188,7 +188,7 @@ export function registerCliExec(app, ctx) {
             fs.writeFileSync(logFile, all, "utf8");
             pushLine(job, "sys", `[执行器] 全量日志：${logFile}`);
         }
-        catch { /* 日志落盘失败不影响收口 */ }
+        catch (e) { console.error("[cliexec] 全量日志落盘失败（不影响收口）", e); }
         try {
             ctx.finalizeCardDispatch?.({
                 cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId,
@@ -214,7 +214,7 @@ export function registerCliExec(app, ctx) {
                     fs.rmSync(fp, { force: true });
             }
         }
-        catch { /* 清理失败不影响启动 */ }
+        catch (e) { console.error("[cliexec] 历史日志清理失败（不影响启动）", e); }
     }
     cleanOldLogs();
 

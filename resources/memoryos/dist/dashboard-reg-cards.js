@@ -254,7 +254,7 @@ export function registerCards(app, ctx) {
                 db.prepare(`UPDATE card_edges SET status=? WHERE dispatch_id=? AND kind='dispatch' AND status='active'`)
                     .run(info.ok ? "completed" : "cancelled", info.dispatchId);
             }
-            catch { /* 边表缺失时不得反噬收口 */ }
+            catch (e) { console.error("[cards] 派发边随工作证翻状态失败（容忍：边表异常不反噬收口）", e); }
         }
         else {
             // ★ 卡级派发（无关联任务记忆 → 无工作证）：按源卡翻边，防边永远停在 active
@@ -262,14 +262,14 @@ export function registerCards(app, ctx) {
                 db.prepare(`UPDATE card_edges SET status=? WHERE source_id=? AND kind='dispatch' AND status='active'`)
                     .run(info.ok ? "completed" : "cancelled", cardId);
             }
-            catch { /* 同上 */ }
+            catch (e) { console.error("[cards] 卡级派发边翻状态失败（容忍：不反噬收口）", e); }
         }
         // ★ P4 交接文档卡：仅成功收口生成（失败不产交接噪音，防 board 无界膨胀；失败教训在 run 日志与任务记忆）。
         //   内容优先级：任务记忆「→ 结论(AGENT)：」段 > run 最终回复 > 收口 detail；
         //   消费规则：下游注入取 dispatch generation 最新的那张（D9）。
-        try {
-            if (!info.ok)
-                throw 0; // 纯控制流：跳过失败收口的交接生成（catch 为空、不影响收口本身）
+        if (info.ok) {
+            try {
+            //   失败收口不产交接（设计选择：防看板被失败任务淹没；失败教训在 run 日志与任务记忆）
             const memRow = (c.ref_kind === "memory" && c.ref_id
                 ? db.prepare(`SELECT id, content FROM memories WHERE id=?`).get(c.ref_id)
                 : undefined) ??
@@ -302,8 +302,9 @@ export function registerCards(app, ctx) {
                     .run(cardId, Number(hIns.lastInsertRowid));
                 writeCardEvent(Number(hIns.lastInsertRowid), info.actor || "dispatch-agent", "create", null, "done", `交接文档生成（run ${info.runId ?? "无"}）`);
             }
+            }
+            catch (e) { console.error("[cards] 交接文档生成失败（容忍：不反噬收口）", e); }
         }
-        catch { /* 交接生成失败不得反噬收口 */ }
         return { ok: true, statusChanged, settled };
     }
     ctx.finalizeCardDispatch = finalizeCardDispatch;
@@ -775,7 +776,8 @@ export function registerCards(app, ctx) {
         }
         catch (e) {
             try { txRollback(); }
-            catch { /* 无事务可回滚 */ }
+            catch (e2) { console.error("[cards] 派发事务回滚异常（卡片可能滞留 running，需调度器/人工核对）", e2); }
+            console.error(`[cards] #${id} 派发事务失败（409 回显调用方）`, e);
             return reply.code(409).send({ ok: false, error: String(e instanceof Error ? e.message : e) });
         }
         syncCardToTask(id, { assignee: agent }); // 头回写 running + assignee（与 /claim 同口径）
@@ -828,6 +830,7 @@ export function registerCards(app, ctx) {
         }
         catch (e) {
             // 起 run 失败 → 回滚认领 + 释放工作证（不留半开状态，卡片回到可派发）
+            console.error(`[cards] #${id} 起 run 失败（认领将回滚至 ready）`, e);
             txBegin();
             try {
                 db.prepare(`UPDATE cards SET status='ready', assignee=NULL, claim_lock=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running' AND claim_lock=?`).run(id, lock);
@@ -838,7 +841,10 @@ export function registerCards(app, ctx) {
                 writeCardEvent(id, agent, "dispatch_failed", "running", "ready", String(e instanceof Error ? e.message : e).slice(0, 160));
                 txCommit();
             }
-            catch { try { txRollback(); } catch { /* noop */ } }
+            catch (e2) {
+                try { txRollback(); }
+                catch (e3) { console.error("[cards] 起 run 失败的回滚自身异常（半开状态风险：卡片可能滞留 running，需人工/调度器核对）", e3); }
+            }
             syncCardToTask(id, { assignee: "" }); // 头随卡回到 ready 并清 assignee
             return reply.code(503).send({ ok: false, error: `起 run 失败（认领已回滚）：${e instanceof Error ? e.message : e}` });
         }
@@ -1825,7 +1831,8 @@ export function registerCards(app, ctx) {
         }
         catch (e) {
             try { txRollback(); }
-            catch { /* 无事务可回滚 */ }
+            catch (e2) { console.error("[cards] agent-profiles 建档案回滚异常", e2); }
+            console.error("[cards] agent-profiles 建档案失败（已回滚，不留孤儿）", e);
             return reply.code(500).send({ ok: false, error: String(e instanceof Error ? e.message : e) });
         }
         return { ok: true, profile_id: profileId, card_id: cardId };
@@ -1900,7 +1907,9 @@ export function registerCards(app, ctx) {
             const ins = db.prepare(`INSERT INTO card_edges(source_id,target_id,kind,status) VALUES (?,?,'inject','active')`).run(sourceId, targetId);
             return { ok: true, id: Number(ins.lastInsertRowid) };
         }
-        catch {
+        catch (e) {
+            // 唯一索引冲突=重复连线（预期 409）；其他异常也如实落日志，避免误报成「重复连线」掩盖真错误
+            console.error("[cards] card-edges 建注入边失败（常见为重复连线）", e);
             return reply.code(409).send({ ok: false, error: "该交接文档已注入此任务（重复连线）" });
         }
     });

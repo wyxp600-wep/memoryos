@@ -305,28 +305,43 @@ export function registerPlans(app, ctx) {
         return { total: rows.length, rows };
     });
     // —— 工具连接：扫描本机已装 AI Agent（真实探测）+ 合并"最近连接心跳"（server 被拉起时 MEMORY_AGENT 留痕，可精确到谁真连过）——
+    // ★ 2026-10-05：scanAgents() 基于 spawnSync 探测（最坏 ~90s 事件循环阻塞，交接文档坑8 明令「新代码不要裸调」），
+    //   此处加 60s TTL 缓存（与 cards 域 scanKeysSafe 同口径）；心跳 SQL 保持每调重算（轻量）。
+    //   custom 登记/注销成功后清缓存戳 → 新条目不等 TTL 窗口即现身（防「登记了但 60s 内选不到」）。
+    let scanCache = { at: 0, value: null };
+    const SCAN_TTL_MS = 60_000;
     app.get("/api/scan-agents", async () => {
-        const scan = scanAgents();
-        // 最近连接心跳：近 10 分钟内 op=connect 的 memoryos server 实例，按 payload.agent 归类
-        const beats = db.prepare(`SELECT id, payload, operator FROM memory_events WHERE op='connect' AND created_at >= datetime('now','-10 minutes') ORDER BY id DESC`).all();
-        const beatAgents = {};
-        for (const b of beats) {
-            try {
-                const p = JSON.parse(b.payload ?? "{}");
-                const a = p.agent || b.operator.replace(/^agent:/, "");
-                if (a && a !== "unknown" && !beatAgents[a])
-                    beatAgents[a] = b.id; // 只记每人最近一次
+        try {
+            const now = Date.now();
+            if (!scanCache.value || now - scanCache.at >= SCAN_TTL_MS)
+                scanCache = { at: now, value: scanAgents() };
+            const scan = scanCache.value;
+            // 最近连接心跳：近 10 分钟内 op=connect 的 memoryos server 实例，按 payload.agent 归类
+            const beats = db.prepare(`SELECT id, payload, operator FROM memory_events WHERE op='connect' AND created_at >= datetime('now','-10 minutes') ORDER BY id DESC`).all();
+            const beatAgents = {};
+            for (const b of beats) {
+                try {
+                    const p = JSON.parse(b.payload ?? "{}");
+                    const a = p.agent || b.operator.replace(/^agent:/, "");
+                    if (a && a !== "unknown" && !beatAgents[a])
+                        beatAgents[a] = b.id; // 只记每人最近一次
+                }
+                catch { /* ignore */ }
             }
-            catch { /* ignore */ }
+            const agents = scan.agents.map((a) => ({
+                ...a,
+                // 探测 true → 已连接；探测 false 但有心跳 → 已连接（最近连接）；否则未连接
+                connected: a.connected || !!beatAgents[a.id],
+                heartbeat: beatAgents[a.id] ? true : false,
+            }));
+            const connected = agents.filter((a) => a.connected).length;
+            return { agents, total: agents.length, connected };
         }
-        const agents = scan.agents.map((a) => ({
-            ...a,
-            // 探测 true → 已连接；探测 false 但有心跳 → 已连接（最近连接）；否则未连接
-            connected: a.connected || !!beatAgents[a.id],
-            heartbeat: beatAgents[a.id] ? true : false,
-        }));
-        const connected = agents.filter((a) => a.connected).length;
-        return { agents, total: agents.length, connected };
+        catch (e) {
+            // 异常不 500：返回空清单降级（前端 agentScanCache 语义=「取数失败保留旧清单」，形状变化可被识别）
+            console.error("[scan-agents] 扫描/心跳异常，降级返回空清单", e);
+            return { ok: false, agents: [], total: 0, connected: 0, error: String(e?.message ?? e) };
+        }
     });
     /* ★ 批次⑦B（2026-09-23）：手动登记清单外的新智能体（扫描兜底）。
      * 落盘 %APPDATA%\MemoryOS\agents.custom.json，每次 /api/scan-agents 合并；
@@ -344,9 +359,10 @@ export function registerPlans(app, ctx) {
         try {
             const list = loadCustomAgents();
             if (list.some((x) => x.name === entry.name))
-                return reply.code(409).send({ ok: false, error: `「${entry.name}」已登记过` });
+                return reply.code(409).send({ ok: false, error: `「${name}」已登记过` });
             list.push(entry);
             saveCustomAgents(list);
+            scanCache = { at: 0, value: null }; // 登记成功清缓存戳：下次 /api/scan-agents 立即并入新条目（不等 TTL 窗口）
             return { ok: true, entry, total: list.length };
         }
         catch (e) {
@@ -363,6 +379,7 @@ export function registerPlans(app, ctx) {
             if (next.length === list.length)
                 return reply.code(404).send({ ok: false, error: `未登记「${name}」` });
             saveCustomAgents(next);
+            scanCache = { at: 0, value: null }; // 注销同样清缓存戳（防已删条目残留在 60s 窗口内）
             return { ok: true, remaining: next.length };
         }
         catch (e) {

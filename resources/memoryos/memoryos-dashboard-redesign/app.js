@@ -1210,10 +1210,20 @@
   function askForm(opts) {
     return new Promise((resolve) => {
       const old = $('.ask-form-modal'); if (old) old.remove();
-      const fieldsHtml = (opts.fields || []).map((f) => `
-        <label style="display:block;font-size:12px;color:var(--text-muted);margin:10px 0 4px">${esc(f.label)}${f.required ? ' *' : ''}</label>
+      const fieldsHtml = (opts.fields || []).map((f) => {
+        if (f.type === 'select') {
+          const optsHtml = ((f.options || []).map(o => {
+            const val = String(o.value ?? o ?? '');
+            const sel = val === String(f.value ?? '') ? ' selected' : '';
+            return `<option value="${esc(val)}"${sel}>${esc(String(o.label ?? o))}</option>`;
+          }).join('') || '<option value="">（无选项）</option>');
+          return `<label style="display:block;font-size:12px;color:var(--text-muted);margin:10px 0 4px">${esc(f.label)}${f.required ? ' *' : ''}</label>
+          <select data-k="${esc(f.key)}" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none">${optsHtml}</select>`;
+        }
+        return `<label style="display:block;font-size:12px;color:var(--text-muted);margin:10px 0 4px">${esc(f.label)}${f.required ? ' *' : ''}</label>
         <input data-k="${esc(f.key)}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || '')}"
-          style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none">`).join('');
+          style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none">`;
+      }).join('');
       const wrap = document.createElement('div');
       wrap.className = 'ask-form-modal cockpit-modal';
       wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
@@ -1235,7 +1245,7 @@
       const submit = () => {
         const vals = {}; let firstBad = null;
         for (const f of (opts.fields || [])) {
-          const el = wrap.querySelector(`input[data-k="${f.key}"]`);
+          const el = wrap.querySelector(`[data-k="${f.key}"]`);
           const v = (el && el.value || '').trim();
           if (f.required && !v) { firstBad = firstBad || el; continue; }
           vals[f.key] = v;
@@ -1252,7 +1262,7 @@
       wrap.querySelector('[data-x]').onclick = () => finish(null);
       wrap.querySelector('[data-cancel]').onclick = () => finish(null);
       wrap.querySelector('[data-ok]').onclick = submit;
-      const first = wrap.querySelector('input[data-k]'); if (first) first.focus();
+      const first = wrap.querySelector('[data-k]'); if (first) first.focus();
     });
   }
   // 图表自适应：统一 resize 所有已初始化的 ECharts 实例
@@ -2774,6 +2784,7 @@
       // ★ 2026-09-13：旧任务视图（七态 #tasksBoard）仍隐藏 —— 与卡片看板重复展示，不属本次范围
       if (tabLegacy) tabLegacy.style.display = 'none';
       if (ccb) ccb.onclick = createCard;
+      initCreateCardPanel(); // 画布左上角「＋」悬浮入口（点选建卡；随受限模式显隐）
       if (dpb) dpb.onclick = runDispatch;
       if (ilb) ilb.onclick = importLegacy;
       showTaskView('map'); // ★ 2026-09-13：任务地图为默认模块入口
@@ -4988,6 +4999,8 @@
     }
     drawTaskMap();
     if (opts.fit || !_taskMapState.hasView) requestAnimationFrame(fitTaskMap);
+    // 智能体清单惰性重试：仅当清单为空且距上次尝试 >30s（防高频打 scan 端点；非空后不再重拉）
+    if (!_agentScan.list.length && Date.now() - _agentScan.ts > 30000) loadAgentScan(true);
   }
 
   // ★ 2026-09-14：自动关联开关按钮态（开=高亮 btn-primary，关=btn-ghost）
@@ -5738,15 +5751,260 @@
     };
   }
 
+  /* ===== 卡片类型 / 智能体清单 / 智能体卡向导（2026-10-05 并入批：节点画布能力并入任务地图）===== */
+  // 卡片类型注册表缓存（失败按内置四种兜底，与节点画布同口径，防「无类型可选」空转）
+  const CARD_TYPES_BUILTIN = [
+    { type_key: 'task', label: '任务', builtin: 1, can_dispatch_out: 1, can_dispatch_in: 0, can_inject_out: 0, can_inject_in: 1 },
+    { type_key: 'agent', label: '智能体', builtin: 1, can_dispatch_out: 0, can_dispatch_in: 1, can_inject_out: 0, can_inject_in: 0 },
+    { type_key: 'handoff', label: '交接文档', builtin: 1, can_dispatch_out: 0, can_dispatch_in: 0, can_inject_out: 1, can_inject_in: 0 },
+    { type_key: 'doc', label: '文档', builtin: 1, can_dispatch_out: 0, can_dispatch_in: 0, can_inject_out: 0, can_inject_in: 0 },
+  ];
+  let _cardTypes = { list: [], ts: 0 };
+  async function loadCardTypes() {
+    try {
+      const r = await fetch('/api/card-types').then(x => x.json());
+      if (Array.isArray(r?.types) && r.types.length) _cardTypes.list = r.types;
+      _cardTypes.ts = Date.now();
+    } catch (e) { console.warn('[任务地图] 卡片类型拉取失败，按内置四种兜底', e); }
+    if (!_cardTypes.list.length) _cardTypes.list = CARD_TYPES_BUILTIN;
+    return _cardTypes.list;
+  }
+
+  // 智能体清单缓存（根因修复语义 2026-10-05：旧实现一次性取数、失败静默归零且无重试 → 下拉永久空。
+  // 现：取数失败/异常体保留旧清单不归零；向导打开时若空先重拉；轮询仅空清单且 >30s 才惰性重试（scan 端点带 spawnSync 探测，勿高频打）。
+  let _agentScan = { list: [], ts: 0 };
+  async function loadAgentScan(force = false) {
+    if (_agentScan.list.length && !force) return _agentScan.list;
+    try {
+      const r = await fetch('/api/scan-agents').then(x => x.json());
+      const arr = Array.isArray(r?.agents) ? r.agents : (Array.isArray(r?.rows) ? r.rows : null);
+      if (arr) { _agentScan.list = arr; _agentScan.ts = Date.now(); }
+      else console.warn('[任务地图] scan-agents 取数失败（错误体），保留旧智能体清单', r?.error || '');
+    } catch (e) { console.warn('[任务地图] scan-agents 拉取失败，保留旧智能体清单（不中断向导）', e); }
+    return _agentScan.list;
+  }
+
+  // 当前任务地图视口中心 → 世界坐标（新建卡/智能体卡的初始位置，走 meta.map_pos.c 桶持久化）
+  function taskMapViewCenter() {
+    const canvas = $('#taskMapCanvas');
+    if (!canvas) return { x: 0, y: 0 };
+    const r = canvas.getBoundingClientRect();
+    const st = _taskMapState;
+    const s = st.scale || 1;
+    return { x: Math.round((r.width / 2 - st.x) / s), y: Math.round((r.height / 2 - st.y) / s) };
+  }
+
+  /** 智能体卡配置向导（create=POST /api/agent-profiles 事务建档案+投影卡；edit=GET 现值→预填→PUT 整对象保存。
+   *  A 类坑（探针/读码实证）：PUT 的 launch_overrides 是整对象替换——高级栏留空时不传该字段（端点保留旧值），
+   *  填了才传解析后的对象，防「半更新把 exe/args 清掉」。409（该卡有进行中派发）透出提示。 */
+  async function openAgentWizard({ mode = 'create', profileId = null, presetTitle = '', pos = null } = {}) {
+    await loadAgentScan(_agentScan.list.length === 0);
+    let p0 = null;
+    if (mode === 'edit') {
+      const r = await fetch('/api/agent-profiles').then(x => x.json()).catch(() => null);
+      p0 = (r?.profiles || []).find(x => Number(x.id) === Number(profileId)) || null;
+      if (!p0) { toast('未取到智能体档案（可能已随卡片删除）'); return false; }
+    }
+    const lo0 = p0?.launch_overrides ? (typeof p0.launch_overrides === 'string' ? p0.launch_overrides : JSON.stringify(p0.launch_overrides, null, 1)) : '';
+    const agentOpts = _agentScan.list.map(a => ({ value: String(a.id ?? ''), label: `${a.name ?? a.id ?? ''}${a.connected ? '' : ' · 未连接'}` }));
+    if (!_agentScan.list.length) agentOpts.push({ value: '', label: '（未扫描到，可留空建「无载体」卡，卡上会标 ⚠️）' });
+    const inStyle = 'width:100%;box-sizing:border-box;padding:7px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none';
+
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'ask-form-modal cockpit-modal';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
+      ov.innerHTML = `
+      <div style="max-width:470px;width:94%;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:14px;padding:18px 20px;box-shadow:0 18px 60px rgba(0,0,0,.3);max-height:88vh;overflow:auto">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${mode === 'edit' ? `编辑智能体配置（档案 #${esc(String(profileId))}）` : '新建智能体卡'}</span>
+          <button data-x style="margin-left:auto;background:none;border:none;font-size:16px;color:var(--text-muted);cursor:pointer">✕</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">智能体卡 = 一个可配置的执行者。选「智能体 + 执行通道」，之后把任务 ⚡ 派给它，系统按通道自动执行。</div>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">卡片名称 *</label>
+        <input data-k="name" style="${inStyle}" value="${esc(presetTitle || p0?.name || '智能体卡')}">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">智能体（本机已装）</label>
+        <select data-k="agent_key" style="${inStyle}">${agentOpts.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">执行通道</label>
+        <select data-k="channel" style="${inStyle}">
+          <option value="queue">队列 · 智能体自己领单（保底，永远可用）</option>
+          <option value="cli">直控 · 终端拉起并直播日志（需该智能体已登录/配好密钥）</option>
+          <option value="cdp">驾驶 · 拉起桌面软件并直播画面（Chromium 系应用）</option>
+        </select>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">工作区（留空 = 用户主目录）</label>
+        <input data-k="workspace" style="${inStyle}" placeholder="例：D:\\项目\\某目录" value="${esc(p0?.workspace || '')}">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">模型（留空 = 智能体默认）</label>
+        <input data-k="model" style="${inStyle}" value="${esc(p0?.model || '')}">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">推理强度（留空 = 默认）</label>
+        <input data-k="reasoning" style="${inStyle}" placeholder="例：standard / high" value="${esc(p0?.reasoning || '')}">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">上下文 token（留空 = 默认）</label>
+        <input data-k="context_tokens" style="${inStyle}" value="${esc(String(p0?.context_tokens ?? ''))}">
+        <details style="margin-top:8px"><summary style="font-size:12px;color:var(--text-muted);cursor:pointer">高级：启动参数 / 聊天框选择器（JSON，可不填）</summary>
+          <textarea data-k="launch_overrides" rows="4" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 10px;font:11px/1.5 Consolas,monospace;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none;resize:vertical" placeholder='CLI 直控：{"cmd":"codex","args":["exec","-"]} · CDP 驾驶：{"exe":"C:\\...\\Trae CN.exe","chatSelector":"...","sendSelector":"..."}'></textarea>
+        </details>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">高级栏留空 = 保存时不动已有配置（PUT 整替换语义，防误清空）。直控/驾驶通道需登录态/选择器配好，未配会如实显示「未连通」；拿不准就选「队列」。</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
+          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">保存</button>
+        </div>
+      </div>`;
+      const ta = ov.querySelector('[data-k="launch_overrides"]'); if (ta) ta.value = lo0;
+      const q = k => ov.querySelector(`[data-k="${k}"]`);
+      let done = false;
+      const close = (val) => { if (done) return; done = true; ov.remove(); resolve(val); };
+      const submit = async () => {
+        const loRaw = q('launch_overrides').value.trim();
+        let lo = null;
+        if (loRaw) {
+          try { lo = JSON.parse(loRaw); }
+          catch { toast('高级配置需为合法 JSON（看格式示例）'); return; }
+        }
+        const body = {
+          name: q('name').value.trim() || '智能体卡',
+          agent_key: q('agent_key').value || null,
+          channel: q('channel').value,
+          workspace: q('workspace').value.trim() || null,
+          model: q('model').value.trim() || null,
+          reasoning: q('reasoning').value.trim() || null,
+        };
+        const ct = Number(q('context_tokens').value);
+        if (ct > 0) body.context_tokens = ct;
+        if (mode === 'create') {
+          if (lo) body.launch_overrides = lo;
+          if (pos) body.meta = { map_pos: { x: pos.x, y: pos.y } };
+          const r = await fetch('/api/agent-profiles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { toast(`智能体卡创建失败：${j.error || r.status}`); return; }
+          toast(`已创建智能体卡 #${j.card_id}（档案 #${j.profile_id}）`);
+          close(true); refreshCurrentTaskView(); return;
+        }
+        // edit：PUT 整对象；launch_overrides 仅当高级栏填了才传（否则端点保留旧值）
+        const put = { ...body, concurrency: Number(p0?.concurrency) > 0 ? Number(p0.concurrency) : 1 };
+        if (lo) put.launch_overrides = lo;
+        const r = await fetch(`/api/agent-profiles/${profileId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(put) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { toast(`配置保存失败：${j.error || r.status}`); return; }
+        toast('智能体配置已保存');
+        close(true); refreshCurrentTaskView();
+      };
+      ov.querySelector('[data-x]').onclick = () => close(false);
+      ov.querySelector('[data-cancel]').onclick = () => close(false);
+      ov.querySelector('[data-ok]').onclick = submit;
+      ov.addEventListener('click', e => { if (e.target === ov) close(false); });
+      document.addEventListener('keydown', function onKey(e) {
+        if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(false); }
+      });
+      q('name').focus();
+    });
+  }
+
+  /** 新建自定义卡片类型（POST /api/card-types；保留字/内置/aux 前缀由端点 400 拦截，错误透出） */
+  function newTypeDialog() {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'ask-form-modal cockpit-modal';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
+      const inStyle = 'width:100%;box-sizing:border-box;padding:7px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none';
+      ov.innerHTML = `
+      <div style="max-width:420px;width:92%;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:14px;padding:18px 20px;box-shadow:0 18px 60px rgba(0,0,0,.3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">新建自定义卡片类型</span>
+          <button data-x style="margin-left:auto;background:none;border:none;font-size:16px;color:var(--text-muted);cursor:pointer">✕</button>
+        </div>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">显示名 *</label>
+        <input data-k="label" style="${inStyle}" placeholder="例：里程碑">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">标识（小写字母开头，2-32 位字母/数字/下划线）*</label>
+        <input data-k="type_key" style="${inStyle}" placeholder="例：milestone">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">颜色（可选）</label>
+        <input data-k="color" style="${inStyle}" placeholder="例：#8f7a3d（可空）">
+        <div style="font-size:12px;color:var(--text-muted);margin:8px 0 4px">连线能力档位（不勾 = 纯文档节点，不参与任何连线）</div>
+        <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_dispatch_out"> 可发起派发（→ 智能体卡）</label>
+        <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_dispatch_in"> 可接收派发</label>
+        <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_inject_out"> 可发起前情注入（→ 任务卡）</label>
+        <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_inject_in"> 可接收前情注入</label>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
+          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">创建</button>
+        </div>
+      </div>`;
+      const q = k => ov.querySelector(`[data-k="${k}"]`);
+      let done = false;
+      const close = (val) => { if (done) return; done = true; ov.remove(); resolve(val); };
+      const submit = async () => {
+        const body = {
+          type_key: q('type_key').value.trim(),
+          label: q('label').value.trim(),
+          color: q('color').value.trim() || null,
+          can_dispatch_out: q('can_dispatch_out').checked ? 1 : 0,
+          can_dispatch_in: q('can_dispatch_in').checked ? 1 : 0,
+          can_inject_out: q('can_inject_out').checked ? 1 : 0,
+          can_inject_in: q('can_inject_in').checked ? 1 : 0,
+        };
+        if (!body.type_key || !body.label) { toast('显示名与标识必填'); return; }
+        const r = await fetch('/api/card-types', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { toast(`类型创建失败：${j.error || r.status}`); return; }
+        toast(`已创建卡片类型「${body.label}」`);
+        close(body);
+        loadCardTypes();
+      };
+      ov.querySelector('[data-x]').onclick = () => close(null);
+      ov.querySelector('[data-cancel]').onclick = () => close(null);
+      ov.querySelector('[data-ok]').onclick = submit;
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      q('label').focus();
+    });
+  }
+
+  /* 画布左上角「＋ 新建卡片」悬浮入口（点选建卡：先选类型、再落卡；与工具条按钮同一份交互） */
+  function initCreateCardPanel() {
+    if ($('#taskMapPlusBtn')) return;
+    const canvas = $('#taskMapCanvas');
+    if (!canvas) return;
+    const btn = document.createElement('button');
+    btn.id = 'taskMapPlusBtn';
+    btn.type = 'button';
+    btn.textContent = '＋';
+    btn.title = '新建卡片：先选类型（任务/智能体/交接/文档/自定义），卡片落到地图（当前视图中心）';
+    btn.setAttribute('aria-label', '新建卡片');
+    btn.style.cssText = 'position:absolute;left:10px;top:10px;z-index:30;width:36px;height:36px;border-radius:50%;border:1px solid var(--border-glass,rgba(0,0,0,.15));background:var(--surface-glass,#fff);color:var(--text-primary);font-size:18px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    btn.onmouseenter = () => { btn.style.outline = '2px solid #06b6d4'; };
+    btn.onmouseleave = () => { btn.style.outline = 'none'; };
+    btn.onclick = () => createCard();
+    canvas.appendChild(btn);
+    const sync = () => { btn.style.display = (RESTRICTED && RESTRICTED.cardCreate) ? 'none' : ''; };
+    sync();
+    new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['class'] }); // 受限模式切换同步显隐
+  }
+
+  /** 新建卡片（点选式：先选类型+标题 → 按类型走不同端点；智能体卡自动进配置向导。
+   *  替代旧「单字段建 task 卡」——卡片类型不再随意。RESTRICTED=1 时端点拒绝，toast 透出。 */
   async function createCard() {
-    // ★ 批次⑨：prompt()→askForm
-    const v = await askForm({ title: '新建卡片', fields: [{ key: 'title', label: '卡片标题', required: true, placeholder: '例：梳理记忆检索链路' }], okText: '创建' });
+    await loadCardTypes();
+    const typeOpts = _cardTypes.list.map(t => ({ value: t.type_key, label: t.builtin ? t.label : `${t.label}（自定义）` }));
+    typeOpts.push({ value: '__new__', label: '＋ 新建自定义类型…' });
+    const v = await askForm({ title: '新建卡片', fields: [
+      { key: 'kind', type: 'select', label: '卡片类型', options: typeOpts, value: 'task', required: true },
+      { key: 'title', label: '卡片标题', placeholder: '例：梳理记忆检索链路', required: true },
+    ], okText: '创建' });
     if (!v) return;
+    let kind = v.kind;
+    if (kind === '__new__') {
+      const t = await newTypeDialog();
+      if (!t) return;
+      kind = t.type_key;
+    }
+    if (kind === 'agent') {
+      const ok = await openAgentWizard({ mode: 'create', presetTitle: (v.title || '').trim(), pos: taskMapViewCenter() });
+      if (ok) refreshCurrentTaskView();
+      return;
+    }
     const title = (v.title || '').trim();
     if (!title) return;
-    const res = await fetch('/api/cards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, kind: 'task' }) });
+    const res = await fetch('/api/cards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, kind, meta: { map_pos: { c: taskMapViewCenter() } } }) });
     const j = await res.json().catch(() => ({}));
-    toast(res.ok ? `已建卡片 #${j.id}` : (j.error || '创建失败'));
+    const kindLabel = (_cardTypes.list.find(t => t.type_key === kind) || {}).label || kind;
+    toast(res.ok ? `已建卡片 #${j.id}（${kindLabel}）` : (`创建失败：${j.error || res.status}`));
     if (res.ok) refreshCurrentTaskView();
   }
 
