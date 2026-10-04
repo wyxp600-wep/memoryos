@@ -36,7 +36,6 @@ const CLI_PRESETS = {
     // ★ 2026-10-05 P4 载体点亮：mimocode（scan id=mimocode / 别名 mimo）= Xiaomi MiMo CLI。
     //   实证（本机）：`mimo run` 支持位置参数与 stdin 管道两种提示词形态、--pure 免外部插件、
     //   -m 走 provider/model 形式；凭据在 ~/.local/share/mimocode/auth.json（providers whoami 核实）。
-    //   dsh 不适用 CLI 直控（profile 启动器，无 headless 单次模式）→ 走队列通道，不建预设。
     mimocode: {
         cmd: "mimo",
         args: ["run", "--pure"], // 提示词走 stdin（实测管道可用）
@@ -48,6 +47,17 @@ const CLI_PRESETS = {
         args: ["run", "--pure"],
         useStdin: true,
         modelArgs: (m) => (m ? ["-m", m] : []),
+    },
+    // ★ 2026-10-05 P4 载体点亮：dsh = DeepSeek Harness（npm 全局 `dsh`，本机已装，PATH 实证）。
+    //   headless profile 是一次性无头模式（实证 2026-10-05：`dsh --profile headless "task"`
+    //   = 答一个任务打印结果即退出）；任务文本只收位置参数、无 stdin 模式 → promptAsArg。
+    //   缺凭据报 MISSING_CREDENTIAL 退出码 1（DEEPSEEK_API_KEY 走 dsh 凭据服务或环境变量）。
+    //   注：旧注释误判 dsh「无 headless 单次模式」，2026-10-05 实证修正。
+    dsh: {
+        cmd: "dsh",
+        args: ["--profile", "headless"],
+        useStdin: false,
+        promptAsArg: true,
     },
 };
 const HEARTBEAT_MS = 60000;
@@ -106,6 +116,11 @@ export function registerCliExec(app, ctx) {
         let args = ov?.args ?? (preset ? [...preset.args, ...(preset.modelArgs?.(p.model) ?? [])] : []);
         if (!ov && !preset && p.reasoning)
             args = [...args, "--reasoning", String(p.reasoning)]; // 无预设的自定义 CLI：推理强度按通用flag尽力传
+        // ★ 提示词作位置参数（promptAsArg，如 dsh headless：该 CLI 无 stdin 模式）：
+        //   任务文本追加为 args 末位单参数。win32 shell:true 路径经 quote() 统一预引号，
+        //   多词任务保持单个参数不被 cmd /s 拆散；launch_overrides.args 存在时以用户参数为准，不追加。
+        if (ov?.args === undefined && (ov?.promptAsArg ?? preset?.promptAsArg ?? false))
+            args = [...args, String(job.message ?? "")];
         const cwd = p.workspace || os.homedir();
         job.cwd = cwd;
         job.cmd = cmd;
