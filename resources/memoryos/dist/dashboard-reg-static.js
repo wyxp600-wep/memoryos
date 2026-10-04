@@ -32,5 +32,5 @@ export function registerStatic(app, ctx) {
     app.get("/", sendStatic("index.html", "text/html; charset=utf-8", "no-cache"));
     app.get("/echarts.min.js", sendStatic("echarts.min.js", "application/javascript", "public, max-age=31536000, immutable"));
     app.get("/app.js", sendStatic("app.js", "application/javascript", "no-cache"));
-    app.get("/canvas-editor.js", sendStatic("canvas-editor.js", "application/javascript", "no-cache")); // 节点画布（2026-10-04）
+    // /canvas-editor.js 路由 2026-10-05 随节点画布并入任务地图而移除（canvas-editor.js 已删）
 }

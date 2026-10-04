@@ -4286,7 +4286,7 @@
   const TASK_MAP_NODE_W = 226;
   const TASK_MAP_NODE_H = 96;
   const TASK_MAP_GAP_X = 92;
-  const TASK_MAP_GAP_Y = 46;
+  const TASK_MAP_GAP_Y = 70; // 2026-10-05：46→70 行距 +50%（治「太挤」）
   const TASK_MAP_PAD = 56;
   const TASK_MAP_LINK_STYLE = {
     spawned_by: { color: '#41bbc8', width: 2, dash: '' },
@@ -4300,11 +4300,18 @@
     aux_rule: { color: '#eab308', width: 1.5, dash: '3 3' },
     aux_skill: { color: '#a855f7', width: 1.5, dash: '3 3' },
     aux_error: { color: '#f43f5e', width: 1.5, dash: '3 3' },
+    // ★ 2026-10-05 并入批：节点画布五类边（card_edges 派发/注入 + 交接挂边 + 终态投影）
+    dispatch: { color: '#3b82f6', width: 2, dash: '' },
+    dispatch_completed: { color: '#10b981', width: 2, dash: '' },
+    superseded: { color: '#64748b', width: 1.5, dash: '4 4' },
+    inject: { color: '#d9a441', width: 1.5, dash: '6 4' },
+    handoff: { color: '#4a8a5c', width: 1.5, dash: '2 4' },
   };
   const _taskMapState = {
     data: { nodes: [], links: [] },
     positions: new Map(),
-    auto: (() => { try { return (localStorage.getItem('memoryos-map-auto') ?? '1') !== '0'; } catch { return true; } })(), // ★ 2026-09-14 自动关联开关（?auto=0/1）
+    auto: (() => { try { return (localStorage.getItem('memoryos-map-auto') ?? '0') !== '0'; } catch { return false; } })(), // ★ 2026-09-14 自动关联开关（?auto=0/1）；2026-10-05 默认改关（语义虚线默认不画，连线瘦身）
+    showWeak: (() => { try { return (localStorage.getItem('memoryos-map-weak') ?? '1') !== '0'; } catch { return true; } })(), // ★ 2026-10-05 弱连线开关（relates/duplicates；默认显示，可一键隐藏）
     showArchived: (() => { try { return localStorage.getItem('memoryos-map-archived') === '1'; } catch { return false; } })(), // ★ 2026-09-18 归档任务默认隐藏（工具栏「查看归档」切换）
     showDone: (() => { try { return localStorage.getItem('memoryos-map-done') === '1'; } catch { return false; } })(), // ★ 2026-09-20 已完成任务默认隐藏（工具栏「显示已完成」切换；与卡片看板共用）
     scale: 1,
@@ -4374,8 +4381,8 @@
     /* —— ② 横向倾倒：按层顺序灌入容量 maxRows 的列（左 → 右 即工作流方向；禁止纵向排布）
        行距按「列 floor」级联：上一行若挂了辅助卡悬挂区，下一行从悬挂区下方起，保证互不重叠 */
     const positions = new Map();
-    const maxRows = Math.max(3, Math.min(9, Math.ceil(Math.sqrt(Math.max(1, taskSet.size)))));
-    const colPitch = TASK_MAP_NODE_W + TASK_MAP_GAP_X + 190; // 226+92+190=508
+    const maxRows = Math.max(3, Math.min(7, Math.ceil(Math.sqrt(Math.max(1, taskSet.size))))); // 2026-10-05：9→7 行（减纵向长度、加大留白）
+    const colPitch = TASK_MAP_NODE_W + TASK_MAP_GAP_X + 250; // 2026-10-05：226+92+250=568（原 508，治「太挤」）
     const AUX_W = 170, AUX_ROW_H = 100, AUX_DROP = 20, AUX_PER_ROW = 2;
     /* host → 辅助卡 id 列表（保持 link 顺序；host = 非 aux 端点） */
     const auxByHost = new Map();
@@ -4389,7 +4396,12 @@
       if (!auxByHost.has(host)) auxByHost.set(host, []);
       if (!auxByHost.get(host).includes(auxId)) auxByHost.get(host).push(auxId);
     });
-    const seq = [...taskSet].sort((a, b) => (rank.get(a) - rank.get(b)) || compare(a, b));
+    // ★ 2026-10-05 分区整理：agent 卡独立「执行者区」（右侧列）、handoff 文档卡挂宿主任务卡右侧，
+    //   均不进工作流列倾倒（设计报告风险#4：投影/文档卡不进任务统计，视觉同样分家）
+    const agentZone = [...taskSet].filter((id) => String(byId.get(id)?.kind) === 'agent');
+    const handoffSet = new Set([...taskSet].filter((id) => String(byId.get(id)?.kind) === 'handoff'));
+    const seq = [...taskSet].filter((id) => !agentZone.includes(id) && !handoffSet.has(id))
+      .sort((a, b) => (rank.get(a) - rank.get(b)) || compare(a, b));
     const colFloor = new Map();  // col → 下一行起始 y（含辅助悬挂区）
     const colBottom = new Map(); // col → 该列最大底边（含悬挂区）
     seq.forEach((id, idx) => {
@@ -4411,6 +4423,28 @@
         const r = Math.floor(i / AUX_PER_ROW), c = i % AUX_PER_ROW;
         positions.set(auxId, { x: hp.x + 8 + c * (AUX_W + 24), y: hp.y + TASK_MAP_NODE_H + AUX_DROP + r * AUX_ROW_H, rank: hp.rank, aux: true });
       });
+    });
+
+    /* —— ⑤ 执行者区 + 交接挂卡（2026-10-05 分区整理）——
+       agent 卡：右侧独立列（4 行一列级联），与任务流分家、一眼看到「有哪些干活的人」
+       handoff 卡：挂在产出它的宿主任务卡右侧（handoff 边 src=宿主 → dst=交接卡） */
+    if (agentZone.length) {
+      const maxTaskX = positions.size ? Math.max(...[...positions.values()].map(p => p.x + (p.aux ? AUX_W : TASK_MAP_NODE_W))) : TASK_MAP_PAD + TASK_MAP_NODE_W;
+      const zx0 = maxTaskX + 160;
+      const agentRows = 4;
+      agentZone.sort((a, b) => compare(a, b));
+      agentZone.forEach((id, i) => {
+        const col = Math.floor(i / agentRows), row = i % agentRows;
+        positions.set(id, { x: zx0 + col * (TASK_MAP_NODE_W + 120), y: TASK_MAP_PAD + row * (TASK_MAP_NODE_H + TASK_MAP_GAP_Y + 24), rank: maxRank + 1 });
+      });
+    }
+    links.forEach(link => {
+      if (String(link.kind) !== 'handoff') return;
+      const s = Number(link.src_id), d = Number(link.dst_id);
+      if (positions.has(s) && byId.has(d) && handoffSet.has(d)) {
+        const sp = positions.get(s);
+        positions.set(d, { x: sp.x + TASK_MAP_NODE_W + 110, y: sp.y, rank: sp.rank, aux: true });
+      }
     });
 
     /* —— 画布尺寸（含辅助悬挂区） —— */
@@ -4511,7 +4545,8 @@
     const viewKey = vertical ? 'v' : 'h';
     let worldW = layout.width, worldH = layout.height;
     nodes.forEach(n => {
-      const saved = n.meta && n.meta.map_pos && n.meta.map_pos[viewKey];
+      const _mp = n.meta && typeof n.meta.map_pos === 'object' && n.meta.map_pos ? n.meta.map_pos : {};
+      const saved = _mp[viewKey] || _mp.c; // c 桶=节点画布时代/点选建卡落点（并入后三桶共存读，写仍按当前 h/v 屏）
       if (saved && _taskMapState.positions.has(Number(n.id))) {
         const p = _taskMapState.positions.get(Number(n.id));
         _taskMapState.positions.set(Number(n.id), { x: Number(saved.x) || p.x, y: Number(saved.y) || p.y, rank: p.rank });
@@ -4579,6 +4614,11 @@
       const priorityText = Number(node.priority || 0) > 0 ? `P${Number(node.priority)}` : '';
       const taskId = node.meta && node.meta.task_id ? String(node.meta.task_id) : '';
       const metaTail = [progressText, priorityText].filter(Boolean).join(' · ');
+      // ★ 2026-10-05 并入批：非任务卡显示类型中文名（agent→智能体 / handoff→交接文档 / doc→文档），
+      //   智能体卡缺载体时直显 ⚠️（graph 端 profileMissing 标记，前端不自行探测进程）
+      const nk = String(node.kind);
+      const kindLabel = (nk === 'task' || isAux) ? '' : ((_cardTypes.list.find(t => t.type_key === nk) || {}).label || nk);
+      const missingTag = (!isAux && nk === 'agent' && node.profileMissing) ? ' ⚠️ 载体缺失' : '';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'task-map-node';
@@ -4603,13 +4643,18 @@
         <span class="task-map-node-title">${esc(node.title)}</span>
         <span class="task-map-node-meta">
           <span>${esc(isAux ? '' : (node.assignee || '未分配'))}</span>
-          <span>${esc(isAux ? '' : (metaTail || node.kind || ''))}</span>
+          <span>${esc(isAux ? '' : (metaTail || kindLabel || ''))}${esc(missingTag)}</span>
         </span>
-        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">+</span>
+        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">＋</span>
         ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
-          <span class="task-map-qbtn" data-q="agent" title="交给智能体干（自动填好任务说明）">🚀</span>
-          <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
-          <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>
+          ${nk === 'agent'
+            ? `<span class="task-map-qbtn" data-q="log" title="执行终端：实时看它干活的输出">⌨</span>
+               <span class="task-map-qbtn" data-q="live" title="驾驶直播：桌面软件画面 + 输出">📺</span>
+               <span class="task-map-qbtn" data-q="agentcfg" title="编辑智能体配置（智能体/通道/工作区/模型…）">⚙️</span>`
+            : `<span class="task-map-qbtn" data-q="agent" title="交给智能体干（自动填好任务说明）">🚀</span>
+               <span class="task-map-qbtn" data-q="dispatch" title="派发给智能体卡（选目标 + 按通道执行）">⚡</span>
+               <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
+               <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>`}
         </span>` : ''}`;
       if (_taskMapFilter) {
         // 辅助卡过滤跟随宿主卡（自身无状态）
@@ -4677,12 +4722,15 @@
       const kind = String(link.kind);
       let s = Number(link.src_id), d = Number(link.dst_id);
       if (!statusOf.has(s) || !statusOf.has(d) || s === d) return;
+      // ★ 2026-10-05 连线瘦身：弱连线开关（关联/重复/自动关联可隐藏；依赖/派发/交接不受影响）
+      if (!_taskMapState.showWeak && (kind === 'relates' || kind === 'duplicates' || kind === 'relates_auto')) return;
       // 辅助卡挂载边：完成卡规则与二态过滤都用宿主卡状态（辅助卡自身无状态）；绘制方向统一 宿主 → 辅助卡
       const isAuxLink = kind.startsWith('aux_');
       const hostRef = isAuxLink ? (kindOfNode.get(s) === 'aux' ? d : s) : null;
       if (isAuxLink && kindOfNode.get(s) === 'aux') [s, d] = [d, s];
       // ★ 已完成卡片不参与连线（任一端点 done → 整条边隐藏；辅助边看宿主卡）
-      if (isAuxLink ? statusOf.get(hostRef) === 'done' : (statusOf.get(s) === 'done' || statusOf.get(d) === 'done')) return;
+      // ★ 2026-10-05：交接边豁免（交接卡恒 status=done，隐藏会断掉「任务→交接文档」链）
+      if (kind !== 'handoff' && (isAuxLink ? statusOf.get(hostRef) === 'done' : (statusOf.get(s) === 'done' || statusOf.get(d) === 'done'))) return;
       // ★ 2026-09-15：过滤三态（open / done / terminal）——终结态(archived/cancelled/failed)不再混入「未完成」
       if (_taskMapFilter) {
         const bucket = (id) => { const s = statusOf.get(id); if (s === 'done') return 'done'; if (s === 'archived' || s === 'cancelled' || s === 'failed') return 'terminal'; return 'open'; };
@@ -4706,8 +4754,63 @@
       const markerId = TASK_MAP_LINK_STYLE[kind] ? kind : 'relates';
       path.setAttribute('marker-end', `url(#taskMapArrow-${markerId})`);
       const title = document.createElementNS(ns, 'title');
-      title.textContent = `${kind}${link.context ? ' · ' + link.context : ''}`;
+      title.textContent = `${kind === 'depends' ? '依赖' : kind === 'handoff' ? '交接' : kind}${link.context ? ' · ' + link.context : ''}`;
       path.appendChild(title);
+      // ★ 2026-10-05 并入批：依赖线右键可删（后端 DELETE /api/cards/:id/links?dst_card_id=&kind= 现成；误连有出口）
+      if (kind === 'depends') {
+        path.style.cursor = 'pointer';
+        path.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          confirmInline('删除这条依赖连线？', async () => {
+            const lr = await fetch(`/api/cards/${Number(link.src_id)}/links?dst_card_id=${Number(link.dst_id)}&kind=depends`, { method: 'DELETE' })
+              .then(x => x.json().catch(() => ({}))).catch(() => ({}));
+            toast(lr && lr.ok ? '已删除连线' : '删除失败');
+            renderTaskMap();
+          });
+        });
+      }
+      edgesEl.appendChild(path);
+    });
+    // ★ 2026-10-05 并入批：card_edges（派发/注入持久边；status 纯投影，来自 dispatches 真源）
+    (_taskMapState.data.edges || []).forEach(e => {
+      const s = Number(e.source_id), d = Number(e.target_id);
+      const source = _taskMapState.positions.get(s), target = _taskMapState.positions.get(d);
+      if (!source || !target) return; // 端点被过滤/隐藏 → 不画
+      const st = String(e.status || 'active');
+      const ek = String(e.kind);
+      let key = ek;
+      if (ek === 'dispatch') key = st === 'completed' ? 'dispatch_completed' : (st === 'superseded' || st === 'cancelled' ? 'superseded' : 'dispatch');
+      const style = TASK_MAP_LINK_STYLE[key] || { color: '#3b82f6', width: 2, dash: '' };
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', taskMapEdgePath(source, target, vertical));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', style.color);
+      path.setAttribute('stroke-width', String(style.width));
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      path.setAttribute('opacity', '0.85');
+      if (style.dash) path.setAttribute('stroke-dasharray', style.dash);
+      path.setAttribute('marker-end', `url(#taskMapArrow-${TASK_MAP_LINK_STYLE[key] ? key : 'dispatch'})`);
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = `${ek === 'inject' ? '前情注入' : '派发'}（${st}） #${s} → #${d}`;
+      path.appendChild(title);
+      if (ek === 'inject' && e.id) {
+        path.style.cursor = 'pointer';
+        path.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          confirmInline('删除这条前情注入连线？', async () => {
+            const dr = await fetch(`/api/card-edges/${e.id}`, { method: 'DELETE' })
+              .then(x => x.json().catch(() => ({}))).catch(() => ({}));
+            toast(dr && dr.ok ? '已删除连线' : ('删除失败：' + ((dr && dr.error) || '')));
+            renderTaskMap();
+          });
+        });
+      } else if (ek === 'dispatch') {
+        path.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          toast('派发边是历史链的一部分，不可手删（随派发收口自动翻状态）');
+        });
+      }
       edgesEl.appendChild(path);
     });
   }
@@ -4837,8 +4940,12 @@
     return true;
   }
 
-  /** 悬停快捷条动作：agent=交给 Agent ｜ toggle=完成/重开 ｜ ws=打开工作区 Tab */
+  /** 悬停快捷条动作：agent=交给 Agent ｜ dispatch=派发给智能体卡 ｜ log/live=智能体卡实时窗口 ｜ agentcfg=编辑配置 ｜ toggle=完成/重开 ｜ ws=打开工作区 Tab */
   async function quickCardAction(kind, id) {
+    if (kind === 'log') { agentCardTerm(id); return; }
+    if (kind === 'live') { agentCardLive(id); return; }
+    if (kind === 'agentcfg') { editAgentProfileFromCard(id); return; }
+    if (kind === 'dispatch') { dispatchCardToAgent(id); return; }
     const r = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
     if (!r || !r.card) { toast('卡片不存在'); return; }
     const card = r.card;
@@ -4864,11 +4971,20 @@
     if (!menu) return;
     // ★ P4：右键状态项改为「按状态机只列可达目标」—— 原固定 6 项里大多数会被后端 409「非法迁移」拒绝
     const statusOpts = cwTargets(card.status).map(s => [s, CW_STATUS_LABEL[s] || s]);
+    // ★ 2026-10-05 并入批：按卡片类型档位列「改型/派发/注入/编辑配置」项（card_types 注册表判档，缺省按内置四种）
+    const ck = String(card.kind || '');
+    const ckDef = _cardTypes.list.find(t => t.type_key === ck);
+    const canDsp = ckDef ? !!ckDef.can_dispatch_out : (ck === 'task');
+    const canInj = ckDef ? !!ckDef.can_inject_out : (ck === 'handoff');
     menu.innerHTML = `
       <div class="context-menu-title">卡片 #${card.id} · ${esc(String(card.title || '').slice(0, 18))}</div>
       <div class="context-menu-item" data-cardact="claim">✔ 认领</div>
       <div class="context-menu-item" data-cardact="detail">👁 打开详情</div>
       <div class="context-menu-item" data-cardact="link">➡ 拖出依赖连线</div>
+      ${ck !== 'agent' ? `<div class="context-menu-item" data-cardact="retype">🔄 改卡片类型…</div>
+      ${canDsp ? `<div class="context-menu-item" data-cardact="dispatch">⚡ 派发给…（交给智能体干）</div>` : ''}
+      ${canInj ? `<div class="context-menu-item" data-cardact="inject">🔗 注入前情…（把本卡内容喂给下游任务）</div>` : ''}` : ''}
+      ${ck === 'agent' ? `<div class="context-menu-item" data-cardact="agentcfg">⚙️ 编辑智能体配置</div>` : ''}
       ${AUX_CARD_TYPES.map(([k, l]) => `<div class="context-menu-item" data-cardact="aux" data-aux="${k}">📎 挂${l}</div>`).join('')}
       ${statusOpts.map(([s, l]) => `<div class="context-menu-item" data-cardact="status" data-status="${s}">${l}</div>`).join('') || '<div class="context-menu-item" style="opacity:.5;cursor:default">（终态，无法流转）</div>'}
       <div class="context-menu-item" data-cardact="pushmcp">⚡ 同步到 MCP</div>
@@ -4894,6 +5010,14 @@
           openCardDetail(cardId);
         } else if (act === 'link') {
           startLinkDraft(cardId);
+        } else if (act === 'retype') {
+          changeCardKind(cardId);
+        } else if (act === 'dispatch') {
+          dispatchCardToAgent(cardId);
+        } else if (act === 'inject') {
+          injectCardTo(cardId);
+        } else if (act === 'agentcfg') {
+          editAgentProfileFromCard(cardId);
         } else if (act === 'aux') {
           const kind = item.dataset.aux;
           const label = AUX_LABEL[kind] || kind;
@@ -4956,6 +5080,7 @@
       viewNodes.forEach(n => {
         const nk = String(n.kind);
         if (nk === 'aux' || nk.startsWith('aux_')) return; // aux 子卡跟随宿主，单独处理
+        if (nk === 'handoff') return; // ★ 2026-10-05：交接文档卡不受「隐藏已完成」过滤（交接链不断）
         const st = String(n.status);
         if (!_taskMapState.showArchived && st === 'archived') gone.add(String(n.id));
         else if (!_taskMapState.showDone && st === 'done') gone.add(String(n.id));
@@ -4967,7 +5092,8 @@
         keptNodes = viewNodes.filter(n => !gone.has(String(n.id)) && !(String(n.kind).startsWith('aux_') && !auxTouched.has(String(n.id))));
       }
     }
-    _taskMapState.data = { nodes: keptNodes, links: keptLinks };
+    _taskMapState.data = { nodes: keptNodes, links: keptLinks, edges: data.edges || [] }; // ★ 2026-10-05 并入批：card_edges（派发/注入）随图入渲染
+    if (!_cardTypes.list.length) loadCardTypes(); // 类型中文名缓存（节点徽标/建卡向导共用；fire-and-forget）
     // ★ 2026-09-13：状态二态 chips（已完成 / 未完成；细粒度状态仍在卡片抽屉与右键菜单保留；点击过滤，再点/全部=清除）
     const chips = $('#taskMapChips');
     if (chips && viewNodes.length) {
@@ -4976,6 +5102,7 @@
       viewNodes.forEach(n => {
         const nk = String(n.kind);
         if (nk === 'aux' || nk.startsWith('aux_')) return; // 辅助卡是挂载物，不计入任务统计
+        if (nk === 'agent' || nk === 'handoff') return; // ★ 2026-10-05 并入批：执行者/交接文档卡不进任务三态统计（设计报告风险#4）
         const b = n.bucket != null ? n.bucket : (String(n.status) === 'done' ? 'done' : (['archived', 'cancelled', 'failed'].includes(String(n.status)) ? 'terminal' : 'open'));
         if (b === 'terminal') terminal++; else if (b === 'done') done++; else open++;
       });
@@ -5001,6 +5128,13 @@
     if (opts.fit || !_taskMapState.hasView) requestAnimationFrame(fitTaskMap);
     // 智能体清单惰性重试：仅当清单为空且距上次尝试 >30s（防高频打 scan 端点；非空后不再重拉）
     if (!_agentScan.list.length && Date.now() - _agentScan.ts > 30000) loadAgentScan(true);
+    // ★ 2026-10-05 小白引导：依赖连线交互一次性提示（localStorage 只提醒一次，不打扰老用户）
+    try {
+      if (!localStorage.getItem('memoryos-link-hint-shown') && (keptNodes || []).length >= 2) {
+        localStorage.setItem('memoryos-link-hint-shown', '1');
+        setTimeout(() => toast('提示：按住卡片右侧的 ＋ 拖到另一张卡上，就能建一条依赖连线；点卡片看详情，悬停看快捷按钮。只提醒这一次。', 8000), 800);
+      }
+    } catch { /* 存储不可用时不打扰 */ }
   }
 
   // ★ 2026-09-14：自动关联开关按钮态（开=高亮 btn-primary，关=btn-ghost）
@@ -5119,6 +5253,23 @@
     };
     // 首次按持久化状态刷新按钮样式
     refreshAutoBtn(autoBtn);
+    // ★ 2026-10-05 连线瘦身：弱连线开关（关联/重复/自动关联 三类的显隐；默认显示，持久化）
+    const weakBtn = $('#taskMapWeakBtn');
+    if (weakBtn) {
+      const syncWeak = () => {
+        weakBtn.textContent = _taskMapState.showWeak ? '✓ 弱连线' : '弱连线';
+        weakBtn.className = _taskMapState.showWeak ? 'btn-primary' : 'btn-ghost';
+        weakBtn.title = _taskMapState.showWeak ? '当前显示 关联/重复/自动关联 弱连线；点击隐藏' : '当前已隐藏 关联/重复/自动关联 弱连线；点击显示（依赖/派发/交接不受影响）';
+      };
+      weakBtn.onclick = () => {
+        _taskMapState.showWeak = !_taskMapState.showWeak;
+        try { localStorage.setItem('memoryos-map-weak', _taskMapState.showWeak ? '1' : '0'); } catch { /* ignore */ }
+        syncWeak();
+        toast(_taskMapState.showWeak ? '已显示弱连线（关联/重复/自动关联）' : '已隐藏弱连线：只剩 依赖/派发/交接/辅助 实连线');
+        renderTaskMap({ fit: false });
+      };
+      syncWeak();
+    }
     // ★ 2026-09-18：「查看归档」切换 —— 归档任务默认隐藏，点击在地图中显示/隐藏（持久化 localStorage）
     const archViewBtn = $('#taskMapArchiveViewBtn');
     if (archViewBtn) archViewBtn.onclick = () => {
@@ -5797,7 +5948,7 @@
   /** 智能体卡配置向导（create=POST /api/agent-profiles 事务建档案+投影卡；edit=GET 现值→预填→PUT 整对象保存。
    *  A 类坑（探针/读码实证）：PUT 的 launch_overrides 是整对象替换——高级栏留空时不传该字段（端点保留旧值），
    *  填了才传解析后的对象，防「半更新把 exe/args 清掉」。409（该卡有进行中派发）透出提示。 */
-  async function openAgentWizard({ mode = 'create', profileId = null, presetTitle = '', pos = null } = {}) {
+  async function openAgentWizard({ mode = 'create', profileId = null, presetTitle = '', pos = null, rawProfile = false } = {}) {
     await loadAgentScan(_agentScan.list.length === 0);
     let p0 = null;
     if (mode === 'edit') {
@@ -5869,6 +6020,12 @@
         };
         const ct = Number(q('context_tokens').value);
         if (ct > 0) body.context_tokens = ct;
+        if (mode === 'create' && rawProfile) {
+          // 改型内联场景：只取值——profile 随 POST /api/cards/:id/retype 事务建档案（不在这里建卡）
+          if (lo) body.launch_overrides = lo;
+          close(body);
+          return;
+        }
         if (mode === 'create') {
           if (lo) body.launch_overrides = lo;
           if (pos) body.meta = { map_pos: { x: pos.x, y: pos.y } };
@@ -6006,6 +6163,216 @@
     const kindLabel = (_cardTypes.list.find(t => t.type_key === kind) || {}).label || kind;
     toast(res.ok ? `已建卡片 #${j.id}（${kindLabel}）` : (`创建失败：${j.error || res.status}`));
     if (res.ok) refreshCurrentTaskView();
+  }
+
+  /* ===== 2026-10-05 并入批：派发/注入/改型/实时窗口（端点全部现成，前端只做编排与诚实降级）===== */
+
+  // 通用小弹层（目标选择/确认；EventSource 类弹层关闭钩子统一注册，防流泄漏）
+  let _agentPops = [];
+  let _agentPopOv = null;
+  function closeAgentPops() {
+    _agentPops.forEach(f => { try { f(); } catch { /* 忽略 */ } });
+    _agentPops = [];
+    if (_agentPopOv) { _agentPopOv.remove(); _agentPopOv = null; }
+  }
+  function agentOverlay(title, bodyHtml, footerBtns = []) {
+    closeAgentPops();
+    const ov = document.createElement('div');
+    _agentPopOv = ov;
+    ov.style.cssText = 'position:fixed;right:16px;top:64px;z-index:10000;width:340px;max-width:94vw;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);padding:14px 16px;box-sizing:border-box';
+    ov.innerHTML = `<div style="display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px"><span>${esc(title)}</span><button style="margin-left:auto;background:none;border:none;font-size:14px;color:var(--text-muted);cursor:pointer" aria-label="关闭">✕</button></div><div class="ap-body">${bodyHtml}</div>${footerBtns.length ? `<div style="display:flex;gap:8px;margin-top:10px">${footerBtns.map(b => `<button class="btn-ghost ap-btn" data-act="${b.act}" style="padding:4px 12px;font-size:12px">${esc(b.label)}</button>`).join('')}</div>` : ''}`;
+    document.body.appendChild(ov);
+    ov.querySelector('div > button[aria-label="关闭"]').onclick = closeAgentPops;
+    return ov;
+  }
+  /** 行内确认层（替代 window.confirm——CDP 冒烟/走查会被原生 confirm 阻塞） */
+  function confirmInline(text, onOk) {
+    closeAgentPops();
+    const ov = document.createElement('div');
+    _agentPopOv = ov;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center';
+    ov.innerHTML = `<div style="background:var(--surface-glass,#fff);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:12px;padding:16px 18px;max-width:320px;font-size:13px;color:var(--text-primary);box-shadow:0 12px 40px rgba(0,0,0,.3)"><div style="margin-bottom:12px">${esc(text)}</div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn-ghost" style="padding:5px 12px;font-size:12px">取消</button><button class="btn-primary" style="padding:5px 14px;font-size:12px">确认</button></div></div>`;
+    document.body.appendChild(ov);
+    const [cancel, ok] = ov.querySelectorAll('button');
+    cancel.onclick = closeAgentPops;
+    ok.onclick = () => { closeAgentPops(); onOk(); };
+  }
+
+  /** ⚡ 派发给…（按卡定向派发：选目标智能体卡 → state 拦截/确认层 → POST /api/cards/:id/dispatch-agent。
+   *  收掉 A1 接线记录遗留待办「前端按钮真调 dispatch-agent」。carrier_missing=真 → 拦截并提示先配置。 */
+  async function dispatchCardToAgent(srcCardId) {
+    const targets = (_taskMapState.data.nodes || []).filter(n => String(n.kind) === 'agent');
+    if (!targets.length) { toast('地图上还没有智能体卡——先点左上角 ＋ 建一张（类型选「智能体」）'); return; }
+    const rows = targets.map(t => {
+      const miss = t.profileMissing ? ' <span style="color:#f59e0b;font-size:11px">⚠️ 载体缺失</span>' : '';
+      return `<div data-next="${''}" data-target="${t.id}" class="ap-item" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">🤖 ${esc(t.title || ('#' + t.id))}${miss}</div>`;
+    }).join('');
+    const ov = agentOverlay(`把 #${srcCardId} 派给哪个智能体？`, rows);
+    ov.querySelectorAll('[data-target]').forEach(el => {
+      el.onclick = async () => {
+        const dst = Number(el.dataset.target);
+        let st = {};
+        try { st = await fetch(`/api/agent-cards/${dst}/state`).then(x => x.json()).catch(() => ({})); } catch { /* 状态拿不到仍可尝试派发 */ }
+        if (st.carrier_missing) {
+          agentOverlay('⚠️ 无法派发', `<div style="font-size:12px;color:var(--text-muted)">该智能体载体缺失（选的智能体未安装/未登记）。请右键智能体卡「⚙️ 编辑智能体配置」选一个本机已装的智能体。</div>`);
+          return;
+        }
+        const chLabel = { cli: '直控 · 终端流', cdp: '驾驶 · 界面直播', queue: '队列 · 领单' }[st.channel] || '队列 · 领单';
+        const depth = st.queue_depth ? `队列中已有 ${Number(st.queue_depth)} 项（将排队执行）` : '当前空闲，立即执行';
+        const ov2 = agentOverlay('确认派发', `
+          <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">
+            任务卡 <b>#${srcCardId}</b> → 智能体 <b>${esc(st.name || ('#' + dst))}</b>（${chLabel}）<br>${esc(depth)}
+          </div>
+          `, [
+            { act: 'go', label: '确认派发' },
+            { act: 'cancel', label: '取消' },
+          ]);
+        const go = (o) => {
+          o.querySelector('[data-act="go"]').onclick = async () => {
+            const res = await fetch(`/api/cards/${srcCardId}/dispatch-agent`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ agent_card_id: dst }),
+            }).then(x => x.json().catch(() => ({})));
+            closeAgentPops();
+            if (res.ok) { toast(`已把 #${srcCardId} 派给「${st.name || dst}」${res.dispatch ? `（第 ${Number(res.dispatch.generation) + 1} 次尝试）` : ''}`); refreshCurrentTaskView(); }
+            else toast(`派发失败：${res.error || '未知'}`);
+          };
+          o.querySelector('[data-act="cancel"]').onclick = closeAgentPops;
+        };
+        go(ov2);
+      };
+    });
+  }
+
+  /** 📎 注入前情（POST /api/card-edges {kind:'inject'}；端点白名单=仅 inject，档位/重复/端点存在性由后端 409/404 拦截并透出） */
+  async function injectCardTo(srcCardId) {
+    await loadCardTypes();
+    const inOk = (k) => { const t = _cardTypes.list.find(x => x.type_key === k); return t ? !!t.can_inject_in : (k === 'task'); };
+    const targets = (_taskMapState.data.nodes || []).filter(n => inOk(String(n.kind)) && !String(n.kind).startsWith('aux_'));
+    if (!targets.length) { toast('没有可接收注入的卡片（需「可接收注入」档位的类型，默认只有任务卡）'); return; }
+    const rows = targets.slice(0, 30).map(t =>
+      `<div data-target="${t.id}" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">📄 ${esc(t.title || ('#' + t.id))}</div>`
+    ).join('');
+    const ov = agentOverlay(`把 #${srcCardId} 的前情注入到哪张卡片？`, rows);
+    ov.querySelectorAll('[data-target]').forEach(el => {
+      el.onclick = async () => {
+        const res = await fetch('/api/card-edges', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ source_id: srcCardId, target_id: Number(el.dataset.target), kind: 'inject' }),
+        }).then(x => x.json().catch(() => ({})));
+        closeAgentPops();
+        if (res.ok) { toast('已建立前情注入：该卡被派发时会自动带上这份前情'); refreshCurrentTaskView(); }
+        else toast(`注入连线失败：${res.error || '未知'}`);
+      };
+    });
+  }
+
+  /** 🔄 改卡片类型（POST /api/cards/:id/retype；切 agent 且卡无档案 → 先走智能体向导取 profile 内联建档案。
+   *  409（执行中/有进行中派发）原样透出。 */
+  async function changeCardKind(cardId) {
+    const r = await fetch(`/api/cards/${cardId}`).then(x => x.json()).catch(() => null);
+    if (!r?.card) { toast('卡片不存在'); return; }
+    await loadCardTypes();
+    const cur = String(r.card.kind);
+    const opts = _cardTypes.list.filter(t => t.type_key !== cur);
+    const ov = agentOverlay(`把 #${cardId} 改为哪种类型？（当前：${esc((_cardTypes.list.find(t => t.type_key === cur) || {}).label || cur)}）`,
+      opts.map(t => `<div data-target="${esc(t.type_key)}" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">${esc(t.label)}${t.builtin ? '' : '（自定义）'}</div>`).join('') +
+      `<div data-target="__new__" style="padding:8px 10px;font-size:12px;color:var(--text-muted);cursor:pointer;margin-top:4px">＋ 新建自定义类型…</div>`);
+    ov.querySelectorAll('[data-target]').forEach(el => {
+      el.onclick = async () => {
+        let kind = el.dataset.target;
+        if (kind === '__new__') {
+          const t = await newTypeDialog();
+          if (!t) return;
+          kind = t.type_key;
+        }
+        let extra = {};
+        if (kind === 'agent' && !Number(r.card.meta && r.card.meta.profile_id)) {
+          // 切 agent 且无档案：向导取 profile 值内联随 retype 事务建档案（一步到位，免两跳）
+          const prof = await openAgentWizard({ mode: 'create', presetTitle: r.card.title, rawProfile: true });
+          if (!prof) return;
+          extra = { profile: prof };
+        }
+        const res = await fetch(`/api/cards/${cardId}/retype`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ kind, ...extra }),
+        }).then(x => x.json().catch(() => ({})));
+        closeAgentPops();
+        if (res.ok) { toast(kind === 'agent' ? `已改为智能体卡（可在 ⚙️ 继续完善配置）` : `已改为「${(_cardTypes.list.find(t => t.type_key === kind) || {}).label || kind}」`); refreshCurrentTaskView(); }
+        else toast(`改型失败：${res.error || '未知'}`);
+      };
+    });
+  }
+
+  /** ⚙️ 编辑智能体配置（从卡片 meta.profile_id 找到档案 → 向导编辑态 = GET 现值预填 + PUT 整对象） */
+  async function editAgentProfileFromCard(cardId) {
+    const r = await fetch(`/api/cards/${cardId}`).then(x => x.json()).catch(() => null);
+    const pid = Number(r?.card?.meta && r.card.meta.profile_id);
+    if (!pid) { toast('该卡还没有智能体档案（先改型为智能体，或重建卡片）'); return; }
+    openAgentWizard({ mode: 'edit', profileId: pid });
+  }
+
+  // 执行终端（SSE：/api/agent-cards/:id/exec/stream；弹层关闭钩子统一断流，防 EventSource 泄漏）
+  let _agentPopClosers = [];
+  function agentCardTerm(cardId) {
+    closeAgentPops();
+    const ov = agentOverlay(`⌨ 执行终端 · 卡片 #${cardId}`,
+      `<pre style="height:260px;overflow:auto;background:rgba(0,0,0,.25);color:#c7d3e0;font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;word-break:break-all"></pre><div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
+      [{ act: 'stop', label: '停止执行' }, { act: 'close', label: '关闭' }]);
+    const term = ov.querySelector('pre');
+    const status = ov.querySelector('.ap-st');
+    const es = new EventSource(`/api/agent-cards/${cardId}/exec/stream`);
+    _agentPopClosers.push(() => es.close());
+    _agentPops.push(() => es.close());
+    const scroll = () => { term.scrollTop = term.scrollHeight; };
+    es.addEventListener('line', (e) => {
+      const d = JSON.parse(e.data);
+      term.textContent += (d.stream === 'err' ? '[err] ' : '') + d.text + '\n';
+      if (term.textContent.length > 60000) term.textContent = term.textContent.slice(-40000);
+      scroll();
+    });
+    es.addEventListener('end', (e) => {
+      const d = JSON.parse(e.data);
+      status.textContent = d.status === 'done' ? '（已完成）' : '（已失败）';
+      es.close();
+    });
+    es.onerror = () => { status.textContent = '（无执行记录或流已断开——队列通道/未直控时此处为空，属正常）'; es.close(); };
+    ov.querySelector('[data-act="close"]').onclick = closeAgentPops;
+    ov.querySelector('[data-act="stop"]').onclick = async () => {
+      const res = await fetch(`/api/agent-cards/${cardId}/exec/stop`, { method: 'POST' }).then(x => x.json().catch(() => ({})));
+      toast(res.ok ? '已发送停止指令' : ('停止失败：' + (res.error || '')));
+    };
+  }
+
+  // 驾驶直播（SSE：/api/agent-cards/:id/live；CDP screencast 帧流；断开驾驶不杀用户的 App）
+  function agentCardLive(cardId) {
+    closeAgentPops();
+    const ov = agentOverlay(`📺 驾驶直播 · 卡片 #${cardId}`,
+      `<img alt="等待直播画面…" style="width:100%;border-radius:8px;background:rgba(0,0,0,.3);min-height:160px;display:block"><pre style="height:110px;overflow:auto;background:rgba(0,0,0,.25);color:#c7d3e0;font:11px/1.5 Consolas,monospace;padding:8px;border-radius:8px;white-space:pre-wrap;margin-top:6px"></pre><div style="font-size:11px;color:var(--text-muted)" class="ap-st"></div>`,
+      [{ act: 'stop', label: '断开驾驶' }, { act: 'close', label: '关闭' }]);
+    const img = ov.querySelector('img');
+    const term = ov.querySelector('pre');
+    const status = ov.querySelector('.ap-st');
+    const es = new EventSource(`/api/agent-cards/${cardId}/live`);
+    _agentPopClosers.push(() => es.close());
+    _agentPops.push(() => es.close());
+    es.addEventListener('frame', (e) => { img.src = 'data:image/jpeg;base64,' + JSON.parse(e.data).frame; });
+    es.addEventListener('line', (e) => {
+      term.textContent += JSON.parse(e.data).text + '\n';
+      if (term.textContent.length > 30000) term.textContent = term.textContent.slice(-20000);
+      term.scrollTop = term.scrollHeight;
+    });
+    es.addEventListener('end', (e) => {
+      const d = JSON.parse(e.data);
+      status.textContent = d.status === 'done' ? '（会话结束）' : '（会话已收口）';
+      es.close();
+    });
+    es.onerror = () => { status.textContent = '（无驾驶会话或流已断开——直控/驾驶未跑通时此处为空，属正常）'; es.close(); };
+    ov.querySelector('[data-act="close"]').onclick = closeAgentPops;
+    ov.querySelector('[data-act="stop"]').onclick = async () => {
+      const res = await fetch(`/api/agent-cards/${cardId}/live/stop`, { method: 'POST' }).then(x => x.json().catch(() => ({})));
+      toast(res.ok ? '已断开驾驶（桌面软件未被关闭）' : ('操作失败：' + (res.error || '')));
+    };
   }
 
   async function runDispatch() {
