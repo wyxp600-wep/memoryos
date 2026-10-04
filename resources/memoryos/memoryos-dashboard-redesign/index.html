@@ -4721,12 +4721,14 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
       <div class="subview on" data-view="cards" role="tabpanel">
       <div class="toolbar">
         <span style="font-size:14px;font-weight:600;color:var(--text-primary)">多智能体任务看板</span>
-        <span class="text-muted" style="font-size:12px">卡片工作流 · CAS 认领 + 租约 + 依赖提升</span>
+        <span class="text-muted" style="font-size:12px">多智能体任务看板：建卡片 → 派活给智能体 → 看进度 → 验收（? 指引 有详细说明）</span>
         <div style="margin-left:auto;display:flex;gap:6px" id="tasksViewTabs" role="tablist" aria-label="任务视图">
           <!-- ★ P4 简化批：恢复「列式看板」视图 —— 拖一下卡片即可改状态（右键改状态对小白不可发现） -->
           <button class="btn-ghost" id="tabCards" style="padding:5px 12px;font-size:12px" aria-selected="false" title="按状态分列的看板：把卡片拖到另一列即改状态">📋 列式看板</button>
           <span class="btn-primary" id="tabMap" style="padding:5px 12px;font-size:12px">🗺 任务地图</span>
           <button class="btn-ghost" id="taskMapArchiveBtn" style="padding:5px 12px;font-size:12px" title="已完成任务的归档策略">📦 归档</button>
+          <!-- ★ 2026-10-05 小白化：使用指引开关（面板内容由 app.js initTaskBoardGuide 注入） -->
+          <button class="btn-ghost" id="taskBoardHelpBtn" style="padding:5px 12px;font-size:12px" title="小白上手：建卡/连线/派活/看进度/验收 五步">？指引</button>
         </div>
         <button class="btn-ghost" id="createCardBtn" style="display:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -4783,7 +4785,7 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
               <svg class="task-map-edges" id="taskMapEdges" width="1" height="1" aria-hidden="true"></svg>
               <div class="task-map-nodes" id="taskMapNodes"></div>
             </div>
-            <div class="task-map-empty" id="taskMapEmpty">暂无卡片</div>
+            <div class="task-map-empty" id="taskMapEmpty">还没有卡片 —— 点左侧 ＋ 建第一张任务卡（先选类型再填标题）</div>
           </div>
         </div>
       </div>

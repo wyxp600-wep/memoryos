@@ -2785,6 +2785,13 @@
       if (tabLegacy) tabLegacy.style.display = 'none';
       if (ccb) ccb.onclick = createCard;
       initCreateCardPanel(); // 画布左上角「＋」悬浮入口（点选建卡；随受限模式显隐）
+      initTaskBoardGuide(); // ? 使用指引面板（首访自动展开；不再显示后收起）
+      const helpBtn = $('#taskBoardHelpBtn');
+      if (helpBtn) helpBtn.onclick = () => {
+        const p = $('#taskBoardGuide');
+        if (!p) return;
+        p.style.display = p.style.display === 'none' ? '' : 'none';
+      };
       if (dpb) dpb.onclick = runDispatch;
       if (ilb) ilb.onclick = importLegacy;
       showTaskView('map'); // ★ 2026-09-13：任务地图为默认模块入口
@@ -4036,6 +4043,16 @@
     ['review', '待验收', '#f59e0b'], ['blocked', '阻塞', '#ef4444'], ['failed', '失败', '#f97316'], ['done', '完成', '#10b981'],
     ['cancelled', '取消', '#94a3b8'], ['archived', '归档', '#64748b'],
   ];
+  // ★ 2026-10-05 小白化：每个泳道/状态一行大白话（给非技术用户看的副标，原名保留作正式术语）
+  const LANE_SUB = {
+    triage: '写下要做什么（细节可以没有）', todo: '准备好了，等人来接', ready: '干得了，等智能体来领',
+    running: '正在干', review: '干完了，等你确认', blocked: '卡住了（等依赖或等人）',
+    failed: '干失败了，可以重试', done: '确认完成', cancelled: '不做了', archived: '收进档案了',
+  };
+  const LANE_NAME = {
+    triage: '待规划', todo: '待开始', ready: '待领取', running: '执行中', review: '待验收',
+    blocked: '卡住了', failed: '失败了', done: '已完成', cancelled: '已取消', archived: '已归档',
+  };
   const SECTOR_COLOR_P6 = { working: '#94a3b8', episodic: '#38bdf8', semantic: '#34d399', procedural: '#a78bfa', meta: '#fbbf24', social: '#f472b6', user: '#22d3ee', prospective: '#fb923c', affective: '#f87171', secret: '#64748b' };
   const SECTOR_CN_P6 = { working: '工作', episodic: '情景', semantic: '语义', procedural: '程序', meta: '元记忆', social: '协作', user: '用户', prospective: '前瞻', affective: '情感' };
 
@@ -4215,6 +4232,7 @@
           <span style="font-size:12px;font-weight:600;color:var(--text-primary)">${label}</span>
           <span class="mono" style="font-size:10px;color:var(--text-muted)">${items.length}</span>
         </div>
+        <div style="font-size:11px;color:var(--text-muted);margin:-2px 0 8px">${esc(LANE_SUB[st] || '')}</div>
         ${items.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;align-items:start">${items.map(c => `
           <div data-card-id="${c.id}" data-status="${st}" style="padding:9px 11px;background:var(--bg-card);border:1px solid rgba(0,0,0,0.07);border-radius:10px;cursor:pointer;touch-action:none" title="点击打开详情 · 拖动改状态">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
@@ -4272,7 +4290,7 @@
           });
           const j = await res.json().catch(() => ({}));
           if (!res.ok) { toast(`移动失败：${j.error || res.status}`); return; }
-          toast(`${j.from} → ${j.to}`);
+          toast(`#${el.dataset.cardId} 移到了「${LANE_NAME[j.to] || j.to}」`);
           renderCards();
         };
         window.addEventListener('pointermove', onMove);
@@ -5062,14 +5080,16 @@
     }
     const data = await fetch('/api/cards/graph' + (_taskMapState.auto ? '' : '?auto=0')).then(r => r.json()).catch(() => null);
     if (seq !== _taskMapState.seq) return;
-    if (!data || !data.ok) {
-      const empty = $('#taskMapEmpty');
-      if (empty) {
-        empty.textContent = '任务地图加载失败';
-        empty.classList.add('show');
+      if (!data || !data.ok) {
+        const empty = $('#taskMapEmpty');
+        if (empty) {
+          empty.textContent = '任务地图加载失败';
+          empty.classList.add('show');
+        }
+        return;
       }
-      return;
-    }
+      // 成功路径恢复默认空态文案（加载失败文案不残留）
+      { const em = $('#taskMapEmpty'); if (em && em.textContent === '任务地图加载失败') em.textContent = '还没有卡片 —— 点左侧 ＋ 建第一张任务卡（先选类型再填标题）'; }
     // ★ 2026-09-18：归档任务默认隐藏 —— 隐藏时剔掉 status='archived' 主卡、挂到它们的连线、
     //   以及失去宿主的 aux_ 动态子卡。chips 计数仍用全量（「已归档」chip 计数即隐藏提示，点击自动揭开）
     // ★ 2026-09-20：已完成（done）同样默认隐藏，与归档共用同一剔除逻辑（各自独立开关，互不影响）
@@ -5321,10 +5341,10 @@
     cancelled: [],
     archived: [],
   };
-  /** 状态中文短标签（详情按钮 / 右键菜单共用） */
+  /** 状态中文短标签（详情按钮 / 右键菜单共用）—— 2026-10-05 小白化：术语 + 一行大白话 */
   const CW_STATUS_LABEL = {
-    triage: '🔍 待细化', todo: '📝 待就绪', ready: '▶ 可认领', running: '🏃 执行中',
-    review: '👁 待验收', blocked: '⛔ 阻塞', failed: '❌ 失败', done: '✅ 完成',
+    triage: '📝 先写下来（待规划）', todo: '▶ 待开始', ready: '▶ 待领取', running: '🏃 执行中',
+    review: '👁 干完待你确认（待验收）', blocked: '⛔ 卡住了', failed: '❌ 失败了', done: '✅ 完成',
     cancelled: '🚫 取消', archived: '📦 归档',
   };
   const cwTargets = (st) => CARD_TRANSITIONS[st] || [];
@@ -6111,6 +6131,34 @@
       ov.addEventListener('click', e => { if (e.target === ov) close(null); });
       q('label').focus();
     });
+  }
+
+  /** ? 使用指引（小白 5 分钟上手；首次进任务看板自动展开，可「不再显示」；按钮随时重开） */
+  function initTaskBoardGuide() {
+    if ($('#taskBoardGuide')) return;
+    const host = document.querySelector('[data-view="cards"] .toolbar');
+    if (!host) return;
+    const panel = document.createElement('div');
+    panel.id = 'taskBoardGuide';
+    panel.style.cssText = 'margin:0 0 12px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:10px;background:rgba(255,255,255,.5);padding:10px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9';
+    const L = [
+      ['① 建任务', '点画布左侧 ＋（或顶栏「新建卡片」）→ 先选类型（任务/智能体/交接/文档）→ 填标题'],
+      ['② 连任务', '按住卡片右侧的 ＋ 拖到另一张卡 = 依赖连线；右键连线可删'],
+      ['③ 派活给智能体', '悬停任务卡点 ⚡（或右键「⚡ 派发给…」）→ 选一张智能体卡 → 确认'],
+      ['④ 建智能体卡', '点左侧 ＋ → 类型选「智能体」→ 选本机已装的智能体 + 执行通道；智能体卡在画布右侧单独一区'],
+      ['⑤ 看它干活', '悬停智能体卡：⌨ 日志 / 📺 直播；任务干完会自动生成交接文档卡，下游任务右键「🔗 注入前情」即可带上前情'],
+      ['⑥ 验收', '列式看板里把卡片拖到「待验收」→ 再拖到「已完成」；「运行派发」= 全局调度（租约回收/提升），⚡ = 把单张卡直接派给指定智能体'],
+    ];
+    panel.innerHTML = `<div style="display:flex;align-items:center;font-weight:600;color:var(--text-primary);font-size:13px;margin-bottom:4px">使用指引（小白 5 分钟上手）
+      <button id="taskBoardGuideClose" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px">不再显示</button></div>
+      ${L.map(([k, v]) => `<div><b style="color:var(--text-primary)">${esc(k)}</b> ${esc(v)}</div>`).join('')}`;
+    host.parentElement.insertBefore(panel, host.nextSibling);
+    const hide = () => { panel.style.display = 'none'; try { localStorage.setItem('memoryos-taskboard-guide-dismissed', '1'); } catch { /* ignore */ } };
+    panel.querySelector('#taskBoardGuideClose').onclick = hide;
+    // 首次进任务看板自动展开；「不再显示」后收起（「? 指引」按钮可随时重开）
+    try {
+      if (localStorage.getItem('memoryos-taskboard-guide-dismissed') === '1') panel.style.display = 'none';
+    } catch { /* ignore */ }
   }
 
   /* 画布左上角「＋ 新建卡片」悬浮入口（点选建卡：先选类型、再落卡；与工具条按钮同一份交互） */
