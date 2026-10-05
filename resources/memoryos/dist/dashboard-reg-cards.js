@@ -199,19 +199,43 @@ export function registerCards(app, ctx) {
             return `A1 硬模式：agent「${a}」无有效写凭据（MEMORYOS_A1_ENFORCE=1），本操作拒绝；请携带有效 credential 参数或改用 task_* MCP 工具`;
         return null; // 软模式：放行（与 MCP checkWriteCredential 同口径）
     }
-    /** 卡片全部 depends 入边是否 done（M3：只认 depends） */
-    function cardDependsDone(cardId) {
+    /** 依赖「已满足」的状态集：`done` 与 `archived` 都算完成。
+     *  状态机 `done: ["archived"]` —— archived 是「干完并归档」的下游终态。
+     *  ★ 2026-10-05 根治：旧判据只认 done → 依赖卡一旦归档，依赖它的卡被永久判「依赖未完成」，
+     *    永远派发不出去（生产实证：todo 卡 #110/#111/#112/#113 全卡在已归档的 #109，
+     *    且 409 只说「需可认领 ready」，真正卡点一个字没提）。同类先例：共享记忆 #4258、
+     *    `server-reg-task.js` 的依赖死端检测（M6）。 */
+    const DEP_SATISFIED = new Set(["done", "archived"]);
+    /** 未满足的 depends 入边清单（含「依赖卡已删除」死端），供 409 文案与前端预检逐条透出 */
+    function pendingDepends(cardId) {
         const deps = db
             .prepare(`SELECT dst_id FROM links WHERE src_kind='card' AND src_id=? AND kind='depends' AND dst_id IS NOT NULL`)
             .all(cardId);
-        if (!deps.length)
-            return true;
+        const out = [];
         for (const d of deps) {
-            const s = db.prepare(`SELECT status FROM cards WHERE id=?`).get(d.dst_id);
-            if (!s || s.status !== "done")
-                return false;
+            const s = db.prepare(`SELECT status, title FROM cards WHERE id=?`).get(d.dst_id);
+            if (!s)
+                out.push({ id: Number(d.dst_id), status: "gone", note: "依赖卡已删除" });
+            else if (!DEP_SATISFIED.has(s.status))
+                out.push({
+                    id: Number(d.dst_id),
+                    status: s.status,
+                    note: s.status === "cancelled" ? "已取消·永远不会完成" : "",
+                    title: String(s.title ?? "").slice(0, 16),
+                });
         }
-        return true;
+        return out;
+    }
+    /** 卡片全部 depends 入边是否已满足（M3：只认 depends） */
+    function cardDependsDone(cardId) {
+        return pendingDepends(cardId).length === 0;
+    }
+    /** 409 文案：把真正卡住的依赖逐条列出 + 可行动指引（替代「需可认领 ready」这类误导话术） */
+    function depPendingMsg(pend) {
+        const brief = (p) => `#${p.id}${p.title ? `「${p.title}」` : ""}(${p.status}${p.note ? `·${p.note}` : ""})`;
+        const dead = pend.some((p) => p.note);
+        return `依赖未完成，暂不可派发：${pend.map(brief).join("、")}`
+            + (dead ? "。已取消/已删除的依赖永远不会完成——右键那条依赖线删除即可解锁" : "。完成这些依赖，或右键删掉这条依赖线");
     }
     /* ★ A1 一键派发收口（对标 orca worker_done）：run 终态回调 —— 卡片 running →
      *   review（成功，交回人工验收）/ failed（失败，failure_count+1），并结算工作证。
@@ -727,16 +751,23 @@ export function registerCards(app, ctx) {
         if (!c)
             return reply.code(404).send({ ok: false, error: "卡片不存在" });
         let from = c.status;
+        const pend = pendingDepends(id); // 一次算清：todo 提升与 409 文案共用同一判据（旧实现算两遍且各说各话）
         // todo 且依赖已满足 → 先提升 ready（与 /api/dispatch 调度器同口径），派发少一步手动流转
-        if (from === "todo" && cardDependsDone(id)) {
+        if (from === "todo" && !pend.length) {
             db.prepare(`UPDATE cards SET status='ready', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='todo'`).run(id);
             writeCardEvent(id, agent, "promote", "todo", "ready", "派发前置：依赖已满足");
             from = "ready";
         }
+        // 状态卡点优先（triage/running/done… 说状态）；todo 卡住的真实原因多半是依赖 → 说依赖并列卡号
         if (from !== "ready")
-            return reply.code(409).send({ ok: false, error: `卡片状态「${from}」不可派发（需可认领 ready）` });
-        if (!cardDependsDone(id))
-            return reply.code(409).send({ ok: false, error: "依赖卡片未完成，暂不可派发" });
+            return reply.code(409).send({
+                ok: false,
+                error: from === "todo" && pend.length
+                    ? depPendingMsg(pend)
+                    : `卡片状态「${from}」不可派发（需可认领 ready）`,
+            });
+        if (pend.length)
+            return reply.code(409).send({ ok: false, error: depPendingMsg(pend) });
         // 关联任务记忆（与 syncCardToTask 同口径：ref 优先，其次 card_memory dispatch 关联）
         const memRow = (c.ref_kind === "memory" && c.ref_id
             ? db.prepare(`SELECT id FROM memories WHERE id=?`).get(c.ref_id)
@@ -1592,7 +1623,7 @@ export function registerCards(app, ctx) {
                 writeCardEvent(s.id, "dispatcher", "auto_refine", "triage", "todo", "24h 未动自动提升");
                 out.auto_refined.push(s.id);
             }
-            // ③ 依赖提升（M3）：todo 且 depends 全 done → ready
+            // ③ 依赖提升（M3）：todo 且 depends 全已满足（done/archived）→ ready
             const todos = db.prepare(`SELECT id FROM cards WHERE status='todo'`).all();
             for (const t of todos) {
                 if (cardDependsDone(t.id)) {

@@ -365,7 +365,7 @@ export async function reembedStale(db, limit = 20) {
  *  ① 租约贴条（⑦/H3 演进）：过期 running 打 lease_notice_at（不抢回）；超期裁决由 reapExpiredLeases 阶段二处理（⑧ 只标不回收）
  *  ② triage 超时（M1）：>24h → todo + auto_refine
  *  ③ 熔断：failed≥2 → blocked + circuit_break
- *  ④ 依赖提升（M3）：todo 且 depends 全 done → ready + auto_ready
+ *  ④ 依赖提升（M3）：todo 且 depends 全已满足（done/archived）→ ready + auto_ready
  *  ⑤ working 清理（H2/R4-2）：updated_at < now-24h 物理 DELETE
  *  ⑥ 保留策略（R4-1）：card_events>180d / memory_usage>90d 归档到 *_archive；archived 卡片>30d 追加 jsonl
  *  ⑦ waypoint 预计算（R4-4）：距上次 >24h 才对 top-500 高频记忆重算一跳邻居命中计数
@@ -511,13 +511,15 @@ export function housekeepBoard(db, opts = {}) {
             ev(f.id, "circuit_break", "failed", "blocked", "连续失败≥2 熔断");
             out.circuit_break++;
         }
-        // ④ 依赖提升（只认 depends；被依赖全 done）
+        // ④ 依赖提升（只认 depends；被依赖全 done/archived —— archived 是 done 的下游终态）
         const todos = db.prepare(`SELECT id FROM cards WHERE status='todo'`).all();
         for (const t of todos) {
             const deps = db.prepare(`SELECT dst_id FROM links WHERE src_kind='card' AND src_id=? AND kind='depends' AND dst_id IS NOT NULL`).all(t.id);
             const allDone = deps.every((d) => {
                 const s = db.prepare(`SELECT status FROM cards WHERE id=?`).get(d.dst_id);
-                return !!s && s.status === "done";
+                // ★ 与 dashboard-reg-cards.js `DEP_SATISFIED` 同口径：archived 是 done 的下游终态（干完并归档），
+                //   只认 done 会让「依赖已归档」的 todo 卡永久提升不了 → 与派发入口同一死锁（2026-10-05 根治）。
+                return !!s && (s.status === "done" || s.status === "archived");
             });
             if (allDone) {
                 db.prepare(`UPDATE cards SET status='ready', updated_at=? WHERE id=? AND status='todo'`).run(now, t.id);

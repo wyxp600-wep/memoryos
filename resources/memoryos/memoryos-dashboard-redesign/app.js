@@ -6272,9 +6272,39 @@
     ok.onclick = () => { closeAgentPops(); onOk(); };
   }
 
+  /** ⛔ 派发预检（后端 /dispatch-agent 准入的前端镜像）：卡点直接弹层说清「卡在哪一条」，
+   *  返回 true=已拦截（中止派发），false=放行。地图数据没加载（找不到该卡）时不拦，交后端把关——后端才是权威。 */
+  function dispatchPrecheck(srcCardId) {
+    const nodes = _taskMapState.data.nodes || [];
+    const src = nodes.find(n => Number(n.id) === Number(srcCardId));
+    if (!src) return false;
+    const ST = { triage: '待分流', todo: '待办', ready: '可认领', running: '执行中', review: '待验收', done: '已完成', failed: '失败', cancelled: '已取消', blocked: '受阻', archived: '已归档' };
+    const st = String(src.status || '');
+    if (st !== 'todo' && st !== 'ready') {
+      agentOverlay('⛔ 还不能派发', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">这张卡 <b>#${srcCardId}</b> 当前是「${esc(ST[st] || st)}」。<br>只有「待办 / 可认领」的卡能派给智能体——先把状态流转过去再派。</div>`);
+      return true;
+    }
+    const byId = new Map(nodes.map(n => [Number(n.id), n]));
+    const pend = (_taskMapState.data.links || [])
+      .filter(l => l && l.kind === 'depends' && Number(l.src_id) === Number(srcCardId) && Number(l.dst_id) > 0)
+      .map(l => byId.get(Number(l.dst_id)))
+      .filter(d => !d || !['done', 'archived'].includes(String(d.status)))
+      .map(d => d ? `#${d.id}「${esc(String(d.title || '').slice(0, 16))}」（${esc(ST[d.status] || d.status)}）` : '#?（依赖卡已删除）');
+    if (pend.length) {
+      agentOverlay('⛔ 还不能派发', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">依赖还没完成，派了也拿不到完整上下文：<br>${pend.join('<br>')}<br><br>完成它们，或右键那条依赖线删除后再派。</div>`);
+      return true;
+    }
+    return false;
+  }
+
   /** ⚡ 派发给…（按卡定向派发：选目标智能体卡 → state 拦截/确认层 → POST /api/cards/:id/dispatch-agent。
    *  收掉 A1 接线记录遗留待办「前端按钮真调 dispatch-agent」。carrier_missing=真 → 拦截并提示先配置。 */
   async function dispatchCardToAgent(srcCardId) {
+    /* ★ 2026-10-05 派发预检（与后端 /dispatch-agent 准入同口径）：先查状态/依赖卡点再放行，
+     *   不再「点完确认才吃 409」。截图那类报错的真因就是依赖卡着、文案却只说「需 ready」——
+     *   依赖满足 = done 或 archived（archived 是 done 的下游终态，把它当「没干」会让卡永远派不出去）。 */
+    const pre = dispatchPrecheck(srcCardId);
+    if (pre) return pre;
     const targets = (_taskMapState.data.nodes || []).filter(n => String(n.kind) === 'agent');
     if (!targets.length) { toast('地图上还没有智能体卡——先点左上角 ＋ 建一张（类型选「智能体」）'); return; }
     const rows = targets.map(t => {

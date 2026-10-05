@@ -32,6 +32,7 @@
  *   W29 A1 一键派发（后端链路）：准入 409 / ready 派发 202+assignee / run 终态自动收口+三清 / 再派发 409
  *   W29e~g A1 工作证（dispatches）：关联任务建证 → key 与回执同源 → 终态 settled+outcome 必填
  *   W30 A1 todo 卡自动提升 ready（promote 事件）再派发
+ *   W31 依赖判定死锁根治：archived 依赖放行（202）/ 依赖未完成 409 带卡号 / 前端预检先拦后选
  *   CDP 0 未捕获异常（与 a11y 门禁同口径）
  *
  * 隔离要点：本机 shell 注入 MEMORYOS_DATA_DIR=生产目录 → 必须在启动时覆盖到临时目录，
@@ -610,6 +611,57 @@ try {
     const promoted30 = db.prepare(`SELECT COUNT(*) c FROM card_events WHERE card_id=? AND action='promote' AND from_status='todo' AND to_status='ready'`).get(w30Id).c;
     rec('W30 todo 卡派发：自动提升 ready → 202 + promote 事件', r30.status === 202 && promoted30 >= 1, `HTTP ${r30.status} promote=${promoted30}`);
     if (j30.runId) await api('POST', `/api/agent/runs/${j30.runId}/abort`, {});
+
+    // W31：依赖判定死锁根治（2026-10-05 CLAIM §5）。旧判据只认 done，而状态机 done→archived，
+    //      「依赖卡干完归档」会被永久判成没干 → 派发永远 409，且文案只说「需 ready」不提真卡点。
+    // W31a：todo 卡 depends → 依赖卡 archived → 应放行（自动提升 ready + 202），不再死锁
+    const w31DepArch = Number(db.prepare(`INSERT INTO cards (title,kind,board,status) VALUES ('wb-walk-dep-archived','task','default','archived')`).run().lastInsertRowid);
+    const w31aId = Number(db.prepare(`INSERT INTO cards (title,kind,board,status,body) VALUES ('wb-walk-dep-wait-arch','task','default','todo','生成一句问候语')`).run().lastInsertRowid);
+    db.prepare(`INSERT INTO links(src_kind,src_id,dst_kind,dst_id,kind) VALUES ('card',?,'card',?,'depends')`).run(w31aId, w31DepArch);
+    const r31a = await api('POST', `/api/cards/${w31aId}/dispatch-agent`, { agent: 'wb-agent' });
+    const j31a = await r31a.json().catch(() => ({}));
+    rec('W31a 依赖已归档（archived=干完归档）→ 死锁解除：自动提升 ready + 202', r31a.status === 202,
+        `HTTP ${r31a.status} ${j31a.error || ''}`);
+    if (j31a.runId) await api('POST', `/api/agent/runs/${j31a.runId}/abort`, {});
+
+    // W31b：依赖真没完成（ready 未 done）→ 仍 409，但文案必须点名卡点（依赖卡号），不许只说「需 ready」
+    const w31DepPend = Number(db.prepare(`INSERT INTO cards (title,kind,board,status) VALUES ('wb-walk-dep-pending','task','default','ready')`).run().lastInsertRowid);
+    const w31bId = Number(db.prepare(`INSERT INTO cards (title,kind,board,status,body) VALUES ('wb-walk-dep-blocked','task','default','todo','生成一句问候语')`).run().lastInsertRowid);
+    db.prepare(`INSERT INTO links(src_kind,src_id,dst_kind,dst_id,kind) VALUES ('card',?,'card',?,'depends')`).run(w31bId, w31DepPend);
+    const r31b = await api('POST', `/api/cards/${w31bId}/dispatch-agent`, { agent: 'wb-agent' });
+    const j31b = await r31b.json().catch(() => ({}));
+    const m31b = String(j31b.error || '');
+    rec('W31b 依赖未完成 → 409 且文案点名卡点（含依赖卡号 + 「依赖未完成」）',
+        r31b.status === 409 && m31b.includes('依赖未完成') && m31b.includes('#' + w31DepPend),
+        `HTTP ${r31b.status} msg=${m31b.slice(0, 90)}`);
+
+    // W31c：前端预检 —— 地图上点该卡 ⚡ 快捷键 → 先弹「还不能派发」并列出依赖卡，
+    //        不再走到「派给哪个智能体」选择层（用户不用点完确认才吃 409）
+    //        ★ 视图前置：W27 已把视图切成「📋 列式看板」(#tabCards)，不切回 #tabMap 则地图节点不在 DOM → no-node
+    await ev(`(function(){var b=document.getElementById('cardCloseBtn');if(b)b.click();return 1})()`);
+    await sleep(400);
+    const w31cTab = await ev(`(function(){var t=document.getElementById('tabMap');if(!t)return 'no-tab';t.click();return 'ok'})()`);
+    await sleep(2200);
+    const w31cClick = await ev(`(function(){
+      var n=document.querySelector('.task-map-node[data-card-id="${w31bId}"]');
+      if(!n) return 'no-node';
+      var b=n.querySelector('.task-map-qbtn[data-q="dispatch"]');
+      if(!b) return 'no-qbtn';
+      b.click(); return 'clicked';
+    })()`);
+    await sleep(700);
+    const w31c = await ev(`(function(){
+      var hit=0, txt='', wrong=0;
+      document.querySelectorAll('div').forEach(function(d){
+        if (d.style && d.style.position==='fixed' && d.textContent.indexOf('还不能派发')>=0) { hit=1; if(txt.length<d.textContent.length) txt=d.textContent; }
+      });
+      if (document.body.textContent.indexOf('派给哪个智能体')>=0) wrong=1;
+      return hit+'|'+wrong+'|'+txt.replace(/\\s+/g,' ').slice(0,160);
+    })()`);
+    const p31c = String(w31c).split('|');
+    rec('W31c 前端派发预检：⚡ 点被依赖卡住的卡 → 弹「还不能派发」+ 列依赖卡，不进选智能体层',
+        w31cClick === 'clicked' && p31c[0] === '1' && p31c[1] === '0' && p31c[2].includes('#' + w31DepPend),
+        `tab=${w31cTab} click=${w31cClick} hit=${p31c[0]} wrong=${p31c[1]} txt=${p31c[2].slice(0, 120)}`);
 
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
