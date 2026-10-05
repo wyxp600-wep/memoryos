@@ -291,8 +291,17 @@ function discoverAIIdeAgents(home) {
  * 任何 agent 只要在配置目录落了 MCP 载体（config.toml [mcp_servers] / mcp.json /
  * .claude.json / config.json 的 mcpServers|mcp.servers 等）即判为 AI agent 候选；
  * 载体内容命中 memoryos|memoryhub → connected。纯只读探测，不写不执行。 */
-const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json"), "claude_desktop_config.json", "settings.json"]; // ★20261005 补 Claude Desktop 载体 + qoder settings.json
+const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json"), "claude_desktop_config.json", "settings.json", "mcp_config.json", "opencode.json"]; // ★20261005 补 Claude Desktop/qoder settings/Windsurf(mcp_config)/OpenCode
 const MCP_FINGERPRINT = /\[mcp_servers|mcpServers|mcp\.servers|"mcp"\s*:|memoryos|memoryhub/i;
+/** ★20261005 深路径载体（well-known 嵌套配置，点目录扫描覆盖不到；rel 相对 home）。
+ *  Claude Desktop 在 %APPDATA%\Claude、VS Code 在 %APPDATA%\Code\User、Windsurf 在 .codeium/windsurf、
+ *  OpenCode 在 .config/opencode —— 均非「home 点目录根下直接放载体文件」的形态，须逐点显式探。 */
+const DEEP_CARRIER_PATHS = [
+    { rel: "AppData/Roaming/Claude/claude_desktop_config.json", id: "claude-desktop", name: "Claude Desktop" },
+    { rel: "AppData/Roaming/Code/User/mcp.json", id: "vscode", name: "VS Code" },
+    { rel: ".codeium/windsurf/mcp_config.json", id: "windsurf", name: "Windsurf" },
+    { rel: ".config/opencode/opencode.json", id: "opencode", name: "OpenCode" },
+];
 const MEMORY_HIT = /memoryos|memoryhub/i;
 /** 通配载体探测：给任意配置目录，返回首个 MCP 载体 {file, connected} 或 null（不按 id 硬编码） */
 export function probeCarrier(dir) {
@@ -375,10 +384,12 @@ export function discoverCarrierAgents(home = os.homedir()) {
         }
         catch { /* 单点失败跳过 */ }
     };
-    // ① home 点目录（agent 配置惯例 ~/.<id>）
+    // ① home 点目录（agent 配置惯例 ~/.<id>）；★20261005 排除非 agent 通用点目录
+    //   （.config 是 XDG 惯例容器（git/opencode/cagent…都在里面），整目录列出会产生「id=config」假 agent）
+    const DOTDIR_EXCLUDE = new Set([".config", "" ]);
     try {
         for (const e of fs.readdirSync(home, { withFileTypes: true })) {
-            if (e.isDirectory() && e.name.startsWith("."))
+            if (e.isDirectory() && e.name.startsWith(".") && !DOTDIR_EXCLUDE.has(e.name.toLowerCase()))
                 consider(path.join(home, e.name));
         }
     }
@@ -454,6 +465,30 @@ export function scanAgents() {
     for (const d of discoverCarrierAgents()) {
         if (!agents.some(a => a.id === d.id))
             agents.push(d);
+    }
+    // ★20261005 深路径载体发现：Claude Desktop/VS Code/Windsurf/OpenCode 等非「点目录根部体」形态。
+    //   同 id 已存在时不跳过而「升级」：名称启发式可能已先列一条「已安装·无载体」（如 Programs/@opencodedesktop），
+    //   深路径探到载体才是实锤，应回填 configFile/connected/evidence，而非丢弃。
+    for (const dcp of DEEP_CARRIER_PATHS) {
+        const f = path.join(os.homedir(), ...dcp.rel.split("/"));
+        if (!fs.existsSync(f))
+            continue;
+        const hit = probeCarrier(path.dirname(f));
+        if (!hit)
+            continue;
+        const existing = agents.find((a) => a.id === dcp.id);
+        if (existing) {
+            existing.configFile = hit.file;
+            existing.connected = existing.connected || hit.connected;
+            existing.path = existing.path || hit.file;
+            existing.evidence = `MCP 载体指纹：${path.basename(hit.file)}（深路径）`;
+            continue;
+        }
+        agents.push({
+            id: dcp.id, name: dcp.name, type: "MCP 载体发现", version: null,
+            connected: hit.connected, path: hit.file, configFile: hit.file,
+            evidence: `MCP 载体指纹：${path.basename(hit.file)}（深路径）`,
+        });
     }
     // ★ 批次⑦B：手动登记合并（指纹也认不出的新 agent 兜底；configDir 在则通判 connected）
     for (const c of loadCustomAgents()) {
@@ -719,7 +754,7 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
                     attachSnippet: isToml ? buildMcpServers(a.id).codex : buildMcpServers(a.id).claude,
                 });
             }
-            return {
+            const guide = {
                 agentId: a.id, name: a.name, connected: false,
                 canAutoWrite: false,
                 manualSteps: [
@@ -731,6 +766,12 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
                 ],
                 manualSnippet: buildMcpServers(a.id).generic,
             };
+            // ★20261005 双格式通用化：未实证载体的 agent 同样面临两类导入框校验（裸映射 vs 整份文档），
+            //   两块都给 + 探测到的 configDir 也写入 guide（前端可提示用户指定准确载体）
+            guide.importSnippet = JSON.stringify({ memoryos: { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) } }, null, 2);
+            guide.importSnippetDoc = JSON.stringify({ mcpServers: { memoryos: { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) } } }, null, 2);
+            guide.importSnippetDocLabel = "整份文档（导入框要求顶层含 mcpServers 的客户端用）";
+            return guide;
         }
     }
 }

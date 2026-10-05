@@ -54,6 +54,8 @@ check("G2.zcode canAutoWrite=false", g2.canAutoWrite === false);
 check("G2.zcode manualSteps 非空", !!g2.manualSteps && g2.manualSteps.length > 0, `steps=${g2.manualSteps?.length}`);
 check("G2.zcode snippet 是 JSON + 含绝对路径(可复制即用)", !!g2.manualSnippet && g2.manualSnippet.includes('"memoryos"') && g2.manualSnippet.includes("C:/Users/WYX") && !g2.manualSnippet.includes("memoryos\\dist"), g2.manualSnippet?.slice(0, 60));
 check("G2.zcode steps 含绝对路径(非相对)", g2.manualSteps?.some(s => s.includes("C:/Users/WYX")) === true);
+check("G2.zcode generic 双格式（20261005 通用化）", !!g2.importSnippet && !!g2.importSnippetDoc, `doc-top=${(g2.importSnippetDoc || "").slice(0, 20)}`);
+check("G2.zcode 整份文档顶层 mcpServers", (() => { try { return typeof JSON.parse(g2.importSnippetDoc).mcpServers === "object"; } catch { return false; } })());
 // G3 dry-run：codex 返回预览但不落盘（20261005 契约：返回 target/dbPath/preview）
 const m3 = memFsx();
 m3.files[CODEX_TOML] = ""; // 已存在空 config
