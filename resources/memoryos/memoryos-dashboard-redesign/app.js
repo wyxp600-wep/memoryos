@@ -1395,6 +1395,7 @@
       const iv = setInterval(() => { p = Math.min(p + 30, 90); if (bar) bar.style.width = p + '%'; set('#scanPercent', p + '%'); setAuto('正在探测本机智能体…'); }, 300);
       fetch('/api/scan-agents').then(r => r.json()).then(r => {
         clearInterval(iv);
+        if (r.ok === false) throw new Error(r.error || '扫描降级：后端返回空清单');
         scanned = r.agents || [];
         scanMeta = r;
         if (bar) bar.style.width = '100%'; set('#scanPercent', '100%');
@@ -1402,7 +1403,8 @@
         setAuto('扫描完成：发现 ' + scanned.length + ' 个工具，MCP 已连接 ' + r.connected + ' 个' + (mism ? '，其中 ' + mism + ' 个连的是别的库' : ''));
         render();
       }).catch(e => {
-        clearInterval(iv); setAuto('扫描失败：' + e.message); scanned = []; render();
+        clearInterval(iv); setAuto('扫描失败：' + e.message + '（可点「开始扫描」重试）'); toast('扫描失败：' + e.message, 3000);
+        if (bar) bar.style.width = '0%';
       }).finally(() => { btn.disabled = false; btn.style.opacity = '1'; });
     }
     autoScanConnect = runScan;
@@ -1462,9 +1464,11 @@
         });
         if (gu.canAutoWrite) {
           html += `<div style="padding:10px;background:rgba(65,187,200,0.08);border-radius:8px;font-size:12px;margin-top:8px">写入 <code style="color:var(--accent-cyan)">${esc(shortPath(gu.autoWriteFile))}</code>；写前自动备份到 <span class="mono">_pending-delete/connect-backup</span>，只更新 memoryos 条目，其它配置原样保留。目标库：<span class="mono">${esc(shortPath(gu.targetDb) || '')}</span>。写完请重启该客户端会话。</div>`;
+          html += `<button class="btn-ghost" data-test-conn style="margin-top:8px;width:100%">⚡ 测试连接（实测拉起 MemoryOS 工具面）</button>`;
         } else {
           html += `<div style="padding:10px;background:rgba(251,191,36,0.1);border-radius:8px;font-size:12px;margin-top:8px">该载体为目录型 / 未实证，无法安全自动写，请按下面步骤手动接入。</div><ol style="margin:8px 0 0 18px;font-size:12px;line-height:1.9">${(gu.manualSteps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>`;
           html += `<div style="margin-top:12px;padding:10px;background:rgba(65,187,200,0.08);border-radius:8px;font-size:12px">粘贴配置后点「<b>重扫验证</b>」——重新扫描本机，若已接上，状态会变为「已连接」且显示它指向的库。</div>`;
+          html += `<button class="btn-ghost" data-test-conn style="margin-top:8px;width:100%">⚡ 测试连接（实测拉起 MemoryOS 工具面）</button>`;
           html += `<button class="btn-primary" data-rescan style="margin-top:8px;width:100%">重扫验证</button>`;
         }
         body.innerHTML = html;
@@ -1474,6 +1478,17 @@
         body.dataset.snippet = gu.attachSnippet || '';
         const reBtn = body.querySelector('[data-rescan]');
         if (reBtn) reBtn.onclick = () => { modal.style.display = 'none'; if (runScan) runScan(true); };
+        const testBtn = body.querySelector('[data-test-conn]');
+        if (testBtn) testBtn.onclick = async () => {
+          testBtn.disabled = true; const old = testBtn.textContent; testBtn.textContent = '测试中…（最长 20 秒）';
+          try {
+            const r = await fetch('/api/agent/' + encodeURIComponent(id) + '/test-connection', { method: 'POST' }).then(x => x.json());
+            const line = document.createElement('div');
+            if (r.ok) { line.className = 'mcp-evidence'; line.style.cssText = 'margin-top:8px;color:var(--success)'; line.textContent = `✓ 实测可用：工具面 ${r.toolCount} 个工具，耗时 ${r.durationMs}ms（${(r.tools || []).slice(0, 5).join('、')}…）`; }
+            else { line.style.cssText = 'margin-top:8px;color:var(--danger);font-size:12px'; line.textContent = `✗ 实测失败：${r.error || '未知错误'}`; }
+            testBtn.replaceWith(line);
+          } catch (e) { testBtn.textContent = old; testBtn.disabled = false; toast('测试连接失败：' + e.message, 3000); }
+        };
         modal.style.display = 'flex';
         body.querySelectorAll('[data-copy-snippet]').forEach(btn => {
           const bi = Number(btn.dataset.copySnippet);

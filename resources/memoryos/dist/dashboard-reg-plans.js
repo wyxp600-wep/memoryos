@@ -1,9 +1,13 @@
 /** T8（P2-3）：buildApp 路由域拆分 —— plans 域。
  * handler 自 dashboard.js 原行 670-999 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, queryByType } from "./db.js";
+import { logUsage, logDaemon, writeMemory, queryByType, logExecAudit } from "./db.js";
+import { spawnSync } from "node:child_process";
+/** ★20261005 test-connection 握手用：内核 server.js 路径（与 scan.js MEMORYOS_SERVER 同源推导） */
+import { fileURLToPath } from "node:url";
+const MEMORYOS_SERVER_PATH = fileURLToPath(new URL("./server.js", import.meta.url));
 import { aiViews, aiVisible } from "./format.js";
-import { scanAgents, connectGuideFor, applyConnectWrite, loadCustomAgents, saveCustomAgents } from "./scan.js";
+import { scanAgents, connectGuideFor, applyConnectWrite, loadCustomAgents, saveCustomAgents, readCarrierFacts, probeCarrier, MEMORYOS_DB_PATH } from "./scan.js";
 import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
 import os from "node:os";
@@ -310,12 +314,18 @@ export function registerPlans(app, ctx) {
     //   custom 登记/注销成功后清缓存戳 → 新条目不等 TTL 窗口即现身（防「登记了但 60s 内选不到」）。
     let scanCache = { at: 0, value: null };
     const SCAN_TTL_MS = 60_000;
+    // ★20261005：抽为 getScanCached()，connect-guide/connect/agents/cards 一并复用（不再裸调 scanAgents，修 spawnSync 事件循环阻塞）
+    const getScanCached = () => {
+        const now = Date.now();
+        if (!scanCache.value || now - scanCache.at >= SCAN_TTL_MS)
+            scanCache = { at: now, value: scanAgents() };
+        return scanCache.value;
+    };
+    /** ★20261005 库比对真源：生产库（scan.js 导出，与壳层 core-process.js 同源） */
+    const DB_PATH = MEMORYOS_DB_PATH;
     app.get("/api/scan-agents", async () => {
         try {
-            const now = Date.now();
-            if (!scanCache.value || now - scanCache.at >= SCAN_TTL_MS)
-                scanCache = { at: now, value: scanAgents() };
-            const scan = scanCache.value;
+            const scan = getScanCached();
             // 最近连接心跳：近 10 分钟内 op=connect 的 memoryos server 实例，按 payload.agent 归类
             const beats = db.prepare(`SELECT id, payload, operator FROM memory_events WHERE op='connect' AND created_at >= datetime('now','-10 minutes') ORDER BY id DESC`).all();
             const beatAgents = {};
@@ -334,8 +344,57 @@ export function registerPlans(app, ctx) {
                 connected: a.connected || !!beatAgents[a.id],
                 heartbeat: beatAgents[a.id] ? true : false,
             }));
+            // ★20261005 数据链补全：逐 agent 透出库比对字段（前端等这三个字段多时，之前后端从不返回 →「当前库」恒「未知」）
+            for (const a of agents) {
+                // 载体文件定位：显式 configFile > configDir 探测；都没有则跳过（无法判定，不臆测）
+                let cf = a.configFile || null;
+                if (!cf && a.configDir) {
+                    const probe = probeCarrier(a.configDir);
+                    cf = probe ? probe.file : null;
+                }
+                const facts = cf ? readCarrierFacts(cf) : null;
+                a.resolvedDb = facts?.carrierDb ?? null;
+                a.dbMatches = facts?.declares ? (facts.carrierDb != null ? path.resolve(facts.carrierDb) === path.resolve(DB_PATH) : null) : null;
+                a.staleServer = !!(facts?.declares && facts.serverPath && !fs.existsSync(facts.serverPath));
+            }
             const connected = agents.filter((a) => a.connected).length;
-            return { agents, total: agents.length, connected };
+            // ★20261005 数据链补全：dbPath 真源 + carriers[]（已知载体文件逐个摊开，前端核验表从此有数据）
+            const carrierFiles = new Set();
+            const home = os.homedir();
+            for (const a of agents) {
+                if (a.configFile)
+                    carrierFiles.add(a.configFile);
+                else if (a.configDir)
+                    carrierFiles.add(a.configDir);
+            }
+            for (const rel of [".codex/config.toml", ".claude.json", ".workbuddy/mcp.json", ".workbuddy-ai/mcp.json", ".minimax/mcp.json", ".zcode/cli/config.json", "AppData/Roaming/Claude/claude_desktop_config.json"])
+                carrierFiles.add(path.join(home, ...rel.split("/")));
+            const carriers = [];
+            for (const f of carrierFiles) {
+                if (!f)
+                    continue;
+                // 目录（手动登记的 configDir）→ 先探内部载体；文件 → 直接读事实
+                const isDir = fs.existsSync(f) && fs.statSync(f).isDirectory();
+                const probe = isDir ? probeCarrier(f) : null;
+                const target = probe ? probe.file : (isDir ? null : f);
+                if (!target)
+                    continue;
+                const facts = readCarrierFacts(target);
+                if (!facts.exists)
+                    continue;
+                const owner = agents.find((x) => x.configFile === target);
+                carriers.push({
+                    agentId: owner?.id ?? null,
+                    agentLabel: owner?.name ?? path.basename(target),
+                    file: target,
+                    shape: facts.shape,
+                    declares: facts.declares,
+                    serverPath: facts.serverPath,
+                    resolvedDb: facts.carrierDb,
+                    dbMatches: facts.declares ? (facts.carrierDb != null ? path.resolve(facts.carrierDb) === path.resolve(DB_PATH) : null) : null,
+                });
+            }
+            return { agents, total: agents.length, connected, dbPath: DB_PATH, carriers };
         }
         catch (e) {
             // 异常不 500：返回空清单降级（前端 agentScanCache 语义=「取数失败保留旧清单」，形状变化可被识别）
@@ -425,24 +484,76 @@ export function registerPlans(app, ctx) {
         };
     });
     // —— 接入向导：查某 agent 的 connect guide（可否自动写/手动步骤/配置模板）——
+    // ★20261005：换用 getScanCached()（原裸调 scanAgents()，spawnSync 最坏 ~90s 冻结事件循环）；支持 ?refresh=1 强制重扫
     app.get("/api/agent/:id/connect-guide", async (req, reply) => {
-        const s = scanAgents();
+        if (req.query.refresh === "1")
+            scanCache = { at: 0, value: null };
+        const s = getScanCached();
         const a = s.agents.find((x) => x.id === req.params.id);
         if (!a)
             return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
         const g = connectGuideFor(a);
-        return { ok: true, guide: g };
+        // guide 级库比对与写入目标（与 scan-agents 的 agent 级字段同源；targetDb 为当前生产库真源）
+        return { ok: true, guide: { ...g, targetDb: DB_PATH } };
     });
     // —— 接入向导：一键自动写配置（仅 canAutoWrite；带备份）。dry_run=1 只预览不落盘 ——
+    // ★20261005：换用缓存；返回 mode/target/dbPath；写类操作落 logExecAudit（与执行面同口径，append-only）
     app.post("/api/agent/:id/connect", async (req, reply) => {
-        const s = scanAgents();
+        const s = getScanCached();
         const a = s.agents.find((x) => x.id === req.params.id);
         if (!a)
             return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
         const dryRun = req.query.dry_run === "1" || req.body?.dryRun === true;
         const r = applyConnectWrite(a, { dryRun });
+        try {
+            logExecAudit(db, {
+                tool: "connect_write", agent: "dashboard-connect", risk: dryRun ? "L1" : "L2",
+                approval: dryRun ? "dry-run" : "user-confirmed",
+                argsDigest: `${a.id} dry=${dryRun} mode=${r.mode ?? "-"}`,
+                detail: r.ok ? `target=${r.target ?? "-"} backup=${r.backupPath ?? "-"}` : String(r.error ?? "").slice(0, 200),
+                durationMs: 0,
+            });
+        }
+        catch { /* 审计失败不阻断 */ }
         if (!r.ok)
-            return reply.code(400).send({ ok: false, error: r.error });
-        return { ok: true, backupPath: r.backupPath, dryRun };
+            return reply.code(400).send({ ok: false, error: r.error, carrierInvalid: r.carrierInvalid === true });
+        return { ok: true, backupPath: r.backupPath, dryRun, mode: r.mode, target: r.target, dbPath: r.dbPath };
+    });
+    // —— ★20261005 运行时握手测试：按该 agent 载体实际配置 spawn server --list-tools，验证工具面真实可用 ——
+    //   连接判定从「配置指纹+心跳旁证」升级为「实测拉起 server 并拿到工具清单」。受限模式 403（重启服务类敏感操作同口径）。
+    app.post("/api/agent/:id/test-connection", async (req, reply) => {
+        if (RESTRICTED)
+            return reply.code(403).send({ ok: false, code: "RESTRICTED", error: "受限模式：由系统统一派发" });
+        // 空 body / 无 content-type 容错：本端点不读 body；415 由内核 JSON parser 对无 content-type POST 报出，
+        // dashboard.js 已有 content-typeOverride 全局容错（curl 空 POST 可达）；此处不再处理 body。
+        const s = getScanCached();
+        const a = s.agents.find((x) => x.id === req.params.id);
+        if (!a)
+            return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
+        const started = Date.now();
+        try {
+            const r = spawnSync(process.execPath, [MEMORYOS_SERVER_PATH, "--list-tools"], {
+                encoding: "utf8", timeout: 20_000, windowsHide: true,
+                env: { ...process.env, MEMORY_AGENT: a.id, MEMORY_DB: DB_PATH, MEMORYOS_EMBED_TEST: "1" },
+            });
+            const out = String(r.stdout || "");
+            const m = out.match(/##TOOLS##(\[[\s\S]*?\])/);
+            if (!m)
+                throw new Error(out.slice(0, 200) || r.stderr?.slice(0, 200) || "server 未返回工具清单");
+            const tools = JSON.parse(m[1]);
+            const durationMs = Date.now() - started;
+            try {
+                logExecAudit(db, { tool: "test_connection", agent: "dashboard-connect", risk: "L1", approval: "user-triggered", argsDigest: a.id, detail: `tools=${tools.length} ${durationMs}ms`, durationMs });
+            }
+            catch { /* 审计失败不阻断 */ }
+            return { ok: true, agentId: a.id, toolCount: tools.length, tools: tools.slice(0, 8), durationMs };
+        }
+        catch (e) {
+            try {
+                logExecAudit(db, { tool: "test_connection", agent: "dashboard-connect", risk: "L1", approval: "user-triggered", argsDigest: a.id, detail: "FAIL " + String(e?.message ?? e).slice(0, 160), durationMs: Date.now() - started });
+            }
+            catch { /* 审计失败不阻断 */ }
+            return { ok: false, agentId: a.id, error: String(e?.message ?? e), durationMs: Date.now() - started };
+        }
     });
 }

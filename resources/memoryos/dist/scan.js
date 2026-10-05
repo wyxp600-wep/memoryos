@@ -291,7 +291,7 @@ function discoverAIIdeAgents(home) {
  * 任何 agent 只要在配置目录落了 MCP 载体（config.toml [mcp_servers] / mcp.json /
  * .claude.json / config.json 的 mcpServers|mcp.servers 等）即判为 AI agent 候选；
  * 载体内容命中 memoryos|memoryhub → connected。纯只读探测，不写不执行。 */
-const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json")];
+const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json"), "claude_desktop_config.json"]; // ★20261005 补 Claude Desktop 载体
 const MCP_FINGERPRINT = /\[mcp_servers|mcpServers|mcp\.servers|"mcp"\s*:|memoryos|memoryhub/i;
 const MEMORY_HIT = /memoryos|memoryhub/i;
 /** 通配载体探测：给任意配置目录，返回首个 MCP 载体 {file, connected} 或 null（不按 id 硬编码） */
@@ -500,73 +500,184 @@ const MEMORYOS_SERVER = process.env.MEMORYOS_SERVER?.trim() ||
  *  口径与 merge-db.js DEFAULT_TO 一致；原实配（claude/codex）本就注入应用库，此处只是让模板对齐事实。 */
 const MEMORYOS_DB = path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
     "MemoryOS", "data", "memory.db");
-/** memoryhub MCP server 配置片段（各载体语法） */
-const MEMORYOS_MCP_SERVERS = {
-    codex: `[[mcp_servers]]
-name = "memoryos"
+/** ★20261005 嵌入口径真源对齐（services/core-process.js:62-63）：壳层给 MCP server 注入 EMBED_MODE=local + EMBED_CACHE_DIR=<内核>/models。
+ *  旧片段不注 EMBED_* → server 兕底 local 但缓存落 ~/.cache/memoryos-embed（embed.js:157），同机两份模型缓存；
+ *  现片段与壳层同源，接入即与仪表盘共用同一份本地嵌入模型缓存。 */
+const MEMORYOS_KERNEL_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const MEMORYOS_EMBED = { EMBED_MODE: "local", EMBED_CACHE_DIR: path.join(MEMORYOS_KERNEL_ROOT, "models") };
+/** 接入片段共用 env（MEMORY_AGENT 按 agent 注入，身份缺失会被心跳判定 unknown →「连上了也显示未连接」） */
+function mcpEnv(agentId) {
+    const fwd = (s) => String(s).split(path.sep).join("/");
+    return { MEMORY_AGENT: agentId, MEMORY_DB: fwd(MEMORYOS_DB), EMBED_MODE: "local", EMBED_CACHE_DIR: fwd(path.join(MEMORYOS_KERNEL_ROOT, "models")) };
+}
+const toTomlInlineEnv = (env) => Object.entries(env).map(([k, v]) => `${k} = '${String(v).split(path.sep).join("/")}'`).join(", ");
+const toJsonInlineEnv = (env) => JSON.stringify(Object.fromEntries(Object.entries(env).map(([k, v]) => [k, String(v)])));
+/** memoryhub MCP server 配置片段（各载体语法；★20261005 codex 改键表风格对齐本机工作实配 [mcp_servers.memoryos]，数组表 [[mcp_servers]]+name 实配无此形态） */
+function buildMcpServers(agentId) {
+    const env = mcpEnv(agentId);
+    const serverFwd = MEMORYOS_SERVER;
+    const dbFwd = MEMORYOS_DB.split(path.sep).join("/");
+    return {
+        codex: `[mcp_servers.memoryos]
 command = "node"
-args = [${JSON.stringify(MEMORYOS_SERVER)}]
-env = { MEMORY_AGENT = 'codex', MEMORY_DB = '${MEMORYOS_DB.split(path.sep).join("/")}' }`,
-    claude: `"memoryos": { "command": "node", "args": [${JSON.stringify(MEMORYOS_SERVER)}], "env": { "MEMORY_AGENT": "claude", "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} } }`,
-    trae: `// 在 Trae 的教学面板「管理 MCP 服务器」中新增：
+args = [${JSON.stringify(serverFwd)}]
+env = { ${toTomlInlineEnv({ ...env, MEMORY_DB: dbFwd })} }`,
+        claude: `"memoryos": { "command": "node", "args": [${JSON.stringify(serverFwd)}], "env": ${toJsonInlineEnv(env)} }`,
+        trae: `// 在 Trae 的教学面板「管理 MCP 服务器」中新增：
 //  Name: memoryos
 //  Type: stdio
 //  Command: node
-//  Args: ${MEMORYOS_SERVER}
+//  Args: ${serverFwd}
+//  Env: ${toJsonInlineEnv({ ...env, MEMORY_DB: dbFwd })}
 // 自动写会创建 ~/.trae-cn/mcps/<project>/<type>/mcp_memoryos/SERVER_METADATA.json（需项目上下文，故建议手动）`,
-    workbuddy: `{
+        workbuddy: `{
   "memoryos": {
     "command": "node",
-    "args": [${JSON.stringify(MEMORYOS_SERVER)}],
-    "env": { "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} }
+    "args": [${JSON.stringify(serverFwd)}],
+    "env": ${toJsonInlineEnv(env)}
   }
 }`,
-    /** 通用 stdio MCP JSON（未实证 agent 也能直接复制粘贴；miniMax 2026-09-10 实证接受 transport+enabled+args 数组）
-     *  ★ 2026-09-25：各载体 env/environment 字段名不一（claude/workbuddy/generic 用 env，opencode 用 environment），
-     *   通用片段按主流 env 给出；若目标 agent 不认 env 键会回落 server 缺省（仓内开发库）——接入后需自检 [db] 行。 */
-    generic: `{
+        /** 通用 stdio MCP JSON（未实证 agent 也能直接复制粘贴；miniMax 2026-09-10 实证接受 transport+enabled+args 数组）
+         *  ★ 2026-09-25：各载体 env/environment 字段名不一（claude/workbuddy/generic 用 env，opencode 用 environment），
+         *   片段按 env 给出并标注；若目标 agent 只认 environment 键，请把 env 改名为 environment（库/嵌入注入内容不变）。 */
+        generic: `{
   "memoryos": {
     "transport": "stdio",
     "command": "node",
-    "args": [${JSON.stringify(MEMORYOS_SERVER)}],
-    "env": { "MEMORY_DB": ${JSON.stringify(MEMORYOS_DB)} },
+    "args": [${JSON.stringify(serverFwd)}],
+    "env": ${toJsonInlineEnv(env)},
     "enabled": true
   }
 }`,
-};
+    };
+}
+/** ★20261005 载体事实提取：读载体文件，识别形状并解析出「memoryos 条目当前的 server 路径与库路径」。
+ *  只读不写，解析失败不抛错（返回 shape=invalid + parseError，供前端点亮「改库」告警与 needsDbFix）。 */
+export function readCarrierFacts(filePath, fileSvc = { read: (p) => fs.readFileSync(p, "utf8"), exists: (p) => fs.existsSync(p) }) {
+    const exists = fileSvc.exists ? !!fileSvc.exists(filePath) : fs.existsSync(filePath);
+    if (!exists)
+        return { exists: false, shape: "missing", declares: false, serverPath: null, carrierDb: null, parseError: null };
+    let txt;
+    try {
+        txt = fileSvc.read(filePath);
+    }
+    catch (e) {
+        return { exists: true, shape: "unreadable", declares: false, serverPath: null, carrierDb: null, parseError: String(e?.message ?? e) };
+    }
+    if (/\.toml$/i.test(filePath)) {
+        // TOML：无解析器（零新依赖），逐行状态机切段（表头→收行）。
+        // ★20261005 修：正则切段被「args 数组内 [ 字符」与「表头内引号路径含 ]」双重干扰；
+        //   状态机按「行首 [..] 表头」切段，行体逐行收集，可靠；引号双兼容（真实载体用单引号）；
+        //   memoryos 键优先于旧名 memoryhub（同仓多段时取正确的库路径）。
+        const segs = {};
+        let cur = null;
+        for (const line of txt.split(/\r?\n/)) {
+            const h = line.match(/^[ \t]*\[(.+)\][ \t]*$/);
+            if (h) {
+                cur = h[1];
+                segs[cur] = segs[cur] || [];
+                continue;
+            }
+            if (cur)
+                segs[cur].push(line);
+        }
+        let serverPath = null, carrierDb = null, declares = /memoryos|memoryhub/i.test(txt);
+        const mcpKeys = Object.keys(segs).filter((k) => /mcp_servers/i.test(k) && /memoryos|memoryhub/i.test(k));
+        mcpKeys.sort((x, y) => (y.includes("memoryos") ? 1 : 0) - (x.includes("memoryos") ? 1 : 0));
+        for (const key of mcpKeys) {
+            const body = segs[key].join("\n");
+            const cmd = body.match(/command\s*=\s*['"]([^'"]+)['"]/i);
+            const args = body.match(/args\s*=\s*\[([^\]]*)\]/i);
+            const db = body.match(/MEMORY_DB\s*=\s*['"]([^'"]+)['"]/i);
+            if (cmd && args) {
+                const first = args[1].match(/['"]([^'"]+)['"]/);
+                serverPath = cmd[1] === "node" && first ? first[1] : (first ? first[1] : cmd[1]);
+                if (db)
+                    carrierDb = db[1];
+                break;
+            }
+        }
+        return { exists: true, shape: "toml", declares, serverPath, carrierDb, parseError: null };
+    }
+    // JSON 载体：尝试解析，识别 mcpServers / mcp.servers / servers 三种形状
+    let cfg = null, parseError = null;
+    try {
+        cfg = JSON.parse(txt);
+    }
+    catch (e) {
+        parseError = String(e?.message ?? e);
+    }
+    if (!cfg) {
+        // 解析失败仍可给指纹级事实（declares 按文本指纹）——这就是「写坏了的载体」被识别的入口
+        return { exists: true, shape: "invalid", declares: /memoryos|memoryhub/i.test(txt), serverPath: null, carrierDb: null, parseError };
+    }
+    const servers = cfg?.mcpServers ?? cfg?.mcp?.servers ?? cfg?.servers ?? null;
+    const shape = cfg?.mcpServers ? "mcpServers" : cfg?.mcp?.servers ? "mcp.servers" : cfg?.servers ? "servers" : "flat";
+    const memEntry = servers ? (servers.memoryos ?? servers.memoryhub ?? null) : null;
+    let serverPath = null, carrierDb = null;
+    if (memEntry && typeof memEntry === "object") {
+        const args = Array.isArray(memEntry.args) ? memEntry.args : [];
+        const cmd = typeof memEntry.command === "string" ? memEntry.command : null;
+        const firstArg = args.find((x) => typeof x === "string" && /server\.js$/i.test(x)) || args.find((x) => typeof x === "string") || null;
+        serverPath = (cmd === "node" && firstArg) ? firstArg : (firstArg || cmd);
+        carrierDb = (memEntry.env && typeof memEntry.env === "object" && typeof memEntry.env.MEMORY_DB === "string") ? memEntry.env.MEMORY_DB
+            : (memEntry.environment && typeof memEntry.environment === "object" && typeof memEntry.environment.MEMORY_DB === "string") ? memEntry.environment.MEMORY_DB : null;
+    }
+    return { exists: true, shape, declares: !!memEntry, serverPath, carrierDb, parseError: null, raw: cfg };
+}
+/** 生产库路径（供库比对）：与 scan.js 顶部 MEMORYOS_DB 同源，导出供路由层回填 dbPath 字段 */
+export const MEMORYOS_DB_PATH = MEMORYOS_DB;
 const HOME = os.homedir();
-/** 为单个 agent 生成接入向导（纯函数，可单测） */
+/** 为单个 agent 生成接入向导（纯函数，可单测）。
+ *  ★20261005 增补前端等待的字段：carrierShape/needsDbFix/carrierDb/targetDb/serverPath/staleServer/resolvedDb/dbMatches/importSnippet/fileSnippet/fileSnippetLabel —— 数据链补全（此前后端从不返回，前端恒空态）。 */
 export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "utf8") }) {
+    const enrich = (g) => {
+        // 向导级库比对：以载体文件实际解析结果为准（解析失败/缺字段不谎报，dbMatches 置 null = 无法判定）
+        if (g.autoWriteFile) {
+            const facts = readCarrierFacts(g.autoWriteFile, fileSvc);
+            g.carrierShape = facts.shape;
+            g.carrierDb = facts.carrierDb;
+            g.serverPath = facts.serverPath;
+            g.needsDbFix = facts.declares && facts.carrierDb != null && path.resolve(facts.carrierDb) !== path.resolve(MEMORYOS_DB);
+            g.staleServer = facts.declares && facts.serverPath != null && !fs.existsSync(facts.serverPath);
+            g.resolvedDb = facts.carrierDb;
+            g.dbMatches = facts.declares ? (facts.carrierDb != null ? g.needsDbFix === false : null) : null;
+            g.importSnippet = JSON.stringify({ memoryos: { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) } }, null, 2);
+            g.fileSnippet = g.attachSnippet;
+            g.fileSnippetLabel = "写进 " + g.autoWriteFile;
+        }
+        return g;
+    };
     switch (a.id) {
         case "codex": {
             const f = path.join(HOME, ".codex", "config.toml");
             const existing = fileSvc.read(f);
             const done = existing !== "" && /memoryos|memoryhub/i.test(existing);
-            return {
+            return enrich({
                 agentId: a.id, name: a.name, connected: done,
                 canAutoWrite: true, autoWriteFile: f,
-                attachSnippet: MEMORYOS_MCP_SERVERS.codex,
-            };
+                attachSnippet: buildMcpServers(a.id).codex,
+            });
         }
         case "claude": {
             const f = path.join(HOME, ".claude.json");
             const existing = fileSvc.read(f);
             const done = existing !== "" && /"memoryos"|"memoryhub"/.test(existing);
-            return {
+            return enrich({
                 agentId: a.id, name: a.name, connected: done,
                 canAutoWrite: true, autoWriteFile: f,
-                attachSnippet: MEMORYOS_MCP_SERVERS.claude,
-            };
+                attachSnippet: buildMcpServers(a.id).claude,
+            });
         }
         case "workbuddy": {
             const f = path.join(HOME, ".workbuddy", "mcp.json");
             const existing = fileSvc.read(f);
             const done = existing !== "" && /memoryos|memoryhub/i.test(existing);
-            return {
+            return enrich({
                 agentId: a.id, name: a.name, connected: done,
                 canAutoWrite: true, autoWriteFile: f,
-                attachSnippet: MEMORYOS_MCP_SERVERS.workbuddy,
-            };
+                attachSnippet: buildMcpServers(a.id).workbuddy,
+            });
         }
         case "traecode":
         case "traework": {
@@ -575,11 +686,22 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
                 agentId: a.id, name: a.name, connected: done,
                 canAutoWrite: false, // 载体需项目上下文，手动更安全
                 manualSteps: ["在您的 Trae 客户端打开「管理 MCP 服务器」", "新增 stdio 类型 server，Name=memoryos", `Command 填 node，Args 填 ${MEMORYOS_SERVER}`, "保存后重启会话使其生效"],
-                manualSnippet: MEMORYOS_MCP_SERVERS.trae,
+                manualSnippet: buildMcpServers(a.id).trae,
             };
         }
         default: {
-            // 未实证载体（zcode/zhipu/minimax/codexpp/workbuddy-ai）：绝不猜写，但给出可直接复制粘贴的通用 stdio 配置（绝对路径）
+            // 未实证载体（zcode/zhipu/minimax/codexpp/workbuddy-ai 等）：绝不猜写，但给出可直接复制粘贴的通用 stdio 配置（绝对路径）
+            // ★20261005 手动登记条目填了 configDir 且探到载体 → 升级为可自动写（与原生发现同权，修复「手动登记永远只能手贴」）
+            const cfgDir = a.configFile ? path.dirname(a.configFile) : (a.configDir || null);
+            const hit = cfgDir ? probeCarrier(cfgDir) : null;
+            if (hit) {
+                const isToml = /\.toml$/i.test(hit.file);
+                return enrich({
+                    agentId: a.id, name: a.name, connected: hit.connected,
+                    canAutoWrite: true, autoWriteFile: hit.file,
+                    attachSnippet: isToml ? buildMcpServers(a.id).codex : buildMcpServers(a.id).claude,
+                });
+            }
             return {
                 agentId: a.id, name: a.name, connected: false,
                 canAutoWrite: false,
@@ -590,37 +712,97 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
                     `Args: ${MEMORYOS_SERVER}`,
                     `保存后重启会话使其生效。`,
                 ],
-                manualSnippet: MEMORYOS_MCP_SERVERS.generic,
+                manualSnippet: buildMcpServers(a.id).generic,
             };
         }
     }
 }
-/** 执行自动写（仅当 canAutoWrite）：先备份原文件到 _pending-delete/connect-backup，再写。
- *  dryRun=true 只返回将写入内容，不落盘（预览用）。fileSvc 可注入以便单测。 */
+/** 执行自动写（仅当 canAutoWrite）：JSON 载体解析合并、TOML 载体键表化追加，写前备份、原子替换。
+ *  ★20261005 重写：旧实现对 JSON/TOML 同走「尾拼+整文件覆写」，非空 JSON 必产出非法配置（用户实证踩坑）。
+ *  现策略：
+ *   - JSON 载体：JSON.parse → 合并 mcpServers.memoryos（保留其它键与其它 server 原样）→ 序列化；
+ *     解析失败（shape=invalid）→ 拒绝自动写并给出手工指引（绝不覆盖坏文件，防二次破坏）；
+ *   - TOML 载体：已有 memoryos 段 → 就地替换该段；无 → 文件末尾追加键表段；
+ *   - 已连接且库已对齐 → 拒绝重复写；已连接但库不一致/ server 失效 → 允许修复性重写（「改库」后端支撑）；
+ *   - 写入 = 备份 → 临时文件 → rename 原子替换。
+ *  dryRun=true 只返回预览（target/dbPath/preview/mode），不落盘。fsx 可注入以便单测。 */
 export function applyConnectWrite(a, opts = {}, fsx = {
     read: (p) => fs.readFileSync(p, "utf8"),
     exists: (p) => fs.existsSync(p),
     mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
     copy: (p, d) => fs.copyFileSync(p, d),
     write: (p, c) => fs.writeFileSync(p, c, "utf8"),
+    rename: (p, d) => fs.renameSync(p, d),
+    unlink: (p) => fs.unlinkSync(p),
 }) {
     const g = connectGuideFor(a, { read: (p) => (fsx.exists(p) ? fsx.read(p) : "") });
     if (!g.canAutoWrite || !g.autoWriteFile || !g.attachSnippet) {
         return { ok: false, error: `${a.name} 载体未实证，不支持自动写，请走手动指引` };
     }
-    const already = g.connected;
-    if (already)
-        return { ok: true, error: `${a.name} 已连接，无需重复接入` };
     const target = g.autoWriteFile;
+    const isToml = /\.toml$/i.test(target);
     const existing = fsx.exists(target) ? fsx.read(target) : "";
-    // codex: TOML 数组段落追加；claude/workbuddy: JSON（这里以追加字符串为主，稳妥不破坏原 JSON——交给人工合并JSON）
-    // 安全策略：codex TOML 支持多段 [[mcp_servers]] 追加；JSON 类（claude/workbuddy）只追加到文件末尾并提示用户手工校验，避免破坏原 JSON
-    const snippet = "\n" + g.attachSnippet.trim() + "\n";
-    const next = existing ? existing + snippet : snippet;
-    if (opts.dryRun) {
-        return { ok: true }; // dryRun 不落盘，返回 ok
+    if (g.connected && !g.needsDbFix && !g.staleServer) {
+        return { ok: false, error: `${a.name} 已连接且库已对齐，无需重复接入` };
     }
-    // 备份
+    let next, mode;
+    if (isToml) {
+        mode = /\[\[?mcp_servers[^\]]*\]\][^\[]*memoryos|memoryhub/i.test(existing) ? "replace" : "append";
+        const envInline = toTomlInlineEnv({ ...mcpEnv(a.id), MEMORY_DB: String(MEMORYOS_DB).split(path.sep).join("/") });
+        const block = `[mcp_servers.memoryos]\ncommand = "node"\nargs = [${JSON.stringify(MEMORYOS_SERVER)}]\nenv = { ${envInline} }\n`;
+        if (mode === "replace") {
+            const re = /\[\[?mcp_servers[^\]]*\]\][^\[]*?(?=\n\[|\n\[\[|$)/gi;
+            let replaced = false;
+            next = existing.replace(re, (seg) => {
+                if (replaced || !/memoryos|memoryhub/i.test(seg))
+                    return seg;
+                replaced = true;
+                return block.trimEnd() + "\n";
+            });
+            if (!replaced)
+                next = existing.trimEnd() + "\n\n" + block;
+        }
+        else {
+            next = existing.trimEnd() ? existing.trimEnd() + "\n\n" + block : block;
+        }
+    }
+    else {
+        // JSON 载体：解析 → 合并 memoryos 条目 → 序列化（保留其它键与其它 server）
+        let cfg = null;
+        if (existing.trim()) {
+            try {
+                cfg = JSON.parse(existing);
+            }
+            catch (e) {
+                return { ok: false, error: `${a.name} 的配置文件不是合法 JSON（${String(e?.message ?? e).slice(0, 120)}），拒绝自动写以免覆盖坏文件；请先手工修复或从 _pending-delete/connect-backup 恢复`, carrierInvalid: true };
+            }
+        }
+        if (cfg == null || typeof cfg !== "object" || Array.isArray(cfg))
+            cfg = {};
+        const entry = { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) };
+        let serversKey = null, parentObj = null;
+        if (cfg.mcpServers && typeof cfg.mcpServers === "object" && !Array.isArray(cfg.mcpServers)) {
+            serversKey = "mcpServers"; parentObj = cfg;
+        }
+        else if (cfg.mcp && typeof cfg.mcp === "object" && cfg.mcp.servers && typeof cfg.mcp.servers === "object" && !Array.isArray(cfg.mcp.servers)) {
+            serversKey = "servers"; parentObj = cfg.mcp;
+        }
+        else if (cfg.servers && typeof cfg.servers === "object" && !Array.isArray(cfg.servers)) {
+            serversKey = "servers"; parentObj = cfg;
+        }
+        if (serversKey) {
+            parentObj[serversKey] = parentObj[serversKey] ?? {};
+            parentObj[serversKey].memoryos = entry;
+        }
+        else {
+            cfg.mcpServers = { memoryos: entry };
+        }
+        mode = existing.trim() ? "merge" : "create";
+        next = JSON.stringify(cfg, null, 2) + "\n";
+    }
+    if (opts.dryRun) {
+        return { ok: true, mode, target, dbPath: MEMORYOS_DB, preview: next, needsDbFix: g.needsDbFix, staleServer: g.staleServer };
+    }
     const bakDir = path.join(os.homedir(), "_pending-delete", "connect-backup");
     if (!fsx.exists(bakDir))
         fsx.mkdir(bakDir);
@@ -628,7 +810,8 @@ export function applyConnectWrite(a, opts = {}, fsx = {
     const backupPath = path.join(bakDir, `${a.id}-${stamp}.bak`);
     if (fsx.exists(target))
         fsx.copy(target, backupPath);
-    // 写
-    fsx.write(target, next);
-    return { ok: true, backupPath };
+    const tmp = target + ".mos-tmp";
+    fsx.write(tmp, next);
+    fsx.rename(tmp, target);
+    return { ok: true, mode, backupPath, target, dbPath: MEMORYOS_DB };
 }
