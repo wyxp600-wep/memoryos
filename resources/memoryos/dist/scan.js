@@ -291,7 +291,7 @@ function discoverAIIdeAgents(home) {
  * 任何 agent 只要在配置目录落了 MCP 载体（config.toml [mcp_servers] / mcp.json /
  * .claude.json / config.json 的 mcpServers|mcp.servers 等）即判为 AI agent 候选；
  * 载体内容命中 memoryos|memoryhub → connected。纯只读探测，不写不执行。 */
-const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json"), "claude_desktop_config.json"]; // ★20261005 补 Claude Desktop 载体
+const CARRIER_FILES = ["config.toml", ".claude.json", "mcp.json", ".mcp.json", "config.json", path.join("cli", "config.json"), "claude_desktop_config.json", "settings.json"]; // ★20261005 补 Claude Desktop 载体 + qoder settings.json
 const MCP_FINGERPRINT = /\[mcp_servers|mcpServers|mcp\.servers|"mcp"\s*:|memoryos|memoryhub/i;
 const MEMORY_HIT = /memoryos|memoryhub/i;
 /** 通配载体探测：给任意配置目录，返回首个 MCP 载体 {file, connected} 或 null（不按 id 硬编码） */
@@ -333,7 +333,7 @@ export function probeCarrier(dir) {
 /** ★ 批次⑨S2（2026-09-24）：名称启发式 —— 「装了但没配 MCP 载体」的 agent 也要列出（存在与连接分层）。
  *  宽进口径：目录/点目录名命中即为「已安装·未连接」候选；connected 仍只由 probeCarrier 载体指纹判定。
  *  短词（dsh/pi）加 \b 词边界，防 pip/spin 等误命中；其余按子串匹配。 */
-const AI_NAME_RE = /(code|agent|coding|assistant|copilot|claude|codex|cursor|windsurf|trae|zcode|qwen|glm|chatglm|deepseek|mimo|commandcode|continue|aider|gemini|\bdsh\b|\bpi\b)/i;
+const AI_NAME_RE = /(code|agent|coding|assistant|copilot|claude|codex|cursor|windsurf|trae|zcode|qwen|glm|chatglm|deepseek|mimo|commandcode|continue|aider|gemini|\bdsh\b|\bpi\b|qoder)/i;
 /** 名称 → 规范 id：让「Microsoft VS Code / Trae CN / MiniMax Code / DSH Desktop…」归一到固定清单 id，
  *  由 scanAgents 按 id 去重（不重复列出）；清单外新 agent（Command Code/OpenCode/MiMo…）拿到稳定唯一 id。 */
 const AI_NAME_ALIAS = [
@@ -348,6 +348,7 @@ const AI_NAME_ALIAS = [
     [/opencode/i, "opencode"],
     [/xiaomi\s*mimo|\bmimo\b/i, "mimo"],
     [/pi[\s-]*agent/i, "pi-agent"],
+    [/qoder/i, "qoder"],
 ];
 /** 清单外 agent 通用发现：home 点目录 + Programs 安装目录（含 目录名→点目录 slug 映射） */
 export function discoverCarrierAgents(home = os.homedir()) {
@@ -643,6 +644,10 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
             g.resolvedDb = facts.carrierDb;
             g.dbMatches = facts.declares ? (facts.carrierDb != null ? g.needsDbFix === false : null) : null;
             g.importSnippet = JSON.stringify({ memoryos: { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) } }, null, 2);
+            // ★20261005 双格式：裸映射（导入框吃名字→配置的客户端）+ 整份文档（导入框校验整份配置的客户端，如 qoder：
+            //   要求顶层含对象类型 mcpServers）。前端两块都给，用户按目标客户端校验行为选用。
+            g.importSnippetDoc = JSON.stringify({ mcpServers: { memoryos: { command: "node", args: [MEMORYOS_SERVER], env: mcpEnv(a.id) } } }, null, 2);
+            g.importSnippetDocLabel = "整份配置文档（导入框校验顶层 mcpServers 的客户端用，如 qoder）";
             g.fileSnippet = g.attachSnippet;
             g.fileSnippetLabel = "写进 " + g.autoWriteFile;
         }
@@ -673,6 +678,18 @@ export function connectGuideFor(a, fileSvc = { read: (p) => fs.readFileSync(p, "
             const f = path.join(HOME, ".workbuddy", "mcp.json");
             const existing = fileSvc.read(f);
             const done = existing !== "" && /memoryos|memoryhub/i.test(existing);
+            return enrich({
+                agentId: a.id, name: a.name, connected: done,
+                canAutoWrite: true, autoWriteFile: f,
+                attachSnippet: buildMcpServers(a.id).workbuddy,
+            });
+        }
+        case "qoder": {
+            // ★20261005 qoder：用户级载体 = ~/.qoder/settings.json（导入弹窗自述「配置将保存到 settings.json 的 mcpServers 字段」，
+            //   导入框校验整份文档：顶层必须含对象类型的 mcpServers——裸映射必被拒，故双格式下发）
+            const f = path.join(HOME, ".qoder", "settings.json");
+            const existing = fileSvc.read(f);
+            const done = existing.includes("mcpServers") && /memoryos|memoryhub/i.test(existing);
             return enrich({
                 agentId: a.id, name: a.name, connected: done,
                 canAutoWrite: true, autoWriteFile: f,

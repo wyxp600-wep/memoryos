@@ -1447,7 +1447,8 @@
         // ★ 两种用途分开给：导入框吃「名字→配置」裸映射；配置文件是各客户端自己的结构。
         //   （混用会报 `server "version": entry must be an object` —— 顶层 version 被当成 server 条目）
         const blocks = [];
-        if (gu.importSnippet) blocks.push({ kind: 'import', title: '① 导入框用 —— 粘贴到客户端的「MCP 导入 / 从 JSON 添加」输入框', code: gu.importSnippet });
+        if (gu.importSnippet) blocks.push({ kind: 'import', title: '① 导入框用（裸映射）—— 粘贴到只接受「名字→配置」的导入框', code: gu.importSnippet });
+        if (gu.importSnippetDoc) blocks.push({ kind: 'import-doc', title: gu.importSnippetDocLabel || '①b 导入框用（整份文档）—— 粘贴到要求顶层含 mcpServers 的导入框', code: gu.importSnippetDoc });
         if (gu.fileSnippet) blocks.push({ kind: 'file', title: `② 配置文件用 —— ${gu.fileSnippetLabel || '写进客户端配置文件'}`, code: gu.fileSnippet });
         // 旧内核只下发 attachSnippet/manualSnippet（单块）→ 回退显示，避免过渡期空白
         if (!blocks.length) {

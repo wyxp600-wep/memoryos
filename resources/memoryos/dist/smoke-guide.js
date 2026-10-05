@@ -97,5 +97,14 @@ const afterE = JSON.parse(m4e.files[CLAUDE_JSON]);
 check("G4e.改库后 MEMORY_DB 指向生产库", String(afterE.mcpServers.memoryos?.env?.MEMORY_DB || "").toLowerCase().includes("memoryos"), String(afterE.mcpServers.memoryos?.env?.MEMORY_DB || "").slice(-40));
 const r5 = applyConnectWrite(zcodeA, {}, m4.fsx);
 check("G4.zcode 拒绝自动写(error)", r5.ok === false && !!r5.error, `err=${(r5.error || "").slice(0, 30)}`);
+// G6（20261005）qoder：settings.json 载体可自动写（合并保留 enabledPlugins）+ 整份文档片段形状正确
+const qoderA = fakeAgent("qoder", "Qoder");
+const m6 = memFsx();
+m6.files[CODEX_TOML.replace(".codex\\config.toml", ".qoder\\settings.json")] = JSON.stringify({ enabledPlugins: { "qoder-context@qoderapp-bundler": true } });
+const r6 = applyConnectWrite(qoderA, {}, m6.fsx);
+check("G6.qoder settings.json 合并写 ok", r6.ok === true, `mode=${r6.mode}`);
+const g6 = connectGuideFor(qoderA, { read: (p) => m6.fsx.read(p) });
+check("G6.qoder guide 双格式", !!g6.importSnippet && !!g6.importSnippetDoc, `doc-has-mcpServers=${(g6.importSnippetDoc || "").includes("mcpServers")}`);
+check("G6.qoder 整份文档顶层为 mcpServers 对象", (() => { try { const d = JSON.parse(g6.importSnippetDoc); return typeof d.mcpServers === "object" && !!d.mcpServers.memoryos; } catch { return false; } })());
 console.log(failed === 0 ? "\n== ALL PASS ==" : `\n== ${failed} FAILED =="`);
 process.exit(failed === 0 ? 0 : 1);
