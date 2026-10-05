@@ -6,6 +6,7 @@ import { getEmbedder, cosine, bufToVec } from "./embed.js";
 import { randomBytes } from "node:crypto";
 import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
 import { scanAgents } from "./scan.js"; // 节点画布：智能体卡载体在位探测（agent_key 对账）
+import { overridesOf } from "./dashboard-exec-util.js"; // ★ 批1：launch_overrides 解析与两个执行器同口径（含双重编码容错）
 export function registerCards(app, ctx) {
     const { db, restricted, RESTRICTED } = ctx;
     // ═══════════════════════════════════════════════════════════════════════════
@@ -118,6 +119,11 @@ export function registerCards(app, ctx) {
         db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail)
        VALUES (?,?,?,?,?,?)`).run(cardId, actor, action, fromStatus ?? null, toStatus ?? null, detail ?? null);
         const evt = { type: action, cardId: Number(cardId), from: fromStatus ?? null, to: toStatus ?? null, actor, ts: Date.now() };
+        // ★ 2026-10-05 批1：detail 随事件下发（前端「失败冒泡」用）。原实现只发状态流转，
+        //   执行器写进 detail 的真因（如「未找到该智能体的可执行文件」）留在库里，
+        //   用户看到的就是「点了派发，卡悄悄变红，不知道为什么」。additive 字段，老前端忽略即可。
+        if (detail)
+            evt.detail = String(detail).slice(0, 160);
         if (txEvtQueue) { txEvtQueue.push(evt); return; }
         try { pushCardEvt(evt); } catch { /* 推送失败不影响落库 */ }
     }
@@ -1188,10 +1194,13 @@ export function registerCards(app, ctx) {
     };
     // 任务地图：nodes + links（卡片互链 + card_memory 关联 + aux 辅助卡挂载边）。前端消费字段见任务地图 drawTaskMap。
     app.get("/api/cards/graph", async (req) => {
-        const nodes = db.prepare(`SELECT id, board, kind, title, body, status, assignee, priority, meta, ref_kind, ref_id, created_at FROM cards ORDER BY priority DESC, id`).all().map(cardRowOf).map((c) => ({
+        // ★ 2026-10-05 批1：节点补 `topic` 字段（前端「排布 · 主题聚类」需要）——
+        //   cardRowOf 刻意不返回 topic（避免改 /api/cards 响应体），故这里从原始行取并复用 topicOfCardRow 同口径。
+        const nodeRows = db.prepare(`SELECT id, board, kind, title, body, status, assignee, priority, meta, ref_kind, ref_id, created_at, topic FROM cards ORDER BY priority DESC, id`).all();
+        const nodes = nodeRows.map(cardRowOf).map((c, i) => ({
             id: c.id, board: c.board, kind: c.kind, title: c.title, body: c.body, status: c.status, assignee: c.assignee,
             priority: Number(c.priority ?? 0), meta: readCardMeta(c), ref_kind: c.ref_kind, ref_id: c.ref_id,
-            created_at: c.created_at,
+            created_at: c.created_at, topic: topicOfCardRow(nodeRows[i]),
         }));
         const cardIds = new Set(nodes.map((n) => n.id));
         // 卡片单向链：depends/blocks/relates/spawned_by/duplicates + kind='aux_*' 辅助挂载边
@@ -1204,7 +1213,7 @@ export function registerCards(app, ctx) {
                 continue;
             // ★ 记忆子卡用负整数占位 id（卡片 id 恒为正，负 id 天然不冲突；前端 Number 索引可正常工作）
             const memId = -(1000000 + m.memory_id);
-            nodes.push({ id: memId, board: "default", kind: "aux_memory", title: (m.content ?? `记忆#${m.memory_id}`).replace(/\s+/g, " ").slice(0, 60), body: null, status: "", assignee: null, priority: 0, meta: {}, ref_kind: null, ref_id: null, created_at: "" });
+            nodes.push({ id: memId, board: "default", kind: "aux_memory", title: (m.content ?? `记忆#${m.memory_id}`).replace(/\s+/g, " ").slice(0, 60), body: null, status: "", assignee: null, priority: 0, meta: {}, ref_kind: null, ref_id: null, created_at: "", topic: "" });
             links.push({ src_id: m.card_id, dst_id: memId, kind: "aux_memory", context: m.relation });
         }
         // ★ 2026-09-14 v2：自动关联（仅展示不落库；?auto=0 关闭）。升级为语义路：
@@ -1339,6 +1348,10 @@ export function registerCards(app, ctx) {
                     //   未绑档案的智能体卡，都在任务地图被误报「⚠️ 载体缺失」。
                     const prof = pid ? db.prepare(`SELECT agent_key, channel, launch_overrides FROM agent_profiles WHERE id=?`).get(pid) : null;
                     n.profileMissing = carrierMissingOf(prof, scanKeys);
+                    // ★ 2026-10-05 批1：通道随节点下发。派发目标选择器要按通道如实标注 ——
+                    //   queue 卡派了不会拉起任何外部智能体（用户报「派发后智能体卡不控制智能体」的头号形态），
+                    //   原来只有一个 profileMissing 布尔，说不清「为什么点了没反应」。
+                    n.profileChannel = String(prof?.channel ?? "queue");
                 }
         }
         catch { /* 载体探测失败不标记，宁报在线不误报缺失 */ }
@@ -1718,12 +1731,10 @@ export function registerCards(app, ctx) {
     /** 档案是否已显式指定可执行文件（launch_overrides.exe/cmd）——指定了就不算「载体缺失」
      *  （如 opencode 完整 exe 路径 / zcode node+cjs 路径：不在 scan 清单但可用）。 */
     function profileHasOverrideExe(p) {
-        try {
-            const raw = p?.launch_overrides;
-            const ov = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
-            return !!(ov && (String(ov.exe ?? "").trim() || String(ov.cmd ?? "").trim()));
-        }
-        catch { return false; }
+        // ★ 2026-10-05 批1：改用执行器同一解析器（overridesOf 容忍双重编码存量档案 #8）——
+        //   旧口径 JSON.parse 一次拿到字符串 → ov.exe/ov.cmd 取不到 → 明明配了 exe 却被判「载体缺失」。
+        const ov = overridesOf(p);
+        return !!(ov && (String(ov.exe ?? "").trim() || String(ov.cmd ?? "").trim()));
     }
     /** 载体缺失判定：不在扫描清单 且 未显式指定可执行文件 才算缺失（2026-10-05 修：
      *  原实现只看扫描清单，launch_overrides 已给 exe/cmd 的档案被误报「载体缺失」）。 */

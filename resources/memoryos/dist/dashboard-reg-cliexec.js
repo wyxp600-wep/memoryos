@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { renewCardLease } from "./db.js";
-import { killTree as killTreePid, pruneFinishedJobs, safeJson, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
+import { killTree as killTreePid, pruneFinishedJobs, overridesOf, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
 
 /** 已知 CLI 的启动预设（launch_overrides 可整体覆盖） */
 const CLI_PRESETS = {
@@ -140,7 +140,7 @@ export function registerCliExec(app, ctx) {
         job.status = "running";
         job.startedAt = Date.now();
         const p = job.profile;
-        const ov = p.launch_overrides ? safeJson(p.launch_overrides) : null;
+        const ov = overridesOf(p); // ★ 批1：容忍双重编码存量（档案 #8），旧口径会把字符串当配置 → cmd 丢失
         const preset = CLI_PRESETS[String(p.agent_key ?? "")] ?? null;
         const cmd = ov?.cmd ?? preset?.cmd ?? String(p.agent_key ?? "");
         let args = ov?.args ?? (preset ? [...preset.args, ...(preset.modelArgs?.(p.model) ?? [])] : []);

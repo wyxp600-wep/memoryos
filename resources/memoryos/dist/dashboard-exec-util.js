@@ -15,6 +15,21 @@ export function safeJson(s) {
     }
 }
 
+/** 解析档案 launch_overrides → 对象（无/非法则 null）。
+ *  ★ 2026-10-05 批1：容忍「双重编码」存量 —— 值本身是一段被再包了一层的 JSON 字符串
+ *  （实测档案 #8 = "{\"cmd\":…}"，#9-#12 正常），旧口径 parse 一次拿到的是**字符串**而非对象
+ *  ⇒ ov.cmd / ov.exe 全 undefined ⇒ 静默回退裸预设 ⇒ 用户所见「派发后什么都没跑起来」。
+ *  只多解一层；解出来仍不是对象就 null（不把标量当配置，也不改任何存量数据）。 */
+export function overridesOf(p) {
+    const raw = p?.launch_overrides;
+    if (!raw)
+        return null;
+    let v = typeof raw === "string" ? safeJson(raw) : raw;
+    if (typeof v === "string")
+        v = safeJson(v);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+
 /** 杀整棵进程树（Windows taskkill /T；其余 SIGKILL）。收口以 close 事件为准，此处失败不抛。 */
 export function killTree(pid) {
     if (!pid)

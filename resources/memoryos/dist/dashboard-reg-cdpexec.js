@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { renewCardLease } from "./db.js";
-import { killTree, safeJson, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
+import { killTree, overridesOf, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
 
 const HEARTBEAT_MS = 60000;
 const CDP_WAIT_DEFAULT_MS = 30000;
@@ -399,7 +399,7 @@ export function registerCdpExec(app, ctx) {
     async function start(job) {
         job.status = "launching";
         const p = job.profile;
-        const ov = p.launch_overrides ? safeJson(p.launch_overrides) : null;
+        const ov = overridesOf(p); // ★ 批1：容忍双重编码存量，与 cliexec 同口径（见 dashboard-exec-util.overridesOf）
         // 可执行文件：launch_overrides.exe > scanAgents 路径
         let exe = ov?.exe ?? null;
         if (!exe) {

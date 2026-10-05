@@ -4781,7 +4781,13 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
             <div class="task-map-actions">
               <button class="btn-ghost" id="taskMapAutoBtn" title="自动连线并补充关联记忆子卡（语义相似；仅展示不落库）">自动关联</button>
               <button class="btn-ghost" id="taskMapWeakBtn" title="显示/隐藏 关联/重复/自动关联 弱连线（依赖/派发/交接不受影响）">✓ 弱连线</button>
-              <button class="btn-ghost" id="taskMapLayoutBtn" title="重新计算节点位置">自动排布</button>
+              <select class="btn-ghost" id="taskMapModeSel" style="padding:5px 8px;font-size:12px" title="排布方式">
+                <option value="layered">排布 · 依赖分层</option>
+                <option value="status">排布 · 状态泳道</option>
+                <option value="topic">排布 · 主题聚类</option>
+                <option value="time">排布 · 时间轴</option>
+              </select>
+              <button class="btn-ghost" id="taskMapLayoutBtn" title="清空全部手动拖拽位置，按当前排布方式重算（依赖分层模式下即回到确定性分层）">自动排布</button>
               <button class="btn-ghost" id="taskMapDoneViewBtn" title="已完成任务默认隐藏；点击在地图中显示已完成任务">✓ 显示已完成</button>
               <button class="btn-ghost" id="taskMapArchiveViewBtn" title="归档任务默认隐藏；点击在地图中显示归档任务">📦 查看归档</button>
               <button class="btn-ghost" id="taskMapArchiveCenterBtn" title="按主题分组查看归档任务">📂 归档中心</button>

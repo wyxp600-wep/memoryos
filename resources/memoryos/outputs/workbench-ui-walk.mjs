@@ -55,6 +55,11 @@ const REPO = path.resolve(KERNEL, '..', '..');            // 仓根（.worktrees
 const CHROME = process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PORT = Number(process.env.WB_PORT || 8791 + (Date.now() % 60));
 const TOKEN = 'wb-walk-' + Date.now();
+/* ★ 2026-10-05 批1：种子 worktree 名按运行唯一（原来写死 wb-walk-1/2/3）。
+   走查收尾的 `git worktree remove` 在 Windows 上会被 `resources/app.asar` 的句柄锁挡掉
+   （实测日志「移除 worktree 失败（wb-walk-3）：Invalid argument」，且该锁 rm/mv/del 都解不开），
+   残留目录就让**之后每一次**跑在种子步直接 abort —— 门禁自己把自己毒死了。名字带 pid 后互不相干。 */
+const WT = (n) => 'wb-walk-' + process.pid + '-' + n;
 const DIR = path.join(os.tmpdir(), `.chrome-wbwalk-${Date.now()}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -83,9 +88,9 @@ try {
     const api = (m, u, b) => fetch('http://127.0.0.1:' + PORT + u, { method: m, headers: b ? H : { 'x-memory-token': TOKEN }, ...(b ? { body: JSON.stringify(b) } : {}) });
 
     // ── 2. 种子 worktree（不关联卡片 —— W2c 要验证「未关联」态；W3 再由 UI 创建并关联）──
-    const rCreate = await api('POST', '/api/worktrees', { name: 'wb-walk-1' });
+    const rCreate = await api('POST', '/api/worktrees', { name: WT(1) });
     if (!rCreate.ok) throw new Error('种子 worktree 创建失败：' + (await rCreate.text()).slice(0, 200));
-    fs.appendFileSync(path.join(REPO, '.worktrees', 'wb-walk-1', 'README.md'), '\n<!-- workbench-ui-walk-probe -->\n');
+    fs.appendFileSync(path.join(REPO, '.worktrees', WT(1), 'README.md'), '\n<!-- workbench-ui-walk-probe -->\n');
 
     // ── 3. Chrome + CDP ──
     chrome = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage',
@@ -180,15 +185,15 @@ try {
     await sleep(700);
     const formUp = await ev(`!!document.querySelector('.ask-form-modal input[data-k="name"]')`);
     rec('W3 创建弹窗（askForm）打开', formUp === true);
-    await ev(`(function(){var i=document.querySelector('.ask-form-modal input[data-k="name"]');if(i)i.value='wb-walk-2';var b=document.querySelector('.ask-form-modal [data-ok]');if(b)b.click();return 1})()`);
+    await ev(`(function(){var i=document.querySelector('.ask-form-modal input[data-k="name"]');if(i)i.value='${WT(2)}';var b=document.querySelector('.ask-form-modal [data-ok]');if(b)b.click();return 1})()`);
     await sleep(3500);
     const diffBox = await ev(`(function(){return document.getElementById('wbDiff')?'ok':'no-diff'})()`);
     rec('W3b 创建成功后渲染工作区 diff 容器', diffBox === 'ok', String(diffBox));
     const wtAfter = await (await api('GET', '/api/worktrees')).json();
-    const linked = (wtAfter.items || []).find(x => x.name === 'wb-walk-2');
+    const linked = (wtAfter.items || []).find(x => x.name === WT(2));
     rec('W3c worktree 关联到种子卡（cardId 回填）', !!linked && linked.cardId === cardId, JSON.stringify(linked || null));
     // 新建 worktree 是干净检出（diff 必空）→ 制造改动后点刷新，验证 diff 渲染与 ✎ 触发件
-    fs.appendFileSync(path.join(REPO, '.worktrees', 'wb-walk-2', 'README.md'), '\n<!-- wb-walk-2 dirty -->\n');
+    fs.appendFileSync(path.join(REPO, '.worktrees', WT(2), 'README.md'), '\n<!-- ' + WT(2) + ' dirty -->\n');
     await ev(`(function(){var b=document.getElementById('wbRefreshBtn');if(b)b.click();return 1})()`);
     await sleep(2000);
     const diffReady = await ev(`(function(){var d=document.getElementById('wbDiff');if(!d)return 'no-diff';return String(d.querySelectorAll('.wb-line').length)})()`);
@@ -220,17 +225,17 @@ try {
     await sleep(700);
     const askUp = await ev(`!!document.querySelector('.ask-form-modal [data-ok]')`);
     rec('W7 清理走 askForm 二次确认', askUp === true);
-    // wb-walk-2 带脏改动（W4 种的）→ 必须勾强制，否则后端按契约 409
+    // 本运行的 WT(2) 带脏改动（W4 种的）→ 必须勾强制，否则后端按契约 409
     await ev(`(function(){var i=document.querySelector('.ask-form-modal input[data-k="force"]');if(i)i.value='1';var b=document.querySelector('.ask-form-modal [data-ok]');if(b)b.click();return 1})()`);
     await sleep(3500);
     const wtFinal = await (await api('GET', '/api/worktrees')).json();
-    const gone2 = !(wtFinal.items || []).some(x => x.name === 'wb-walk-2');
+    const gone2 = !(wtFinal.items || []).some(x => x.name === WT(2));
     rec('W7b 清理后 worktree 消失', gone2 === true, 'items=' + (wtFinal.items || []).map(x => x.name).join(','));
     const crow = db.prepare(`SELECT workspace, workspace_kind FROM cards WHERE id=?`).get(cardId);
     rec('W7c 清理后卡片关联归位（scratch）', crow.workspace === null && crow.workspace_kind === 'scratch', JSON.stringify(crow));
     // 种子 worktree 清理 —— 故意带 `content-type: application/json` 且无 body（旧 fastify 直接 400 FST_ERR_CTP_EMPTY_JSON，
     // 2026-10-03 已在 buildApp 加容错 parser；此处作为该修复的回归探针）
-    const rSeedDel = await fetch('http://127.0.0.1:' + PORT + '/api/worktrees/wb-walk-1?force=1', { method: 'DELETE', headers: H });
+    const rSeedDel = await fetch('http://127.0.0.1:' + PORT + '/api/worktrees/' + WT(1) + '?force=1', { method: 'DELETE', headers: H });
     const seedTxt = await rSeedDel.text();
     rec('W8 空体 DELETE（带 json content-type）不再 400（dashboard 容错 parser）', rSeedDel.status === 200, 'HTTP ' + rSeedDel.status + ' ' + seedTxt.slice(0, 100));
 
@@ -505,7 +510,7 @@ try {
     rec('W27 切「📋 列式看板」：列渲染 + 种子卡在列里（拖拽改状态入口可达）', cvp[0] === '1' && Number(cvp[1]) >= 3 && cvp[2] === '1', String(cardsView));
 
     // W28：卡片详情一键唤起终端，工作目录自动切到本卡的隔离工作区
-    const rWt3 = await api('POST', '/api/worktrees', { name: 'wb-walk-3', cardId });
+    const rWt3 = await api('POST', '/api/worktrees', { name: WT(3), cardId });
     rec('W28a 为种子卡重建隔离工作区（验证终端自动切目录）', rWt3.ok === true, 'HTTP ' + rWt3.status);
     await ev(`(function(){var el=document.querySelector('#cardsBoard [data-card-id="${cardId}"]');if(!el)return 'no-card';el.click();return 'ok'})()`);
     await sleep(2500);
@@ -519,10 +524,10 @@ try {
       var s=d.querySelector('.term-pane[data-pane="1"] .term-cwd');
       return s?s.value:'no-select';
     })()`);
-    rec('W28c 点 ⌨ 终端 → 抽屉打开且目录自动选中 .worktrees/wb-walk-3', termCwd === '.worktrees/wb-walk-3', String(termCwd));
+    rec('W28c 点 ⌨ 终端 → 抽屉打开且目录自动选中 .worktrees/' + WT(3), termCwd === '.worktrees/' + WT(3), String(termCwd));
     await ev(`(function(){var b=document.getElementById('termClose');if(b)b.click();return 1})()`);
     await sleep(400);
-    await api('DELETE', '/api/worktrees/wb-walk-3?force=1');
+    await api('DELETE', '/api/worktrees/' + WT(3) + '?force=1');
 
     /* ══ A1 · W29~W31：一键派发（卡片 → agent 推模式；2026-10-04 CLAIM §5）══
      * 前端「🚀 派给 Agent」按钮因他人 Slice-C2 批次在制暂缓 → 本批只验后端链路（HTTP 断言），
@@ -663,6 +668,57 @@ try {
         w31cClick === 'clicked' && p31c[0] === '1' && p31c[1] === '0' && p31c[2].includes('#' + w31DepPend),
         `tab=${w31cTab} click=${w31cClick} hit=${p31c[0]} wrong=${p31c[1]} txt=${p31c[2].slice(0, 120)}`);
 
+    // ── W32（批1：任务地图排布模式化 + 「看板太乱」四根因回归）──
+    // 探针用 offsetLeft/offsetTop（世界坐标，不受缩放影响），可见性用 offsetParent（display:none 的过滤卡不计）
+    const MAP_GEO = `(function(){
+      var byId={};
+      var ns=document.querySelectorAll('#taskMapNodes .task-map-node'),pts=[],ov=0;
+      for(var i=0;i<ns.length;i++){var el=ns[i];if(!el.offsetParent)continue;
+        pts.push({id:el.getAttribute('data-card-id'),x:el.offsetLeft,y:el.offsetTop,w:el.offsetWidth,h:el.offsetHeight});
+        byId[el.getAttribute('data-card-id')]=el.offsetLeft;}
+      for(var a=0;a<pts.length;a++)for(var b=a+1;b<pts.length;b++){var p=pts[a],q=pts[b];
+        if(p.x<q.x+q.w-4&&p.x+p.w>q.x+4&&p.y<q.y+q.h-4&&p.y+p.h>q.y+4)ov++;}
+      var dep=0,depBack=0,hf=0,hfFar=0;
+      document.querySelectorAll('#taskMapEdges path[data-kind]').forEach(function(pa){
+        var k=pa.getAttribute('data-kind'),s=pa.getAttribute('data-src'),d=pa.getAttribute('data-dst');
+        if(byId[s]==null||byId[d]==null)return;
+        var dx=byId[d]-byId[s];
+        if(k==='depends'){dep++;if(dx<-8)depBack++;}
+        if(k==='handoff'){hf++;if(dx>120)hfFar++;}
+      });
+      return JSON.stringify({visible:pts.length,overlaps:ov,dep:dep,depBack:depBack,hf:hf,hfFar:hfFar});
+    })()`;
+    const w32Tab = await ev(`(function(){var t=document.getElementById('tabMap');if(!t)return 'no-tab';t.click();return 'ok'})()`);
+    await sleep(2000);
+    const w32Sel = await ev(`(function(){var s=document.getElementById('taskMapModeSel');
+      return s?JSON.stringify({opts:Array.from(s.options).map(function(o){return o.value}),val:s.value}):'no-sel'})()`);
+    const geo0 = JSON.parse(String(await ev(MAP_GEO)));
+    // 切到「状态泳道」→ 坐标集合必须变（模式真生效，不是摆设），且 localStorage 落盘
+    await ev(`(function(){var s=document.getElementById('taskMapModeSel');s.value='status';s.dispatchEvent(new Event('change'));return 1})()`);
+    await sleep(2600);
+    const geoStatus = JSON.parse(String(await ev(MAP_GEO)));
+    const w32Stored = await ev(`(function(){try{return localStorage.getItem('memoryos-map-mode')||''}catch(e){return 'ls-err'}})()`);
+    await ev(`(function(){var s=document.getElementById('taskMapModeSel');s.value='layered';s.dispatchEvent(new Event('change'));return 1})()`);
+    await sleep(2600);
+    const geoBack = JSON.parse(String(await ev(MAP_GEO)));
+    rec('W32a 排布模式下拉存在（4 模式）且切换真改坐标 + 模式持久化',
+        String(w32Sel).includes('layered') && String(w32Sel).includes('topic') && geo0.visible > 3 &&
+        geoStatus.visible === geo0.visible && geoStatus.overlaps !== undefined && w32Stored === 'status' && geoBack.visible > 3,
+        `tab=${w32Tab} sel=${String(w32Sel).slice(0, 90)} stored=${w32Stored} geo0=${geo0.visible}geoStatus=${geoStatus.visible}geoBack=${geoBack.visible}`);
+    rec('W32b 四种排布下可见卡零互相压住（含辅助/交接卫星卡；旧实现 layered 7 处、topic 6 处重叠）',
+        geo0.overlaps === 0 && geoStatus.overlaps === 0 && geoBack.overlaps === 0,
+        `layered=${geo0.overlaps} status=${geoStatus.overlaps} back=${geoBack.overlaps} visible=${geoBack.visible}`);
+    // W32c：分层模式下依赖边不反向（前置在左、依赖方在右）；交接卡改挂宿主正下方后不得压右邻列
+    const w32cSeed = await ev(`(function(){
+      var s=document.querySelector('.task-map-node[data-card-id="${w31DepPend}"]'),d=document.querySelector('.task-map-node[data-card-id="${w31bId}"]');
+      if(!s||!d||!s.offsetParent||!d.offsetParent)return 'no-seed';
+      return JSON.stringify({dx:d.offsetLeft-s.offsetLeft});
+    })()`);
+    const seedDx = Number((String(w32cSeed).match(/"dx":(-?\d+)/) || [])[1] ?? NaN);
+    rec('W32c 分层模式依赖边方向单调（种子对 #前置 → #依赖方 向右）+ 交接卫星不压右邻列',
+        Number.isFinite(seedDx) && seedDx > 0 && geoBack.depBack === 0 && geoBack.hfFar === 0,
+        `seed #${w31DepPend}→#${w31bId} dx=${seedDx} dep=${geoBack.dep} depBack=${geoBack.depBack} handoff=${geoBack.hf} handoffFar=${geoBack.hfFar}`);
+
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
 catch (e) {
@@ -676,12 +732,10 @@ finally {
     try { await app?.close(); } catch { /* ignore */ }
     try { db?.close(); } catch { /* ignore */ }
     // 清理临时 worktree/分支（git 直清，确定性兜底；rmdir 非递归：只删空目录，绝不误删他人 worktree）
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-1')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-2')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', 'wb-walk-3')], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过（W28 重建的隔离区，正常已被 DELETE 清掉） */ }
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-1'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-2'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
-    try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/wb-walk-3'], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
+    for (const n of [1, 2, 3]) {
+        try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['worktree', 'remove', '--force', path.join(REPO, '.worktrees', WT(n))], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
+        try { const { execFileSync } = await import('node:child_process'); execFileSync('git', ['branch', '-D', 'wt/' + WT(n)], { cwd: REPO, stdio: 'pipe' }); } catch { /* 无则跳过 */ }
+    }
     try { fs.rmdirSync(path.join(REPO, '.worktrees')); } catch { /* 非空或不存在则保留 */ }
     try { fs.rmSync(WS, { recursive: true, force: true }); } catch { /* Windows 句柄 */ }
     try { fs.rmSync(DIR, { recursive: true, force: true }); } catch { /* ignore */ }

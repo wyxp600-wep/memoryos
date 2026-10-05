@@ -2608,11 +2608,27 @@
    * → 800ms 防抖 → 重画当前视图。鉴权走同源 cookie（EventSource 自动带 memoryos_token）。
    * 进任务看板页时建、离开时关（navigate 统一调）。 */
   let _cardsEs = null, _cardsRefreshTimer = null;
+  /* ★ 2026-10-05 批1（用户「派发后没反应、卡悄悄变红不知为什么」）：卡片失败原因实时冒泡。
+     后端 writeCardEvent 把执行器真因写进 card_events.detail（≤160 字），现随 SSE 一并下发。
+     只记「本次会话内亲眼看到的失败」，不做全量回捞（历史 failed 卡的原因仍可在 ⌨ 终端/卡片详情看）。 */
+  const _failReason = new Map(); // cardId → detail
+  function _surfCardFailure(evt) {
+    try {
+      const id = Number(evt && evt.cardId);
+      if (!id || String(evt.to) !== 'failed' || String(evt.type) !== 'status_changed') return;
+      const detail = String(evt.detail || '').trim();
+      if (!detail || _failReason.get(id) === detail) return;
+      _failReason.set(id, detail);
+      toast(`⚠️ 卡片 #${id} 执行失败：${detail}`);
+      if (_taskViewMode === 'map') drawTaskMap(); // 重画：把原因贴到卡上（防抖重绘可能已在队列里，重复一次无害）
+    } catch { /* 事件体异常不影响主链路 */ }
+  }
   function _cardsStreamStart() {
     if (typeof EventSource === 'undefined') return;
     if (_cardsEs) return; // 已开（同页重复 navigate 不重连）
     _cardsEs = new EventSource('/api/cards/stream');
-    _cardsEs.addEventListener('card', () => {
+    _cardsEs.addEventListener('card', (e) => {
+      try { _surfCardFailure(JSON.parse(e.data)); } catch { /* 非 JSON 事件体：仅跳过冒泡，刷新照旧 */ }
       if (_cardsRefreshTimer) clearTimeout(_cardsRefreshTimer);
       _cardsRefreshTimer = setTimeout(() => { _cardsRefreshTimer = null; refreshCurrentTaskView(); }, 800); // 批量合并，避免高频重画
     });
@@ -4343,20 +4359,37 @@
     renderQueued: false, // 手势期被挡下的重渲标记，手势结束补跑
     vertical: false,
     suppressClick: false, // ★ 2026-09-13：拖动结束后的误点抑制（避免拖动节点后误触 openCardDetail）
+    layoutMode: (() => { try { return localStorage.getItem('memoryos-map-mode') || 'layered'; } catch { return 'layered'; } })(), // ★ 2026-10-05 批1：排布模式（layered/status/topic/time）
   };
 
-  /* ★ 2026-09-13 重构：横向工作流布局（用户要求：卡片横向排列、禁止纵向；自动排布必须横向）。
-     ① 依赖分层（前置 → 依赖方；辅助卡挂载边不参与分层）
-     ② 按层顺序横向倾倒进「容量 maxRows」的列（左 → 右 = 工作流推进方向），避免孤立节点堆成一列纵向长条
-     ③ 完成卡沉底到末列（工作流终点；且完成卡不参与连线）
-     ④ 辅助卡（kind='aux'）作为卫星卡级联在主卡右下方的预留卫星带内（主卡 → 辅助卡） */
-  function taskMapTopology(nodes, links, vertical = false) {
+  /* ★ 2026-10-05 批1：排布模式化（用户「看板太乱了，把自动排布的逻辑调整一下」+ 拍板「提供多种排布模式切换」）。
+     旧算法两根因：① 列 ≠ 层 —— 算完 rank 后按序号每 maxRows 个切一刀（旧 4428 行），一条依赖链被横切成多列，
+     依赖边被迫横跨 568px×N；② 无任何层内重排（无 barycenter），上下游纵向完全不对齐 → 贝塞尔长边互相穿插成蛛网。
+     四模式（左→右始终是推进方向，横向工作流语义不变）：
+       layered  列=依赖层（rank 即列），层内 barycenter 前/后向 4 轮扫减交叉，宽层溢出成同带子列
+       status   列=生命周期泳道（triage→todo→ready→running→review→failed/blocked→done→归档态）
+       topic    列=主题（cards.topic > meta.topic > 标题 [topic:xxx] > 未分主题），卡多的主题靠左
+       time     列=创建日期（同日一列，宽层同样溢出成子列）
+     手动摆放（meta.map_pos）只在 layered 生效：其余模式若仍被历史拖拽坐标覆盖，切换就没有意义。
+     辅助卡仍挂宿主正下方、agent 卡仍在右侧「执行者区」、handoff 卡仍挂宿主右侧（语义未动）。
+     旧注释（2026-09-13 横向工作流布局：卡片横向排列、禁止纵向；辅助卡挂主卡右下卫星带）继续适用。 */
+  const TASK_MAP_STATUS_ORDER = ['triage', 'todo', 'ready', 'running', 'review', 'failed', 'blocked', 'done', 'archived', 'cancelled'];
+  function taskMapTopicOf(n) {
+    const t = String(n.topic ?? '').trim();
+    if (t) return t;
+    const mt = String((n.meta && n.meta.topic) ?? '').trim();
+    if (mt) return mt;
+    const inTitle = /\[topic:([^\]]+)\]/.exec(String(n.title || ''));
+    return inTitle ? inTitle[1].trim() : '未分主题';
+  }
+  function taskMapTopology(nodes, links, vertical = false, mode = 'layered') {
     const byId = new Map(nodes.map(n => [Number(n.id), n]));
     const isAux = (id) => { const k = String(byId.get(id)?.kind ?? ''); return k === 'aux' || k.startsWith('aux_'); };
     const taskSet = new Set([...byId.keys()].filter((id) => !isAux(id)));
 
     /* —— ① 依赖分层（Kahn；depends/spawned_by 翻向「前置 → 依赖方」；aux_/relates/duplicates 不进层） —— */
     const childOf = new Map([...taskSet].map((id) => [id, []]));
+    const parentOf = new Map([...taskSet].map((id) => [id, []]));
     const indeg = new Map([...taskSet].map((id) => [id, 0]));
     const seen = new Set();
     links.forEach(link => {
@@ -4369,6 +4402,7 @@
       if (seen.has(key)) return;
       seen.add(key);
       childOf.get(from).push(to);
+      parentOf.get(to).push(from);
       indeg.set(to, indeg.get(to) + 1);
     });
 
@@ -4392,17 +4426,77 @@
         if (indeg.get(child) === 0) queue.push(child);
       }
     }
-    /* 环残余 / 孤立节点 → 第 0 层，由下方横向倾倒展开（不再挤成一列纵向长条） */
+    /* 环残余 / 孤立节点 → 第 0 层 */
     [...taskSet].forEach((id) => { if (!settled.has(id)) rank.set(id, 0); });
-    /* ③ 完成卡沉底到末层（工作流终点；完成卡也不参与连线） */
+    /* 完成卡沉底到末层（工作流终点；完成卡也不参与连线） */
     const maxRank = [...taskSet].reduce((m, id) => Math.max(m, rank.get(id)), 0);
     byId.forEach((n, id) => { if (taskSet.has(id) && String(n.status) === 'done') rank.set(id, maxRank + 1); });
 
-    /* —— ② 横向倾倒：按层顺序灌入容量 maxRows 的列（左 → 右 即工作流方向；禁止纵向排布）
-       行距按「列 floor」级联：上一行若挂了辅助卡悬挂区，下一行从悬挂区下方起，保证互不重叠 */
+    // ★ 2026-10-05 分区整理：agent 卡独立「执行者区」（右侧列）、handoff 文档卡挂宿主任务卡右侧，
+    //   任何模式下都不进主列带（设计报告风险#4：投影/文档卡不进任务统计，视觉同样分家）
+    const agentZone = [...taskSet].filter((id) => String(byId.get(id)?.kind) === 'agent');
+    const handoffSet = new Set([...taskSet].filter((id) => String(byId.get(id)?.kind) === 'handoff'));
+    const flowIds = [...taskSet].filter((id) => !agentZone.includes(id) && !handoffSet.has(id));
+
+    /* —— ② 分组：每组 = 一个列带（band），带内溢出成子列 —— */
+    const bands = [];
+    const pushBand = (label, ids, sortFn) => {
+      if (!ids.length) return;
+      bands.push({ label, ids: sortFn ? ids.slice().sort(sortFn) : ids.slice().sort(compare) });
+    };
+    const groupBy = (keyFn) => {
+      const m = new Map();
+      flowIds.forEach((id) => { const k = keyFn(id); if (!m.has(k)) m.set(k, []); m.get(k).push(id); });
+      return m;
+    };
+    if (mode === 'status') {
+      const g = groupBy((id) => String(byId.get(id)?.status ?? ''));
+      const known = TASK_MAP_STATUS_ORDER.filter(s => g.has(s));
+      known.forEach(s => pushBand(s, g.get(s)));
+      [...g.keys()].filter(s => !known.includes(s)).sort().forEach(s => pushBand(s || '无状态', g.get(s)));
+    } else if (mode === 'topic') {
+      const g = groupBy((id) => taskMapTopicOf(byId.get(id) || {}));
+      [...g.entries()].sort((a, b) => (b[1].length - a[1].length) || String(a[0]).localeCompare(String(b[0])))
+        .forEach(([k, ids]) => pushBand(k, ids));
+    } else if (mode === 'time') {
+      const g = groupBy((id) => String(byId.get(id)?.created_at ?? '').slice(0, 10) || '未知日期');
+      [...g.keys()].sort().forEach(k => pushBand(k, g.get(k),
+        (a, b) => String(byId.get(a).created_at || '').localeCompare(String(byId.get(b).created_at || '')) || a - b));
+    } else {
+      const g = groupBy((id) => rank.get(id));
+      [...g.keys()].sort((a, b) => a - b).forEach(r => pushBand('L' + r, g.get(r)));
+    }
+
+    /* —— ③ layered 专属：层内 barycenter 前/后向 4 轮扫（减交叉的主手段）——
+       邻居在各自带内的下标均值 = 重心，按重心重排本带；非 layered 不重排
+       （泳道/主题/时间轴的带内顺序本身就是用户要的语义顺序，重排会打乱它）。 */
+    if (mode === 'layered' && bands.length > 1) {
+      const idx = new Map();
+      bands.forEach(b => b.ids.forEach((id, i) => idx.set(id, i)));
+      for (let sweep = 0; sweep < 4; sweep++) {
+        const forward = sweep % 2 === 0;
+        const order = bands.map((_, i) => i);
+        if (!forward) order.reverse();
+        for (const bi of order) {
+          const band = bands[bi];
+          if (band.ids.length < 2) continue;
+          const nbr = forward ? parentOf : childOf;
+          const bary = new Map();
+          band.ids.forEach((id) => {
+            const xs = (nbr.get(id) || []).filter(x => idx.has(x)).map(x => idx.get(x));
+            bary.set(id, xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : (idx.get(id) ?? 0));
+          });
+          band.ids.sort((a, b) => (bary.get(a) - bary.get(b)) || compare(a, b));
+          band.ids.forEach((id, i) => idx.set(id, i));
+        }
+      }
+    }
+
+    /* —— ④ 落位：列带 → 子列（横向），子列内纵向级联（含辅助卡悬挂区，保证互不重叠） —— */
     const positions = new Map();
-    const maxRows = Math.max(3, Math.min(7, Math.ceil(Math.sqrt(Math.max(1, taskSet.size))))); // 2026-10-05：9→7 行（减纵向长度、加大留白）
-    const colPitch = TASK_MAP_NODE_W + TASK_MAP_GAP_X + 250; // 2026-10-05：226+92+250=568（原 508，治「太挤」）
+    const rowsPerCol = mode === 'layered' ? 8 : 9;
+    const subPitch = TASK_MAP_NODE_W + TASK_MAP_GAP_X; // 同带子列间距（紧）
+    const bandGap = 250;                               // 带间距（松，让「一层/一泳道」成块可读）
     const AUX_W = 170, AUX_ROW_H = 100, AUX_DROP = 20, AUX_PER_ROW = 2;
     /* host → 辅助卡 id 列表（保持 link 顺序；host = 非 aux 端点） */
     const auxByHost = new Map();
@@ -4416,63 +4510,87 @@
       if (!auxByHost.has(host)) auxByHost.set(host, []);
       if (!auxByHost.get(host).includes(auxId)) auxByHost.get(host).push(auxId);
     });
-    // ★ 2026-10-05 分区整理：agent 卡独立「执行者区」（右侧列）、handoff 文档卡挂宿主任务卡右侧，
-    //   均不进工作流列倾倒（设计报告风险#4：投影/文档卡不进任务统计，视觉同样分家）
-    const agentZone = [...taskSet].filter((id) => String(byId.get(id)?.kind) === 'agent');
-    const handoffSet = new Set([...taskSet].filter((id) => String(byId.get(id)?.kind) === 'handoff'));
-    const seq = [...taskSet].filter((id) => !agentZone.includes(id) && !handoffSet.has(id))
-      .sort((a, b) => (rank.get(a) - rank.get(b)) || compare(a, b));
-    const colFloor = new Map();  // col → 下一行起始 y（含辅助悬挂区）
-    const colBottom = new Map(); // col → 该列最大底边（含悬挂区）
-    seq.forEach((id, idx) => {
-      const col = Math.floor(idx / maxRows);
-      const x = TASK_MAP_PAD + col * colPitch;
-      const y = colFloor.get(col) ?? TASK_MAP_PAD;
-      const list = auxByHost.get(id);
-      const hangBottom = (list && list.length) ? y + TASK_MAP_NODE_H + AUX_DROP + Math.ceil(list.length / AUX_PER_ROW) * AUX_ROW_H : 0;
-      positions.set(id, { x, y, rank: rank.get(id) });
-      colFloor.set(col, Math.max(hangBottom, y + TASK_MAP_NODE_H) + TASK_MAP_GAP_Y);
-      colBottom.set(col, Math.max(colBottom.get(col) ?? 0, hangBottom || (y + TASK_MAP_NODE_H)));
+    /* host → 交接文档卡（handoff 边 src=宿主 → dst=交接卡）。
+       ★ 2026-10-05 批1（实测 6 组卡片互相压住的真因）：交接卡原先挂宿主**右侧** +336px，
+       而同带子列间距只有 subPitch=318px ⇒ 卫星卡必然压进右邻列同一行。现改挂宿主正下方的悬挂带
+       （与辅助卡同区、纵向堆叠），占位在落位循环里一并预留。 */
+    const handoffByHost = new Map();
+    links.forEach(link => {
+      if (String(link.kind) !== 'handoff') return;
+      const s = Number(link.src_id), d = Number(link.dst_id);
+      if (!taskSet.has(s) || !handoffSet.has(d)) return;
+      if (!handoffByHost.has(s)) handoffByHost.set(s, []);
+      if (!handoffByHost.get(s).includes(d)) handoffByHost.get(s).push(d);
+    });
+    const hangOf = (id) => {
+      const auxN = (auxByHost.get(id) || []).length;
+      const hfN = (handoffByHost.get(id) || []).length;
+      if (!auxN && !hfN) return { rows: 0, height: 0 };
+      return { auxN, hfN, rows: Math.ceil(auxN / AUX_PER_ROW) * AUX_ROW_H + hfN * (TASK_MAP_NODE_H + 14), height: TASK_MAP_NODE_H + AUX_DROP + Math.ceil(auxN / AUX_PER_ROW) * AUX_ROW_H + hfN * (TASK_MAP_NODE_H + 14) };
+    };
+    const colFloor = new Map();  // 列 → 下一行起始 y（含辅助/交接悬挂区）
+    const colBottom = new Map(); // 列 → 该列最大底边（含悬挂区）
+    let bandX = TASK_MAP_PAD;
+    bands.forEach((band, bi) => {
+      const nCols = Math.max(1, Math.ceil(band.ids.length / rowsPerCol));
+      band.ids.forEach((id, i) => {
+        const sub = Math.floor(i / rowsPerCol);
+        const col = bi * 1000 + sub; // 全局唯一列号（仅供 colFloor/colBottom 级联）
+        const x = bandX + sub * subPitch;
+        const y = colFloor.get(col) ?? TASK_MAP_PAD;
+        const hang = hangOf(id);
+        const hangBottom = hang.rows ? y + hang.height : 0;
+        positions.set(id, { x, y, rank: rank.get(id), band: band.label, satW: TASK_MAP_NODE_W });
+        colFloor.set(col, Math.max(hangBottom, y + TASK_MAP_NODE_H) + TASK_MAP_GAP_Y);
+        colBottom.set(col, Math.max(colBottom.get(col) ?? 0, hangBottom || (y + TASK_MAP_NODE_H)));
+      });
+      bandX += nCols * subPitch + bandGap;
     });
 
-    /* —— ④ 辅助卡：挂在宿主卡正下方横向排（每行 2 张自动换行；不再级联重叠） —— */
+    /* —— ⑤ 辅助卡：挂在宿主卡正下方横向排（每行 2 张自动换行；不再级联重叠） —— */
     auxByHost.forEach((auxIds, host) => {
       const hp = positions.get(host);
       if (!hp) return;
       auxIds.forEach((auxId, i) => {
         const r = Math.floor(i / AUX_PER_ROW), c = i % AUX_PER_ROW;
-        positions.set(auxId, { x: hp.x + 8 + c * (AUX_W + 24), y: hp.y + TASK_MAP_NODE_H + AUX_DROP + r * AUX_ROW_H, rank: hp.rank, aux: true });
+        positions.set(auxId, { x: hp.x + 8 + c * (AUX_W + 24), y: hp.y + TASK_MAP_NODE_H + AUX_DROP + r * AUX_ROW_H, rank: hp.rank, aux: true, satW: AUX_W });
       });
     });
 
-    /* —— ⑤ 执行者区 + 交接挂卡（2026-10-05 分区整理）——
+    /* —— ⑥ 执行者区 + 交接卡悬挂带（2026-10-05 分区整理 / 批1 改悬挂带）——
        agent 卡：右侧独立列（4 行一列级联），与任务流分家、一眼看到「有哪些干活的人」
-       handoff 卡：挂在产出它的宿主任务卡右侧（handoff 边 src=宿主 → dst=交接卡） */
+       handoff 卡：挂在产出它的宿主卡**正下方**悬挂带（辅助卡之下），不再压右邻列 */
     if (agentZone.length) {
-      const maxTaskX = positions.size ? Math.max(...[...positions.values()].map(p => p.x + (p.aux ? AUX_W : TASK_MAP_NODE_W))) : TASK_MAP_PAD + TASK_MAP_NODE_W;
+      const maxTaskX = positions.size ? Math.max(...[...positions.values()].map(p => p.x + (p.satW || TASK_MAP_NODE_W))) : TASK_MAP_PAD + TASK_MAP_NODE_W;
       const zx0 = maxTaskX + 160;
       const agentRows = 4;
       agentZone.sort((a, b) => compare(a, b));
       agentZone.forEach((id, i) => {
         const col = Math.floor(i / agentRows), row = i % agentRows;
-        positions.set(id, { x: zx0 + col * (TASK_MAP_NODE_W + 120), y: TASK_MAP_PAD + row * (TASK_MAP_NODE_H + TASK_MAP_GAP_Y + 24), rank: maxRank + 1 });
+        positions.set(id, { x: zx0 + col * (TASK_MAP_NODE_W + 120), y: TASK_MAP_PAD + row * (TASK_MAP_NODE_H + TASK_MAP_GAP_Y + 24), rank: maxRank + 1, satW: TASK_MAP_NODE_W });
       });
     }
-    links.forEach(link => {
-      if (String(link.kind) !== 'handoff') return;
-      const s = Number(link.src_id), d = Number(link.dst_id);
-      if (positions.has(s) && byId.has(d) && handoffSet.has(d)) {
-        const sp = positions.get(s);
-        positions.set(d, { x: sp.x + TASK_MAP_NODE_W + 110, y: sp.y, rank: sp.rank, aux: true });
-      }
+    handoffByHost.forEach((hfIds, host) => {
+      const hp = positions.get(host);
+      if (!hp) return;
+      const auxN = (auxByHost.get(host) || []).length;
+      const below = hp.y + TASK_MAP_NODE_H + AUX_DROP + Math.ceil(auxN / AUX_PER_ROW) * AUX_ROW_H;
+      hfIds.forEach((id, i) => {
+        positions.set(id, { x: hp.x + 8, y: below + i * (TASK_MAP_NODE_H + 14), rank: hp.rank, aux: true, satW: TASK_MAP_NODE_W });
+      });
     });
 
-    /* —— 画布尺寸（含辅助悬挂区） —— */
+    /* —— 画布尺寸（含辅助/交接悬挂区） —— */
     let maxX = TASK_MAP_PAD + TASK_MAP_NODE_W;
     let maxY = TASK_MAP_PAD + TASK_MAP_NODE_H;
     colBottom.forEach(b => { maxY = Math.max(maxY, b + 16); });
-    positions.forEach(p => { maxX = Math.max(maxX, p.x + (p.aux ? AUX_W + 40 : TASK_MAP_NODE_W + 40)); });
-    return { positions, width: maxX + TASK_MAP_PAD, height: maxY + TASK_MAP_PAD };
+    positions.forEach(p => { maxX = Math.max(maxX, p.x + (p.satW || TASK_MAP_NODE_W) + 40); });
+    /* host → 卫星卡（辅助 + 交接）：交回调用方，让手动拖拽时卫星卡跟着宿主一起走
+       （否则宿主被拖走后，卫星还留在自动位上，会与邻卡压住 —— 实测 layered 唯一残留重叠即此） */
+    const satellites = new Map();
+    auxByHost.forEach((ids, host) => { if (positions.has(host)) satellites.set(host, [...(satellites.get(host) || []), ...ids]); });
+    handoffByHost.forEach((ids, host) => { if (positions.has(host)) satellites.set(host, [...(satellites.get(host) || []), ...ids]); });
+    return { positions, satellites, width: maxX + TASK_MAP_PAD, height: maxY + TASK_MAP_PAD };
   }
 
   function taskMapEdgePath(source, target, vertical = false) {
@@ -4559,26 +4677,56 @@
     // ★ 2026-09-13：用户要求始终横向工作流布局（禁止纵向排布；仅读 'h' 坐标）
     const vertical = false;
     _taskMapState.vertical = false;
-    const layout = taskMapTopology(nodes, links, vertical);
+    const layout = taskMapTopology(nodes, links, vertical, _taskMapState.layoutMode);
     _taskMapState.positions = layout.positions;
     // ★ 2026-09-13：手动摆放位置覆盖（meta.map_pos；h=横屏 / v=竖屏 各存一份，切窗口宽度不互相污染）+ 画布扩容
+    // ★ 2026-10-05 批1：手动位只在 layered（依赖分层）模式生效 —— 泳道/主题/时间轴三模式的语义就是
+    //   「按该维度成列」，若继续被历史拖拽坐标无条件覆盖（旧 4567-4576 行为），切换就等于没生效。
     const viewKey = vertical ? 'v' : 'h';
     let worldW = layout.width, worldH = layout.height;
-    nodes.forEach(n => {
-      const _mp = n.meta && typeof n.meta.map_pos === 'object' && n.meta.map_pos ? n.meta.map_pos : {};
-      const saved = _mp[viewKey] || _mp.c; // c 桶=节点画布时代/点选建卡落点（并入后三桶共存读，写仍按当前 h/v 屏）
-      if (saved && _taskMapState.positions.has(Number(n.id))) {
-        const p = _taskMapState.positions.get(Number(n.id));
-        _taskMapState.positions.set(Number(n.id), { x: Number(saved.x) || p.x, y: Number(saved.y) || p.y, rank: p.rank });
-        worldW = Math.max(worldW, (Number(saved.x) || 0) + TASK_MAP_NODE_W + 32);
-        worldH = Math.max(worldH, (Number(saved.y) || 0) + TASK_MAP_NODE_H + 32);
-      }
-    });
+    if (_taskMapState.layoutMode === 'layered') {
+      const autoPos = new Map([..._taskMapState.positions].map(([k, v]) => [k, { x: v.x, y: v.y }]));
+      const savedOf = new Map();
+      nodes.forEach(n => {
+        const _mp = n.meta && typeof n.meta.map_pos === 'object' && n.meta.map_pos ? n.meta.map_pos : {};
+        // ★ 2026-10-05 批1（「看板太乱」第 4 根因）：不再回退读 `c` 桶 —— 那是已废弃「节点画布」时代的
+        //   落点（双画布并存被用户否决、canvas-editor.js 已删），它一直无条件覆盖任务地图的自动坐标，
+        //   实测造成 7 处卡片互相压住 + 依赖边反向。写侧本就按 h/v 屏分桶，读侧只认 h/v。
+        const saved = _mp[viewKey];
+        const id = Number(n.id);
+        if (saved && _taskMapState.positions.has(id)) savedOf.set(id, { x: Number(saved.x) || 0, y: Number(saved.y) || 0 });
+      });
+      savedOf.forEach((pos, id) => {
+        const p = _taskMapState.positions.get(id);
+        _taskMapState.positions.set(id, { ...p, x: pos.x || p.x, y: pos.y || p.y });
+        worldW = Math.max(worldW, pos.x + TASK_MAP_NODE_W + 32);
+        worldH = Math.max(worldH, pos.y + TASK_MAP_NODE_H + 32);
+      });
+      // 卫星跟随：宿主被手动拖走时，它的辅助卡/交接卡按同一位移平移
+      //   （否则宿主走了、卫星留在自动位，与邻卡压住 —— 实测 layered 唯一残留重叠即此）
+      (layout.satellites || new Map()).forEach((ids, host) => {
+        if (!savedOf.has(host)) return;
+        const a = autoPos.get(host), s = savedOf.get(host);
+        if (!a || !s) return;
+        const dx = (s.x || a.x) - a.x, dy = (s.y || a.y) - a.y;
+        if (!dx && !dy) return;
+        ids.forEach((sid) => {
+          if (savedOf.has(sid)) return; // 卫星自己也被手动摆过 → 尊重卫星的手动位
+          const sp = _taskMapState.positions.get(sid);
+          if (!sp) return;
+          _taskMapState.positions.set(sid, { ...sp, x: sp.x + dx, y: sp.y + dy });
+          worldW = Math.max(worldW, sp.x + dx + TASK_MAP_NODE_W + 32);
+          worldH = Math.max(worldH, sp.y + dy + TASK_MAP_NODE_H + 32);
+        });
+      });
+    }
     // ★ UI2.0 碰撞解算：持久化手动坐标可能互相重叠（如 #51/#63），按纵向推开，保持横向分层不变
     {
       const CW = TASK_MAP_NODE_W + 12, CH = TASK_MAP_NODE_H + 16, OVERLAP_X = 40;
       const arr = [];
-      nodes.forEach(n => { const p = _taskMapState.positions.get(Number(n.id)); if (p && !p.aux) arr.push(p); });
+      // ★ 2026-10-05 批1：卫星卡（辅助/交接）一并进解算 —— 原实现只解非卫星，
+      //   结果「手动摆的任务卡」压住「别人家的交接卡」没人管（实测 layered 唯一残留重叠即此）。
+      nodes.forEach(n => { const p = _taskMapState.positions.get(Number(n.id)); if (p) arr.push(p); });
       arr.sort((a, b) => (a.rank - b.rank) || a.y - b.y || a.x - b.x);
       for (let pass = 0; pass < 4; pass++) {
         let moved = false;
@@ -4639,6 +4787,9 @@
       const nk = String(node.kind);
       const kindLabel = (nk === 'task' || isAux) ? '' : ((_cardTypes.list.find(t => t.type_key === nk) || {}).label || nk);
       const missingTag = (!isAux && nk === 'agent' && node.profileMissing) ? ' ⚠️ 载体缺失' : '';
+      // ★ 2026-10-05 批1：失败原因贴到卡上（本会话 SSE 收到的 detail），不再只有一张悄悄变红的卡
+      const failDetail = String(node.status) === 'failed' ? (_failReason.get(Number(node.id)) || '') : '';
+      const failTag = failDetail ? ` ⚠ ${esc(failDetail.slice(0, 34))}` : '';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'task-map-node';
@@ -4651,7 +4802,7 @@
         button.style.setProperty('--node-color-text', _ntc[0]);
         button.style.setProperty('--node-color-text-dark', _ntc[1]);
       }
-      button.title = `#${node.id} ${node.title}`;
+      button.title = `#${node.id} ${node.title}${failDetail ? `\n失败原因：${failDetail}` : ''}`;
       button.setAttribute('aria-label', `打开卡片 #${node.id} ${node.title}`);
       // 辅助卡样式（虚线小卡）；注意 classList.add 不接受空串，非 aux 不加类
       if (isAux) button.classList.add('task-map-node-aux');
@@ -4665,7 +4816,7 @@
         <span class="task-map-node-title">${esc(node.title)}</span>
         <span class="task-map-node-meta">
           <span>${esc(isAux ? '' : (node.assignee || '未分配'))}</span>
-          <span>${esc(isAux ? '' : (metaTail || kindLabel || ''))}${esc(missingTag)}</span>
+          <span>${esc(isAux ? '' : (metaTail || kindLabel || ''))}${esc(missingTag)}${failTag}</span>
         </span>
         <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">＋</span>
         ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
@@ -4766,6 +4917,11 @@
       const style = TASK_MAP_LINK_STYLE[kind] || { color: '#94a3b8', width: 1.5, dash: '2 4' };
       const path = document.createElementNS(ns, 'path');
       path.setAttribute('d', taskMapEdgePath(source, target, vertical));
+      // ★ 2026-10-05 批1：边带端点身份（s/d 已是「绘制方向」= 前置 → 依赖方）。
+      //   排布模式改的是几何，回归门禁要能按类型核对「依赖边是否真的从左带指向右带」，不能只看像素。
+      path.dataset.kind = kind;
+      path.dataset.src = String(s);
+      path.dataset.dst = String(d);
       path.setAttribute('fill', 'none');
       path.setAttribute('stroke', style.color);
       path.setAttribute('stroke-width', String(style.width));
@@ -5278,6 +5434,24 @@
       // ★ 2026-09-13：自动排布 = 清空全部手动位置（回到确定性分层布局），再重绘适配
       fetch('/api/cards/positions', { method: 'DELETE' }).then(() => renderTaskMap({ fit: true })).catch(() => renderTaskMap({ fit: true }));
     };
+    // ★ 2026-10-05 批1：排布模式切换（依赖分层 / 状态泳道 / 主题聚类 / 时间轴），持久化 localStorage
+    const modeSel = $('#taskMapModeSel');
+    if (modeSel) {
+      const MODE_HINT = {
+        layered: '依赖分层：列即依赖层（左→右=推进方向），层内已做减交叉重排；手动拖拽位置在此模式生效',
+        status: '状态泳道：按 triage→todo→ready→已领取→review→失败/阻塞→已完成 分列（手动拖拽位在此模式不生效）',
+        topic: '主题聚类：按卡片主题分列，卡多的主题靠左（手动拖拽位在此模式不生效）',
+        time: '时间轴：按创建日期分列，同日内按时间先后（手动拖拽位在此模式不生效）',
+      };
+      modeSel.value = _taskMapState.layoutMode;
+      modeSel.title = Object.keys(MODE_HINT).map(k => MODE_HINT[k]).join('\n');
+      modeSel.onchange = () => {
+        _taskMapState.layoutMode = modeSel.value || 'layered';
+        try { localStorage.setItem('memoryos-map-mode', _taskMapState.layoutMode); } catch { /* ignore */ }
+        toast('排布方式：' + (MODE_HINT[_taskMapState.layoutMode] || ''));
+        renderTaskMap({ fit: true });
+      };
+    }
     // ★ 2026-09-14：自动关联开关 —— 切换 ？auto=0/1，持久化 localStorage，重载地图
     const autoBtn = $('#taskMapAutoBtn');
     if (autoBtn) autoBtn.onclick = () => {
@@ -5995,6 +6169,15 @@
     const lo0 = p0?.launch_overrides ? (typeof p0.launch_overrides === 'string' ? p0.launch_overrides : JSON.stringify(p0.launch_overrides, null, 1)) : '';
     const agentOpts = _agentScan.list.map(a => ({ value: String(a.id ?? ''), label: `${a.name ?? a.id ?? ''}${a.connected ? '' : ' · 未连接'}` }));
     if (!_agentScan.list.length) agentOpts.push({ value: '', label: '（未扫描到，可留空建「无载体」卡，卡上会标 ⚠️）' });
+    // ★ 2026-10-05 批1（用户「派发后智能体卡不控制智能体」头号真因）：edit 态两个 select 从不回填
+    //   （只回填了名称/工作区/模型/textarea），提交却直读 .value ⇒ 用户每点一次「保存」，
+    //   agent_key 就被改成扫描清单第一项、channel 被打回 queue ⇒ 之后派发只走内部队列、不拉起任何外部智能体。
+    //   ① 档案里的 agent_key 不在扫描清单（卸载/自定义登记）时补一条保留原值，防保存即丢配置。
+    if (p0?.agent_key && !agentOpts.some(o => o.value === String(p0.agent_key))) {
+      agentOpts.unshift({ value: String(p0.agent_key), label: `${p0.agent_key} · 当前档案（未在扫描清单，可能已卸载）` });
+    }
+    const curKey = String(p0?.agent_key ?? '');
+    const curCh = String(p0?.channel ?? 'queue');
     const inStyle = 'width:100%;box-sizing:border-box;padding:7px 10px;font-size:13px;background:var(--surface-glass,#fff);color:var(--text-primary);border:1px solid var(--border-glass,rgba(0,0,0,.15));border-radius:8px;outline:none';
 
     return new Promise((resolve) => {
@@ -6011,12 +6194,12 @@
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">卡片名称 *</label>
         <input data-k="name" style="${inStyle}" value="${esc(presetTitle || p0?.name || '智能体卡')}">
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">智能体（本机已装）</label>
-        <select data-k="agent_key" style="${inStyle}">${agentOpts.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>
-        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">执行通道</label>
+        <select data-k="agent_key" style="${inStyle}">${agentOpts.map(o => `<option value="${esc(o.value)}"${o.value === curKey ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">执行通道${mode === 'edit' ? `（当前：${esc(curCh)}）` : ''}</label>
         <select data-k="channel" style="${inStyle}">
-          <option value="queue">队列 · 智能体自己领单（保底，永远可用）</option>
-          <option value="cli">直控 · 终端拉起并直播日志（需该智能体已登录/配好密钥）</option>
-          <option value="cdp">驾驶 · 拉起桌面软件并直播画面（Chromium 系应用）</option>
+          <option value="queue"${curCh === 'queue' ? ' selected' : ''}>队列 · 智能体自己领单（保底，永远可用）</option>
+          <option value="cli"${curCh === 'cli' ? ' selected' : ''}>直控 · 终端拉起并直播日志（需该智能体已登录/配好密钥）</option>
+          <option value="cdp"${curCh === 'cdp' ? ' selected' : ''}>驾驶 · 拉起桌面软件并直播画面（Chromium 系应用）</option>
         </select>
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">工作区（留空 = 用户主目录）</label>
         <input data-k="workspace" style="${inStyle}" placeholder="例：D:\\项目\\某目录" value="${esc(p0?.workspace || '')}">
@@ -6307,9 +6490,15 @@
     if (pre) return pre;
     const targets = (_taskMapState.data.nodes || []).filter(n => String(n.kind) === 'agent');
     if (!targets.length) { toast('地图上还没有智能体卡——先点左上角 ＋ 建一张（类型选「智能体」）'); return; }
+    // ★ 2026-10-05 批1：目标列表按通道如实标注 —— 「派了没反应」的头号形态就是选中了 queue 通道卡
+    //   （它只走 MemoryOS 内部领单，不拉起任何外部智能体），原来列表里完全看不出来。
+    const CH = { queue: '队列', cli: '直控', cdp: '驾驶' };
     const rows = targets.map(t => {
+      const ch = String(t.profileChannel || 'queue');
       const miss = t.profileMissing ? ' <span style="color:#f59e0b;font-size:11px">⚠️ 载体缺失</span>' : '';
-      return `<div data-next="${''}" data-target="${t.id}" class="ap-item" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">🤖 ${esc(t.title || ('#' + t.id))}${miss}</div>`;
+      const tag = `<span style="color:var(--text-muted);font-size:11px">· ${CH[ch] || '队列'}</span>`;
+      const warn = (ch === 'queue' || t.profileMissing) ? ' <span style="color:#f59e0b;font-size:11px">⚠ 派了不会拉起外部应用</span>' : '';
+      return `<div data-next="${''}" data-target="${t.id}" class="ap-item" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">🤖 ${esc(t.title || ('#' + t.id))} ${tag}${warn}${miss}</div>`;
     }).join('');
     const ov = agentOverlay(`把 #${srcCardId} 派给哪个智能体？`, rows);
     ov.querySelectorAll('[data-target]').forEach(el => {
@@ -6321,14 +6510,20 @@
           agentOverlay('⚠️ 无法派发', `<div style="font-size:12px;color:var(--text-muted)">该智能体载体缺失（选的智能体未安装/未登记）。请右键智能体卡「⚙️ 编辑智能体配置」选一个本机已装的智能体。</div>`);
           return;
         }
-        const chLabel = { cli: '直控 · 终端流', cdp: '驾驶 · 界面直播', queue: '队列 · 领单' }[st.channel] || '队列 · 领单';
+        const chKey = String(st.channel || 'queue');
+        const chLabel = { cli: '直控 · 终端流', cdp: '驾驶 · 界面直播', queue: '队列 · 领单' }[chKey] || '队列 · 领单';
         const depth = st.queue_depth ? `队列中已有 ${Number(st.queue_depth)} 项（将排队执行）` : '当前空闲，立即执行';
+        // ★ 2026-10-05 批1：把「队列」通道的真实语义说白 —— 它只进 MemoryOS 内部领单，不会拉起该智能体
+        //   自己的应用/CLI。用户此前正是在这里被误导（选了队列卡 → 以为任务会交给 VS Code / Codex 去做）。
+        const queueWarn = chKey === 'queue'
+          ? `<div style="margin-top:8px;padding:7px 9px;border:1px solid rgba(245,158,11,.45);border-radius:8px;font-size:11.5px;color:#b45309;line-height:1.7">⚠ 「队列」通道不会拉起外部应用：任务只进 MemoryOS 内部队列，由内置 agent 领单执行。<br>要让这个智能体真去干活：右键它的卡 → ⚙️ 编辑智能体配置 → 「执行通道」改成 <b>直控</b>（终端拉起）或 <b>驾驶</b>（桌面软件界面）。</div>`
+          : '';
         const ov2 = agentOverlay('确认派发', `
           <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">
             任务卡 <b>#${srcCardId}</b> → 智能体 <b>${esc(st.name || ('#' + dst))}</b>（${chLabel}）<br>${esc(depth)}
-          </div>
+          </div>${queueWarn}
           `, [
-            { act: 'go', label: '确认派发' },
+            { act: 'go', label: chKey === 'queue' ? '仍按队列派发' : '确认派发' },
             { act: 'cancel', label: '取消' },
           ]);
         const go = (o) => {
