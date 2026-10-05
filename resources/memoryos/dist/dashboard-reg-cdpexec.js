@@ -177,23 +177,60 @@ export function registerCdpExec(app, ctx) {
         await cdpCall(job, "Input.dispatchKeyEvent", { ...base, type: "keyUp" }, 4000);
     }
 
-    /** CDP 可信点击（合成 element.click() 不触发应用内手势） */
+    /** CDP 可信点击（合成 element.click() 不触发应用内手势）。
+     *  ★ 2026-10-05 批3：`mouseMoved` 从「4s 超时即 reject」降为 best-effort —— 窗口在后台/被遮挡时
+     *  hover 最常卡住，而原实现一次 hover 失败就沿调用链抛穿到 `start()` 的外层 catch，
+     *  整条注入链被一句「注入异常：Input.dispatchMouseEvent 超时」打死（实测复用路径即此），
+     *  既绕过 D10 统一降档文案，也把本可以成功的点击/打字机会一起丢了。 */
     async function cdpClick(job, x, y) {
-        await cdpCall(job, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 }, 4000);
+        try {
+            await cdpCall(job, "Page.bringToFront", {}, 1500);
+        }
+        catch { /* 前置失败不致命（Electron 个别版本不支持该域方法） */ }
+        try {
+            await cdpCall(job, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 }, 1500);
+        }
+        catch (e) {
+            pushLine(job, "sys", `[驾驶] hover 未响应（${e instanceof Error ? e.message : e}）——跳过，直接按下/抬起`);
+        }
         await cdpCall(job, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 }, 4000);
         await cdpCall(job, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 }, 4000);
+    }
+
+    /** DOM 定焦兜底：只 focus，不改文本、不模拟点击（可信打字仍走 Input.insertText）。
+     *  用于点击通道卡住（窗口后台/遮挡）时保住注入机会。 */
+    async function domFocus(job, ov) {
+        const expr = `(() => {
+          const c = document.querySelector(${JSON.stringify(ov?.chatContainer ?? ".chat-input-container")});
+          if (!c) return false;
+          const t = c.querySelector('textarea, [contenteditable="true"], .monaco-editor') || c;
+          t.focus();
+          return document.activeElement === t || (c.contains && c.contains(document.activeElement));
+        })()`;
+        try {
+            const res = await cdpCall(job, "Runtime.evaluate", { expression: expr, returnByValue: true }, 4000);
+            return res?.result?.value === true;
+        }
+        catch { return false; }
     }
 
     /**
      * 界面探测：面板是否开 / 输入面文本 / 信任弹窗 / 登录引导 / 焦点是否在输入面。
      * 选择器可用 launch_overrides.chatContainer / chatText 覆盖（默认 VS Code 聊天面）。
+     * ★ 2026-10-05 批3（实测「打字未落入输入面（探到 "task_done(memory_id=4636, conc"）」的真因）：
+     *   原 `txt` 用 `document.querySelectorAll(chatText)` **全局**取 `.view-line`，而 `.view-line` 是
+     *   Monaco 通用行类名 —— 聊天**历史消息里的代码块**同样是 Monaco，于是落字校验拿的是历史文本池，
+     *   刚打进去的任务文本永远"找不到"。现改为**限定在 chatContainer 子树内**取，容器内无匹配才回退
+     *   全局，并同时回传 scoped/textAny，让失败信息一次说清是"没打进去"还是"探测范围不对"。
      */
     async function probeUi(job, ov) {
         const expr = `(() => {
         const cs = ${JSON.stringify(ov?.chatContainer ?? ".chat-input-container")};
         const ts = ${JSON.stringify(ov?.chatText ?? ".chat-input-container .view-line")};
         const c = document.querySelector(cs);
-        const txt = Array.from(document.querySelectorAll(ts)).map(e => e.innerText || "").join("\\n");
+        const inScope = c ? Array.from(c.querySelectorAll(ts)).map(e => e.innerText || "") : [];
+        const anywhere = Array.from(document.querySelectorAll(ts)).map(e => e.innerText || "");
+        const txt = (inScope.length ? inScope : anywhere).join("\\n");
         const dlg = Array.from(document.querySelectorAll(".monaco-dialog-box, [role=dialog]"));
         const trust = dlg.flatMap(d => Array.from(d.querySelectorAll("button, a, [role=button], .monaco-button")))
           .find(b => /^(信任文件夹并继续|Trust Folder and Continue)\\b/i.test((b.innerText || "").trim()));
@@ -205,6 +242,7 @@ export function registerCdpExec(app, ctx) {
         const ae = document.activeElement;
         return JSON.stringify({
           panel: !!c, text: txt.slice(0, 80), dialog,
+          scoped: inScope.length > 0, textAny: anywhere.join("\\n").slice(0, 80),
           trust: trust ? { x: Math.round(trust.getBoundingClientRect().x + trust.getBoundingClientRect().width / 2),
                            y: Math.round(trust.getBoundingClientRect().y + trust.getBoundingClientRect().height / 2) } : null,
           signIn,
@@ -282,7 +320,7 @@ export function registerCdpExec(app, ctx) {
      *  → 定焦点 → 清空 → Input.insertText → 落字校验 →（send!==false）回车。
      * 每步失败立即降档返回原因，不循环重试（D10）。
      */
-    async function cdpTypeInject(job, ov, text) {
+    async function cdpTypeInjectInner(job, ov, text) {
         const head = text.trim().replace(/\s+/g, "").slice(0, 6);
         // ① 等界面就绪（没配 readySelector 就直接开始）
         const ready = await waitForReady(job, ov);
@@ -332,11 +370,18 @@ export function registerCdpExec(app, ctx) {
         }
         if (ui.signIn)
             return { ok: false, why: "应用要求先登录（登录引导对话框挡住输入）——请完成登录后重新派发" };
-        // ② 定焦点：点输入面中心；模态遮挡时点不进去 → 降档
+        // ② 定焦点：点输入面中心；点击通道卡住（窗口后台/遮挡）→ 退回 DOM 定焦，别把整次注入判死
         if (!ui.focused) {
             if (!ui.box)
                 return { ok: false, why: "会话输入面不可见（宽高为 0）" };
-            await cdpClick(job, ui.box.x, ui.box.y);
+            try {
+                await cdpClick(job, ui.box.x, ui.box.y);
+            }
+            catch (e) {
+                pushLine(job, "sys", `[驾驶] 点击输入面失败（${e instanceof Error ? e.message : e}）——改走 DOM 定焦继续`);
+                if (!await domFocus(job, ov))
+                    return { ok: false, why: `点击与 DOM 定焦都失败（${e instanceof Error ? e.message : e}）——请把该应用窗口切到前台后重新派发` };
+            }
             await sleep(400);
             ui = await probeUi(job, ov);
         }
@@ -351,8 +396,14 @@ export function registerCdpExec(app, ctx) {
         await sleep(500);
         ui = await probeUi(job, ov);
         const seen = String(ui?.text ?? "").replace(/\s+/g, "");
-        if (!head || !seen.includes(head))
-            return { ok: false, why: `打字未落入输入面（探到 ${JSON.stringify(String(ui?.text ?? "").slice(0, 30))}）` };
+        if (!head || !seen.includes(head)) {
+            // 失败信息带「探测范围」，免得下次还得重跑一遍才知道是没打进去还是读错了容器（批3 真因即此）
+            const scopeNote = ui?.panel
+                ? (ui.scoped ? `容器内探到 ${JSON.stringify(String(ui.text ?? "").slice(0, 30))}`
+                    : `容器内无 ${ov?.chatText ?? ".chat-input-container .view-line"} 匹配、已回退全局探到 ${JSON.stringify(String(ui.textAny ?? "").slice(0, 30))}（选择器需按该应用界面校准）`)
+                : "会话输入面已消失";
+            return { ok: false, why: `打字未落入输入面（${scopeNote}）` };
+        }
         // ④ 回车发送（send:false 可关）
         if (ov?.send === false)
             return { ok: true, how: "CDP 打字（未发送）" };
@@ -368,6 +419,18 @@ export function registerCdpExec(app, ctx) {
         }
         const left = String(ui?.text ?? "").replace(/\s+/g, "");
         return { ok: true, how: left ? `CDP 打字+回车（输入面仍残留 ${left.length} 字，可能未发出）` : "CDP 打字+回车（输入面已清空=已提交）" };
+    }
+
+    /** 打字注入外壳：★ 2026-10-05 批3 —— 中途任何 CDP 失败一律转成「带原因的降档」，
+     *  不再抛穿到 `start()` 的外层 catch。原行为：一次 hover/按键超时 → 抛出 → 印
+     *  「注入异常：Input.dispatchMouseEvent 超时」，既绕过 D10 统一降档文案，也丢掉本可继续的步骤。 */
+    async function cdpTypeInject(job, ov, text) {
+        try {
+            return await cdpTypeInjectInner(job, ov, text);
+        }
+        catch (e) {
+            return { ok: false, why: `注入链中途失败：${e instanceof Error ? e.message : e}（有界降档，不再重试）` };
+        }
     }
 
     /** 注入主链：信任弹窗 → dom 路径（原行为）或 cdp 打字路径 → 成败都给明确原因 */
