@@ -226,6 +226,14 @@ console.log(`发现路由 ${routes.length} 条：无参 GET 快照 ${gettable.le
 console.log(`鉴权契约：无令牌 /api/summary → ${snapshot.auth.noTokenStatus}`);
 
 if (!CHECK) {
+    // ★ 2026-10-05 批4：在脏树上生成的基线会把「未提交的响应体」固化成真相，之后任何干净检出
+    //   （worktree 分支 / 新克隆 / CI）都读成硬回归。实测：并行会话在 app.js/index.html 未提交时
+    //   重定基线 → 本批变基后 `snapshot:check` 平白多出 `/` 与 `/app.js` 两处 ❌（A/B 证明与本批无关）。
+    //   故生成侧先喊话（不改退出码，避免阻断他人），检查侧再复核一次。
+    if (snapshot.meta?.gitDirty)
+        console.warn("\n⚠⚠ 基线是在**有未提交改动的工作树**上生成的：基线固化了未提交版本的响应体，"
+            + "\n   之后任何干净检出（worktree 分支 / 新克隆 / CI）都会被判成硬回归。"
+            + "\n   规程要求：先提交（或 stash 干净）再跑 `npm run snapshot`。本次仍已写入，不阻断。\n");
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
     fs.writeFileSync(OUT, JSON.stringify(snapshot, null, 2), "utf8");
     console.log(`✅ 快照已写入：${OUT}`);
@@ -237,6 +245,9 @@ if (!fs.existsSync(OUT)) { console.log(`❌ 找不到基线快照：${OUT}（先
 const base = JSON.parse(fs.readFileSync(OUT, "utf8"));
 let diff = 0, drift = 0;
 if (base.meta) console.log(`基线版本：git ${base.meta.gitRev}${base.meta.gitDirty ? "（含未提交改动）" : ""} @ ${base.meta.generatedAt}（node ${base.meta.node}）\n`);
+if (base.meta?.gitDirty)
+    console.warn("⚠ 本基线生成时工作树有未提交改动 → 下面的「响应体硬差异」可能只是基线本身脏，不是代码回归；"
+        + "先提交再 `npm run snapshot` 重定，再判定红绿。\n");
 
 // ① 结构契约：路由漏注册/改名/新增（含 100 条非 GET）
 const baseTable = new Set(base.routeTable ?? []);

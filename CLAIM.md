@@ -33,10 +33,17 @@
 2. **短提交、单一主题**：每次改动立即 commit（信息含"为什么"）；不允许把多个主题堆在一个提交里。
 3. **跨分区修复例外**：发现他分区文件的缺陷时，允许**最小修复 + 立即提交**，但必须：① 在提交信息里写明"由 A 分区验收发现"；② 同步在 §4 登记；③ 修复范围仅限该缺陷本身，不顺手重构。
 4. **验收门禁只认 A 分区的脚本**：`npm test` / `lint` / `lint:sql` / `lint:silent` / `snapshot:check`。B 分区自述的"已通过"必须能被这些脚本复现。
-5. **基线重定须自证**：重定 `outputs/route-snapshot.json` 时，提交信息必须写明重定理由（环境漂移 / 迁移影响），否则视为掩盖变更。
+5. **基线重定须自证 + 必须在干净树上**：重定 `outputs/route-snapshot.json` 时，提交信息必须写明重定理由（环境漂移 / 迁移影响），否则视为掩盖变更。**且重定前 `git status --porcelain` 必须为空**——在脏树上生成的基线会把未提交的响应体固化成"真相"，之后任何干净检出（worktree 分支 / 新克隆 / CI）都读成硬回归（2026-10-05 实测：并行会话在 `app.js`/`index.html` 未提交时重定 → 本仓变基后平白多两处 ❌，A/B 证明与改动方无关）。`snapshot-routes.js` 现于生成侧与检查侧各打一条 `⚠`（读基线自带 `meta.gitDirty`，不阻断退出码）。
 6. **tag 由 A 分区在验收通过后打**（如 `p0-exec-face`、`p2-macp-20260916`），避免多方各打各的。
 7. **生产库写操作**：仅限显式授权 + 先按 B2 建 `VACUUM INTO` 快照（严禁复制 `.db`）。
 8. **分区 state 门禁（2026-10-03 起）**：动任何文件前先看 §1 该分区 `state` —— `active` 需原主交还或用户授权；`released` 可直接按 §5 登记后动（**登记不免除**）；`unverifiable` **一律只读、禁止接管**，即便只是"顺手改一下"。一旦发现某区主人不明 → **先把它标成 `unverifiable`，再停手在对话里报告**（与 §2-1 同向，此处补齐判据）。
+9. **git 分工作业法（2026-10-05 起，用户拍板）**：多 agent / 多会话并行时，**认领即隔离**——
+   ① 按 §5 登记后 `git worktree add .worktrees/<topic>-<会话> -b wt/<topic>-<会话>`（**分支名必须带会话标识**：`wt/*` 在一个 `.git` 内全局唯一，重名即 409，实测 `card-121` 与 UI 预填 `card-<id>` 就撞）；
+   ② worktree 缺 gitignored 依赖，须先接 `node_modules` junction：`New-Item -ItemType Junction -Path <wt>/resources/memoryos/node_modules -Target <主树>/resources/memoryos/node_modules`（实测接上后 `npm test 23/0/2` 在 worktree 内可跑；不接则 `fastify` ERR_MODULE_NOT_FOUND，只有 `lint` 这类纯 builtin 门能跑）；
+   ③ 作业只在该 worktree，pre-commit 三门在分支上跑；
+   ④ 合并回 main 以 `git -C <主树> merge wt/<分支>`，**合并动作不由服务端自动化**（写了就是新路由 + 新攻击面）；
+   ⑤ **删分支是收尾步且必须在证据落库之后**，且**先摘 junction 再回收**：`powershell "(Get-Item -LiteralPath <link> -Force).Delete()"` → `git worktree remove --force`。实测 `git worktree remove --force` **不会顺 junction 删穿目标**（探针 `keep.txt` 幸存），但带 junction 的 worktree 回收必失败留孤儿；
+   ⑥ Windows 句柄锁（实测 `.worktrees/<名>/resources/app.asar` 被本机进程按文件名占住，`rm`/`mv`/`del` 全失败）下，**合法终态是「git 生命周期已结束、盘待释放」**——`DELETE /api/worktrees/:name` 会回 `released:false` + `pending_release{files,blocker}`，不要为了"看起来干净"去强杀别人的进程。
 
 ### 2.1 判据来源（Orca 对标，2026-10-02 引入）
 
