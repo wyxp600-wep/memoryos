@@ -19,6 +19,7 @@
  * 依赖：Node ≥22 内置 WebSocket 全局（runtime v24 实测可用），零新依赖。
  * ═══════════════════════════════════════════════════════════════════════════ */
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { renewCardLease } from "./db.js";
 import { killTree, safeJson, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
 
@@ -73,6 +74,78 @@ export function registerCdpExec(app, ctx) {
             };
             tick();
         });
+    }
+
+    /* ═══ 单实例应用的调试口：复用 + 诊断（2026-10-05 B 方案，根治「端口 25s 未就绪」误导报错）═══
+     * VS Code / Chrome 类应用是单实例：第二个进程会把 --remote-debugging-port 交给已有实例后
+     * 直接退出，参数只对「第一个实例」生效 → 已有实例没开调试口时，等多久端口都不会就绪，
+     * 而旧文案「应用可能不支持 --remote-debugging-port 或启动过慢」是误导（实测取证：已有
+     * Code.exe PID 23500 @14:10:18 不带该参数、9329 无监听、DevToolsActivePort 内容 9329 无监听）。 */
+
+    /** 该应用的 DevToolsActivePort 文件（--user-data-dir 覆盖优先，否则按 exe 名取平台默认） */
+    function devToolsPortFile(exePath, args) {
+        let udd = null;
+        for (const a of args ?? []) {
+            const m = /^--user-data-dir=(.+)$/i.exec(String(a));
+            if (m)
+                udd = m[1];
+        }
+        const exe = String(exePath ?? "").split(/[\\/]/).pop().toLowerCase();
+        if (!udd && exe === "code.exe" && process.env.APPDATA)
+            udd = `${process.env.APPDATA}\\Code`;
+        if (!udd && exe === "chrome.exe" && process.env.LOCALAPPDATA)
+            udd = `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`;
+        return udd ? `${udd}\\DevToolsActivePort` : null;
+    }
+    /** 读该文件首行端口号；无文件/读不了/非正整数 → null（视为「从未以调试口启动过」） */
+    function readDevToolsPort(file) {
+        if (!file || !existsSync(file))
+            return null;
+        try {
+            const n = Number(String(readFileSync(file, "utf8")).split(/\r?\n/)[0]);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        }
+        catch { /* 读失败 = 降档为无调试口，不阻断拉起 */ return null; }
+    }
+    /** 现存同名 exe 进程的 `pid|CommandLine`（异步 PowerShell；仅复用/失败诊断时调用，不在派发热路径） */
+    function listProcCmdLines(exePath) {
+        return new Promise((resolve) => {
+            const name = String(exePath ?? "").split(/[\\/]/).pop().replace(/[^A-Za-z0-9._-]/g, "");
+            if (!name)
+                return resolve("");
+            let out = "";
+            let settled = false;
+            const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+            try {
+                const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+                    `Get-CimInstance Win32_Process -Filter "Name='${name}'" | ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }`],
+                { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+                ps.stdout.on("data", (d) => { out += String(d); });
+                ps.on("error", () => done(""));
+                ps.on("close", () => done(out));
+                setTimeout(() => { try { ps.kill(); } catch { /* 已退出 */ } done(out); }, 4000); // 兜底：诊断不许挂住启动链
+            }
+            catch { done(""); }
+        });
+    }
+    /** ① 复用：DevToolsActivePort 指向的端口必须实测 /json/list 通才算数（文件可能是上次残留） */
+    async function reuseExistingCdp(exe, args) {
+        const port = readDevToolsPort(devToolsPortFile(exe, args));
+        if (!port)
+            return null;
+        const targets = await pollHttp(`http://127.0.0.1:${port}/json/list`, 800);
+        return targets ? { port, targets } : null;
+    }
+    /** ② 诊断：端口没等到时，区分「已有实例吞掉参数」（可行动）与「应用不支持/启动慢」（原文案） */
+    async function diagnoseNoCdp(exe, excludePid) {
+        const rows = (await listProcCmdLines(exe)).split(/\r?\n/).filter(Boolean)
+            .filter((l) => Number(l.split("|")[0]) !== Number(excludePid));
+        if (!rows.length)
+            return null;
+        const exeName = String(exe).split(/[\\/]/).pop();
+        const pids = rows.map((l) => l.split("|")[0]).join(", ");
+        return `${exeName} 已在运行但未开调试端口（PID ${pids}）——单实例应用会把 --remote-debugging-port`
+            + ` 交给已有实例后直接退出，端口因此永远不会就绪。请先完全退出 ${exeName}（含托盘图标），再重新派发`;
     }
 
 
@@ -341,22 +414,34 @@ export function registerCdpExec(app, ctx) {
         const port = PORT_BASE + ((job.profileId * 7 + (++portCursor)) % 600);
         job.port = port;
         const args = ov?.args ?? [];
-        const launchArgs = [...(p.workspace ? [p.workspace] : []), ...args, `--remote-debugging-port=${port}`, "--no-first-run"];
-        pushLine(job, "sys", `[驾驶] 拉起 ${exe} ${launchArgs.join(" ")}`);
-        try {
-            job.proc = spawn(exe, launchArgs, { cwd: p.workspace || undefined, detached: true, windowsHide: false, stdio: "ignore" });
-            job.pid = job.proc.pid ?? null;
+        // ★前置①：应用已开调试口 → 直接复用（单实例应用的第二进程会吞掉 --remote-debugging-port）
+        const reuse = await reuseExistingCdp(exe, args);
+        let targets = reuse?.targets ?? null;
+        if (reuse) {
+            job.port = reuse.port;
+            pushLine(job, "sys", `[驾驶] 复用已有实例的调试口（端口 ${reuse.port}，${targets.length} 个页面）——不再重复拉起`);
         }
-        catch (e) {
-            return fail(job, `拉起失败：${e instanceof Error ? e.message : e}`);
+        if (!targets) {
+            const launchArgs = [...(p.workspace ? [p.workspace] : []), ...args, `--remote-debugging-port=${port}`, "--no-first-run"];
+            pushLine(job, "sys", `[驾驶] 拉起 ${exe} ${launchArgs.join(" ")}`);
+            try {
+                job.proc = spawn(exe, launchArgs, { cwd: p.workspace || undefined, detached: true, windowsHide: false, stdio: "ignore" });
+                job.pid = job.proc.pid ?? null;
+            }
+            catch (e) {
+                return fail(job, `拉起失败：${e instanceof Error ? e.message : e}`);
+            }
+            job.proc.on("error", (e) => pushLine(job, "err", `[驾驶] 进程错误：${e.message}`));
+            // 等 CDP 端口
+            const waitMs = ov?.cdpTimeoutMs ?? CDP_WAIT_DEFAULT_MS;
+            targets = await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs);
+            if (!targets) {
+                // ★前置②：先诊断再报错——有同类实例在跑就给可行动指引，不甩「应用可能不支持」这种误导
+                const why = await diagnoseNoCdp(exe, job.pid);
+                return fail(job, why ?? `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
+            }
         }
-        job.proc.on("error", (e) => pushLine(job, "err", `[驾驶] 进程错误：${e.message}`));
-        // 等 CDP 端口
-        const waitMs = ov?.cdpTimeoutMs ?? CDP_WAIT_DEFAULT_MS;
-        const targets = await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs);
-        if (!targets)
-            return fail(job, `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
-        pushLine(job, "sys", `[驾驶] CDP 已连接（端口 ${port}，${targets.length} 个页面）`);
+        pushLine(job, "sys", `[驾驶] CDP 已连接（端口 ${job.port}，${targets.length} 个页面）`);
         // 选目标页：targetMatch 正则优先（非法正则降级为不匹配，不能崩进程），否则第一个 page
         const pages = targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
         let match = null;

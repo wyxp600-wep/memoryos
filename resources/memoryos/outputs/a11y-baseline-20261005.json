@@ -1,6 +1,6 @@
 {
   "meta": {
-    "at": "2026-10-05T06:51:24.850Z",
+    "at": "2026-10-05T08:05:33.564Z",
     "dashPort": 8787,
     "node": "v24.18.1",
     "chrome": "default"
@@ -131,700 +131,700 @@
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "01 **MemoryOS 九门禁跑测结论（2026-10-"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "02 [task][assignee:?][status:p"
+          "text": "01 - **Code Mode 子代理无 shell/ex"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "03 【结论】MemoryOS CDP 驾驶往 VS Cod"
+          "text": "02 看板 API 实测四坑（CDP 诊断分支验证时踩到，2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "03 [task][assignee:dispatch-ag"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "04 ## dispatch-agent 派发卡片 #207"
+          "text": "04 【结论】卡片派发「依赖死锁」根治（提交 802cb82"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "05 【直控派发端到端三根因 + 双端口旧代码坑】2026-"
+          "text": "05 【VS Code CDP 驾驶全链路实测（2026-1"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
-          "cls": "row-task",
+          "cls": "row-experience",
           "route": "",
-          "text": "06 [task][assignee:opencode][s"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-task",
-          "route": "",
-          "text": "07 [task][assignee:claude][sta"
+          "text": "06 【结论】依赖判据改 done|archived + 派"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "08 【看板五项 UI 缺陷收口中实证出的三处根因（提交 9"
+          "text": "07 【结论】Windows 下用 `findstr /C:"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "08 【结论】在 MemoryOS 子目录（resource"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "09 **MemoryOS 九门禁跑测结论（2026-10-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "10 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "11 【结论】MemoryOS CDP 驾驶往 VS Cod"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "12 ## dispatch-agent 派发卡片 #207"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "13 【直控派发端到端三根因 + 双端口旧代码坑】2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "14 [task][assignee:opencode][s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "15 [task][assignee:claude][sta"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "16 【看板五项 UI 缺陷收口中实证出的三处根因（提交 9"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "09 8 个提升质感的组件交互方案（点击反馈/微交互）｜AI"
+          "text": "17 8 个提升质感的组件交互方案（点击反馈/微交互）｜AI"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "10 [2026-10-05 zcode 载体收口] ZCo"
+          "text": "18 [2026-10-05 zcode 载体收口] ZCo"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "11 [task][assignee:?][status:p"
+          "text": "19 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "12 [2026-10-05 批次收口] 任务看板双画布并入"
+          "text": "20 [2026-10-05 批次收口] 任务看板双画布并入"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "13 [task][assignee:?][status:p"
+          "text": "21 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "14 [task][assignee:?][status:p"
+          "text": "22 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "15 [task][assignee:?][status:p"
+          "text": "23 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "16 P4验收 #174 已完成：创建 outputs/p4"
+          "text": "24 P4验收 #174 已完成：创建 outputs/p4"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "17 工作风格铁律（用户 2026-10-04 明确吩咐，原"
+          "text": "25 工作风格铁律（用户 2026-10-04 明确吩咐，原"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "18 2026-10-04 用户否定节点画布「双画布并存」方"
+          "text": "26 2026-10-04 用户否定节点画布「双画布并存」方"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "19 【交接文档详版化已提交（2026-10-04，comm"
+          "text": "27 【交接文档详版化已提交（2026-10-04，comm"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "20 卡片#164/任务#4606 结论：dashboard"
+          "text": "28 卡片#164/任务#4606 结论：dashboard"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "21 [task][assignee:dispatch-ag"
+          "text": "29 [task][assignee:dispatch-ag"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "22 7 个去掉「AI 味」的文案技巧（human writ"
+          "text": "30 7 个去掉「AI 味」的文案技巧（human writ"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "23 【执行器骨架去重完成（2026-10-04，commi"
+          "text": "31 【执行器骨架去重完成（2026-10-04，commi"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "24 【对抗性审查修复 19 项已提交（2026-10-04"
+          "text": "32 【对抗性审查修复 19 项已提交（2026-10-04"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "25 [task][assignee:?][status:p"
+          "text": "33 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "26 [task][assignee:?][status:p"
+          "text": "34 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "27 [task][assignee:?][status:p"
+          "text": "35 [task][assignee:?][status:p"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "28 【canvas-editor.js 对抗性审查结论（2"
+          "text": "36 【canvas-editor.js 对抗性审查结论（2"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "29 【P3 CDP 驾驶执行器落地+已提交（2026-10"
+          "text": "37 【P3 CDP 驾驶执行器落地+已提交（2026-10"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "30 该 skill 隐含约定为使用创意且精致的设计方案，明"
+          "text": "38 该 skill 隐含约定为使用创意且精致的设计方案，明"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "31 Web UI 设计 skill 的触发条件包含特定关键"
+          "text": "39 Web UI 设计 skill 的触发条件包含特定关键"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "32 【P2 CLI 直控执行器落地+已提交（2026-10"
+          "text": "40 【P2 CLI 直控执行器落地+已提交（2026-10"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "33 cdp-ui-walk 技能在驱动 headless "
+          "text": "41 cdp-ui-walk 技能在驱动 headless "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "34 【P4 交接文档卡闭环落地 + 已提交（2026-10"
+          "text": "42 【P4 交接文档卡闭环落地 + 已提交（2026-10"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-task",
           "route": "",
-          "text": "35 [task][assignee:dispatch-ag"
+          "text": "43 [task][assignee:dispatch-ag"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "36 【节点画布真实浏览器全流程测试通过（2026-10-0"
+          "text": "44 【节点画布真实浏览器全流程测试通过（2026-10-0"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "37 7 种网站布局（整页结构选型）｜AI 提示词清单 适用"
+          "text": "45 7 种网站布局（整页结构选型）｜AI 提示词清单 适用"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "38 【修正 #4588】回查验证与内容分析都应照常做，不属"
+          "text": "46 【修正 #4588】回查验证与内容分析都应照常做，不属"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "39 【修正 #4577】记忆写入后不做检索验证，直接收尾。"
+          "text": "47 【修正 #4577】记忆写入后不做检索验证，直接收尾。"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "40 7 种下拉框（Select 类）｜AI 提示词清单 适"
+          "text": "48 7 种下拉框（Select 类）｜AI 提示词清单 适"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "41 网页高级感 7 个关键词（设计语言层）｜AI 提示词清"
+          "text": "49 网页高级感 7 个关键词（设计语言层）｜AI 提示词清"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "42 侧边栏高级感 5 个表达手法｜AI 提示词清单 适用："
+          "text": "50 侧边栏高级感 5 个表达手法｜AI 提示词清单 适用："
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "43 7 种提示组件（Toast/Alert/Modal/C"
+          "text": "51 7 种提示组件（Toast/Alert/Modal/C"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "44 【节点画布 P0 落地 + 全界面中文化 完成（202"
+          "text": "52 【节点画布 P0 落地 + 全界面中文化 完成（202"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "45 高级感 Tab 标签 6 种｜AI 提示词清单（可直接"
+          "text": "53 高级感 Tab 标签 6 种｜AI 提示词清单（可直接"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "46 AI 产品 6 种布局形态｜AI 提示词清单（可直接复"
+          "text": "54 AI 产品 6 种布局形态｜AI 提示词清单（可直接复"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "47 app.js 用户可见英文全量中文化清扫已完成（mem"
+          "text": "55 app.js 用户可见英文全量中文化清扫已完成（mem"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "48 dashboard index.html（memory"
+          "text": "56 dashboard index.html（memory"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "49 PC 个人工作台 5 种布局｜AI 提示词清单（可直接"
+          "text": "57 PC 个人工作台 5 种布局｜AI 提示词清单（可直接"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "50 MemoryOS 记忆修订的静默失败坑（工具使用经验）"
+          "text": "58 MemoryOS 记忆修订的静默失败坑（工具使用经验）"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "51 立体感卡片动效 6 种｜AI 提示词清单（可直接复制，"
+          "text": "59 立体感卡片动效 6 种｜AI 提示词清单（可直接复制，"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "52 移动端 UI 提示词总清单｜控件 7 种 + 加载动效"
+          "text": "60 移动端 UI 提示词总清单｜控件 7 种 + 加载动效"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "53 移动端 7 大控件 AI 提示词清单（可直接复制，改字"
+          "text": "61 移动端 7 大控件 AI 提示词清单（可直接复制，改字"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "54 【看板节点化交互修正：先建卡后选型 + 自定义卡片类型"
+          "text": "62 【看板节点化交互修正：先建卡后选型 + 自定义卡片类型"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "55 【看板节点化评审二轮：用户评审+三开工件 已逐条对代码"
+          "text": "63 【看板节点化评审二轮：用户评审+三开工件 已逐条对代码"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-decision",
           "route": "",
-          "text": "56 【看板节点化+Agent卡派发 设计报告已出（2026"
+          "text": "64 【看板节点化+Agent卡派发 设计报告已出（2026"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "57 【结论】MemoryOS 前端对比度修复必须「亮色+暗"
+          "text": "65 【结论】MemoryOS 前端对比度修复必须「亮色+暗"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "58 【结论】MemoryOS 仪表盘「页面合并」改造已从 "
+          "text": "66 【结论】MemoryOS 仪表盘「页面合并」改造已从 "
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "59 Orca agent hooks 依赖环境变量（ORC"
+          "text": "67 Orca agent hooks 依赖环境变量（ORC"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-convention",
           "route": "",
-          "text": "60 【用户沟通硬约定：只用中文 + 小白也能看懂的语言】用"
+          "text": "68 【用户沟通硬约定：只用中文 + 小白也能看懂的语言】用"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "61 【P4 看板交互简化批（一个卡片=一个工作台）已提交】"
+          "text": "69 【P4 看板交互简化批（一个卡片=一个工作台）已提交】"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "62 - **门禁Fail-Closed**：writeGa"
+          "text": "70 - **门禁Fail-Closed**：writeGa"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "63 - **git中文路径Bug**：`git commi"
+          "text": "71 - **git中文路径Bug**：`git commi"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "64 - **Generation单调递增**：任务新dis"
+          "text": "72 - **Generation单调递增**：任务新dis"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-rule",
           "route": "",
-          "text": "65 - **Dispatch句柄兼容**：句柄必须保持纯h"
+          "text": "73 - **Dispatch句柄兼容**：句柄必须保持纯h"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "66 Orca融合P3落地要点（Design Mode CD"
+          "text": "74 Orca融合P3落地要点（Design Mode CD"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "67 Orca 融合 P2 落地要点（准终端分屏 + Git"
+          "text": "75 Orca 融合 P2 落地要点（准终端分屏 + Git"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-pitfall",
           "route": "",
-          "text": "68 门禁 exit=13（mcp/p26-lifecycl"
+          "text": "76 门禁 exit=13（mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "69 npm test 中 mcp/p26-lifecycl"
+          "text": "77 npm test 中 mcp/p26-lifecycl"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "70 Orca 融合 P0+P1 已落地（2026-10-0"
+          "text": "78 Orca 融合 P0+P1 已落地（2026-10-0"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "71 MemoryOS 批次F1（2026-10-03，提交"
+          "text": "79 MemoryOS 批次F1（2026-10-03，提交"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "72 MemoryOS 批次C3/C4（2026-10-03"
+          "text": "80 MemoryOS 批次C3/C4（2026-10-03"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "73 存在一批untracked排障脚本需用户确认后处理 r"
+          "text": "81 存在一批untracked排障脚本需用户确认后处理 r"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "74 AI Vault核心契约包括status索引账本、四态"
+          "text": "82 AI Vault核心契约包括status索引账本、四态"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "75 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
+          "text": "83 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "76 每日复盘自动化在代理未监听时会静默502失败 自动化静"
+          "text": "84 每日复盘自动化在代理未监听时会静默502失败 自动化静"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "77 resources\\memoryos\\data\\mem"
+          "text": "85 resources\\memoryos\\data\\mem"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "78 [session_id: 6ac0056f817199"
+          "text": "86 [session_id: 6ac0056f817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "79 [session_id: 6ac0056f817199"
+          "text": "87 [session_id: 6ac0056f817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "80 [session_id: 6abfacf4817199"
+          "text": "88 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "81 The user presented four cat"
+          "text": "89 The user presented four cat"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "82 [session_id: 6abfacf4817199"
+          "text": "90 [session_id: 6abfacf4817199"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "83 - `git commit -F`命令在包含中文的路径"
+          "text": "91 - `git commit -F`命令在包含中文的路径"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "84 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
+          "text": "92 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "85 - 敏感配置文件`resources/memoryos"
+          "text": "93 - 敏感配置文件`resources/memoryos"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "86 - Memory entry #3370 (parti"
+          "text": "94 - Memory entry #3370 (parti"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "87 - Modifying AGENTS.md direc"
+          "text": "95 - Modifying AGENTS.md direc"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "88 - For all modifications, fo"
+          "text": "96 - For all modifications, fo"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "89 - Do not write sensitive cr"
+          "text": "97 - Do not write sensitive cr"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "90 - The project has two simil"
+          "text": "98 - The project has two simil"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "91 - Read memory by &#39;task所"
+          "text": "99 - Read memory by &#39;task所"
         },
         {
           "kind": "dataRow",
           "tag": "tr",
           "cls": "row-experience",
           "route": "",
-          "text": "92 - After task completion, th"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "93 - Irreversible operations m"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "94 - Modifications must not cr"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "95 - All AI entries must autom"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "96 - AGENTS.md is a synchroniz"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-rule",
-          "route": "",
-          "text": "97 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-pitfall",
-          "route": "",
-          "text": "98 【2026-10-02 深夜 手机 agent 写不入"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "99 zcode存储状态中session数据库的迁移状态以l"
-        },
-        {
-          "kind": "dataRow",
-          "tag": "tr",
-          "cls": "row-experience",
-          "route": "",
-          "text": "100 AI Vault核心契约包括status索引账本、四"
+          "text": "100 - After task completion, t"
         }
       ],
       "unlabeledControls": [],
