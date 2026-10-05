@@ -43,6 +43,60 @@ function sanitizeUploadName(orig) {
     return `up-${Date.now()}-${base}`.slice(0, 180);
 }
 
+/** 目录体检（只读诊断用）：统计文件数/字节数，**绝不跟随链接点**。
+ *  ★ 2026-10-05 批4：门禁 worktree 用 junction 供给 node_modules（实测 `git worktree remove --force`
+ *  不删穿 junction 目标，但目录含 junction 时回收必失败留孤儿）——所以任何"数一遍/删一遍"的
+ *  递归都必须先判链接：realpath 与自身不一致即链接点，跳过不进入，否则会把主树 260 个包数进来。 */
+function treeStats(root) {
+    let files = 0, bytes = 0, links = 0, unreadable = 0;
+    const CAP = 2000;
+    const stack = [root];
+    while (stack.length && files < CAP) {
+        const dir = stack.pop();
+        let ents;
+        try { ents = fs.readdirSync(dir, { withFileTypes: true }); }
+        catch (e) {
+            unreadable++;
+            console.warn(`[workbench] 回收体检：目录不可读已跳过（${path.basename(dir)}）：${String(e?.code ?? e?.message ?? e).slice(0, 60)}`);
+            continue;
+        }
+        for (const e of ents) {
+            const p = path.join(dir, e.name);
+            let st;
+            try { st = fs.lstatSync(p); }
+            catch { continue; }
+            if (st.isSymbolicLink()) { links++; continue; }
+            if (st.isDirectory()) {
+                let rp;
+                try { rp = fs.realpathSync(p); }
+                catch { continue; }
+                if (path.resolve(rp).toLowerCase() !== path.resolve(p).toLowerCase()) { links++; continue; } // junction/挂载点
+                stack.push(p);
+            }
+            else if (st.isFile()) { files++; bytes += Number(st.size || 0); }
+        }
+    }
+    return { files, bytes, links, unreadable, truncated: files >= CAP };
+}
+
+/** 孤儿检出：`.worktrees/` 下**磁盘有目录但 git 注册表不认**的残留。
+ *  这类目录对既有实现是双向死锁——DELETE 交给 `git worktree remove` 得 `not a working tree` → 502，
+ *  POST 同名因目录存在 → 409，而它又不出现在 `items[]` 里，前端根本看不见。 */
+function listOrphanWorktrees(knownPaths) {
+    const out = [];
+    if (!fs.existsSync(WT_ROOT)) return out;   // 从未用过 worktree 是常态，静默返回空（别在每次 GET 上刷日志）
+    let ents;
+    try { ents = fs.readdirSync(WT_ROOT, { withFileTypes: true }); }
+    catch (e) { console.warn(`[workbench] 读 ${WT_ROOT} 失败，孤儿检出降级为空：${String(e?.message ?? e).slice(0, 120)}`); return out; }
+    for (const e of ents) {
+        if (!e.isDirectory() || !NAME_RE.test(e.name)) continue;
+        const abs = path.join(WT_ROOT, e.name);
+        if (knownPaths.has(path.resolve(abs).toLowerCase())) continue;
+        out.push({ name: e.name, path: abs, git_registered: false, ...treeStats(abs) });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function registerWorkbench(app, ctx) {
     const { db, RESTRICTED, dataDirOf } = ctx;
 
@@ -93,12 +147,17 @@ export function registerWorkbench(app, ctx) {
     app.get("/api/worktrees", async (req, reply) => {
         try {
             const items = await listWorktrees();
+            // ★ 批4：只读补 orphans[]（磁盘残留但 git 不认的孤儿）。**这里绝不做真 prune** ——
+            //   snapshot:check 与 [gate:snapshot] 都 app.inject 本路由，读门一旦带写副作用，
+            //   门禁跑一次就真改仓库状态（本轮实测：prune 会把注册表清掉而目录仍在）。
+            const known = new Set(items.map((it) => path.resolve(it.path).toLowerCase()));
             return {
                 ok: true,
                 workspace: WORKSPACE,
                 root: WT_ROOT,
                 policy: "默认共享工作区；仅在并行任务真实冲突时创建隔离 worktree（Orca 原则 #4519），完成后及时清理",
                 items,
+                orphans: listOrphanWorktrees(known),
             };
         }
         catch (e) {
@@ -154,7 +213,15 @@ export function registerWorkbench(app, ctx) {
         }
     });
 
-    /** 移除 worktree（?force=1 强制，用于脏工作区；分支一律保留 → 可回滚） */
+    /** 移除 worktree（?force=1 强制，用于脏工作区；分支一律保留 → 可回滚）。
+     *  ★ 2026-10-05 批4：改成三段可验证，终结「孤儿双向死锁」与 Windows 句柄锁的假失败。
+     *    ① 未注册（磁盘孤儿）→ 不再交给 git（必得 `not a working tree` → 502），直接 fs 降级；
+     *    ② git 删除因句柄/权限失败（实测 `.worktrees/<名>/resources/app.asar` 被本机进程按文件名占住，
+     *       `rm`/`mv`/`del`/`git worktree remove --force` 全报 Invalid argument）→ 补跑 `git worktree prune`
+     *       并如实回 `pending_release`：**「git 生命周期已结束、盘待释放」是合法终态**，不再谎报成功也不再报 502；
+     *    ③ 卡片解除关联改判据为「git 侧已不再登记」，**不再依赖目录删除成功** —— 原实现只在 try 成功路径里解联，
+     *       于是删除失败时卡片永远指着已作废的 worktree（走查 W7c 红的真因），也会把 B1a 的 cwd 解析锁死。 */
+    const LOCK_TAIL_RE = /invalid argument|device or resource busy|resource busy|permission denied|access is denied/i;
     app.delete("/api/worktrees/:name", async (req, reply) => {
         if (RESTRICTED)
             return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
@@ -167,9 +234,44 @@ export function registerWorkbench(app, ctx) {
         if (!wtExists(abs))
             return reply.code(404).send({ ok: false, error: "worktree 不存在" });
         const force = String(req.query?.force ?? "") === "1";
-        try {
-            await git(["worktree", "remove", ...(force ? ["--force"] : []), abs]);
-            // 解除卡片关联（保留卡片与评论历史，仅把 workspace 归位）
+        let items0;
+        try { items0 = await listWorktrees(); }
+        catch (e) { return reply.code(502).send({ ok: false, error: `git worktree list 失败：${gitErrTail(e)}` }); }
+        const registered = items0.some((it) => path.resolve(it.path).toLowerCase() === path.resolve(abs).toLowerCase());
+        let released = false, pruned = false, blocker = null;
+        if (registered) {
+            try {
+                await git(["worktree", "remove", ...(force ? ["--force"] : []), abs]);
+                released = true;
+            }
+            catch (e) {
+                const tail = gitErrTail(e);
+                console.error(`[workbench] 移除 worktree 失败（${name}）：${tail}`);
+                if (/contains modified|untracked|dirty|would be lost/i.test(tail))
+                    return reply.code(409).send({ ok: false, error: `工作区有未提交改动，拒绝移除（可用 ?force=1 强制）：${tail}` });
+                blocker = tail;
+                if (LOCK_TAIL_RE.test(tail)) {
+                    try { await git(["worktree", "prune"]); pruned = true; }
+                    catch (e2) { console.warn(`[workbench] 回收后 prune 失败（${name}）：${gitErrTail(e2)}`); }
+                }
+            }
+        }
+        else {
+            // 孤儿：git 已不认，只能 fs 级降级（仍失败就如实报，不谎称已删）
+            try {
+                await fs.promises.rm(abs, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+                released = true;
+            }
+            catch (e) { blocker = String(e?.message ?? e); console.warn(`[workbench] 孤儿目录 fs 回收失败（${name}）：${blocker.slice(0, 200)}`); }
+            try { await git(["worktree", "prune"]); pruned = true; }
+            catch (e2) { console.warn(`[workbench] 孤儿 prune 失败（${name}）：${gitErrTail(e2)}`); }
+        }
+        // 解联判据 = git 侧确实不再登记（比"删除成功"更准：git 是先摘注册、后删目录）
+        let items;
+        try { items = await listWorktrees(); }
+        catch (e) { items = items0; console.warn(`[workbench] 回收后重取列表失败（${name}）：${gitErrTail(e)}`); }
+        const stillRegistered = items.some((it) => path.resolve(it.path).toLowerCase() === path.resolve(abs).toLowerCase());
+        if (!stillRegistered) {
             try {
                 const rows = db.prepare(`SELECT id, meta FROM cards WHERE workspace_kind='worktree' AND workspace=?`).all(abs);
                 for (const r of rows) {
@@ -180,17 +282,12 @@ export function registerWorkbench(app, ctx) {
                         .run(JSON.stringify(meta), r.id);
                 }
             }
-            catch (e) { console.error(`[workbench] 移除后解除卡片关联失败（${name}）：${String(e?.message ?? e).slice(0, 200)}`); /* 不阻断移除 */ }
-            const items = await listWorktrees();
-            return { ok: true, name, force, items };
+            catch (e) { console.error(`[workbench] 回收后解除卡片关联失败（${name}）：${String(e?.message ?? e).slice(0, 200)}`); /* 不阻断回收 */ }
         }
-        catch (e) {
-            const tail = gitErrTail(e);
-            console.error(`[workbench] 移除 worktree 失败（${name}）：${tail}`);
-            if (/contains modified|untracked|dirty|would be lost/i.test(tail))
-                return reply.code(409).send({ ok: false, error: `工作区有未提交改动，拒绝移除（可用 ?force=1 强制）：${tail}` });
-            return reply.code(502).send({ ok: false, error: `移除失败：${tail}` });
-        }
+        const pending = stillRegistered || !released
+            ? { path: abs, git_registered: stillRegistered, blocker: blocker ? String(blocker).slice(0, 200) : null, ...treeStats(abs) }
+            : null;
+        return { ok: true, name, force, released, pruned, orphan: !registered, pending_release: pending, items };
     });
 
     // ══════════════════ ② 变更清单 + diff ══════════════════

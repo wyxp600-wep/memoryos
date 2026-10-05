@@ -68,6 +68,12 @@ _db_patch*
 .mimosa/
 .v2c/
 .zcode/
+.dsh/
+.zwork/
+
+# 共享规则入口：由 sync-rules.js 在 MEMORYOS-SYNC-RULES-START/END 标记间幂等生成，
+# 标记外实测全为空行（无手写内容）⇒ 属本机产物，不入库；手写的规程请写进 CLAIM.md / docs
+AGENTS.md
 
 # ---- 热更新签名私钥（只存发布机，绝不入库；公钥已内置 services/updater.js）----
 security/update-signing/

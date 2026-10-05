@@ -52,6 +52,14 @@ const ENV_DRIFT_ROUTES = new Set([
     "/api/github/pulls",                 // 同上（PR 列表）
     "/api/design/status",                // 上报设计会话状态（起/关即变，随运行态漂移；2026-10-03 design 域新增）
     "/api/design/picks",                 // 上报拾取结果 FIFO + 截图（会话态，无会话时恒空；2026-10-03 design 域新增）
+    // ★ 2026-10-05 批4（git 分工地基）：以下三条响应体含**本机绝对路径/本机配置**，
+    //   主树跑没问题，但任何 `git worktree` 分支或新克隆里 WORKSPACE/dataDir/文件清单都不同 → 必报假硬差异，
+    //   直接堵死「每 agent 一 worktree」的作业方式。实测（同一 commit 384d986，主树 vs worktree）：
+    //   /api/config 359B→456B、/api/agent-models 73B→115B、/api/plans 1418B→1554B。
+    //   降级为 WARN 只放开「响应体字节」这一层：routeTable 增删与结构契约（键集合）仍无条件硬失败。
+    "/api/config",                      // 上报 dataDir / dbPath / port（绝对路径与端口，随实例与工作区变）
+    "/api/agent-models",                // 上报设置页 llmUrl/llmModel + 本机 Ollama /api/tags + 档案用过的模型（本机态）
+    "/api/plans",                       // 读 PLANS_DIR 磁盘文件清单（路径与内容随工作区变）
 ]);
 
 /* ── 固定夹具（全部确定性：显式给 created_at，避免"同秒并列"以外的抖动） ── */
