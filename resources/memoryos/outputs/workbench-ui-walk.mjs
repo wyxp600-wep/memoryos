@@ -719,6 +719,66 @@ try {
         Number.isFinite(seedDx) && seedDx > 0 && geoBack.depBack === 0 && geoBack.hfFar === 0,
         `seed #${w31DepPend}→#${w31bId} dx=${seedDx} dep=${geoBack.dep} depBack=${geoBack.depBack} handoff=${geoBack.hf} handoffFar=${geoBack.hfFar}`);
 
+    // ── W33（批2：智能体卡「工作区可选 + 模型可选且真生效」）──
+    const amCodex = await (await api('GET', '/api/agent-models?agent_key=codex')).json();
+    const amDsh = await (await api('GET', '/api/agent-models?agent_key=dsh')).json();
+    rec('W33a /api/agent-models 按载体如实回 supportsModelFlag（codex=true / dsh=false 且带可行动 note）',
+        amCodex.ok === true && amCodex.supportsModelFlag === true && Array.isArray(amCodex.models) &&
+        amDsh.ok === true && amDsh.supportsModelFlag === false && String(amDsh.note || '').includes('未接入模型参数'),
+        `codex=${amCodex.supportsModelFlag} models=${(amCodex.models || []).length} dsh=${amDsh.supportsModelFlag} note=${String(amDsh.note || '').slice(0, 24)}`);
+    // 非法工作区必须 400 且不留档案（原实现照单全收 → 档案里存着不存在的路径，CLI 落主目录、驾驶开空窗）
+    const badWs = await api('POST', '/api/agent-profiles', { name: 'wb-walk-badws', agent_key: 'codex', channel: 'cli', workspace: 'Z:\\不存在-批2探针' });
+    const badWsBody = await badWs.json().catch(() => ({}));
+    const wsProfAfter = await (await api('GET', '/api/agent-profiles')).json();
+    rec('W33b 非法工作区 → 400 且文案点名「目录不存在」，档案零残留',
+        badWs.status === 400 && String(badWsBody.error || '').includes('工作区目录不存在') &&
+        !(wsProfAfter.profiles || []).some(p => p.name === 'wb-walk-badws'),
+        'HTTP ' + badWs.status + ' ' + String(badWsBody.error || '').slice(0, 60));
+    // 向导控件：建一个合法档案（临时库）→ 打开其投影卡 ⚙️ → 断言「📂 选择」+ 模型 datalist 在场
+    const goodWs = await (await api('POST', '/api/agent-profiles', {
+        name: 'wb-walk-wsui', agent_key: 'codex', channel: 'cli', workspace: process.cwd().replace(/\\/g, '/'), model: 'probe-model',
+    })).json();
+    let w33c = 'no-card';
+    if (goodWs.ok) {
+        await ev(`(function(){var b=document.getElementById('taskMapLayoutBtn');if(b)b.click();return 1})()`);
+        for (let i = 0; i < 10; i++) {
+            await sleep(900);
+            w33c = await ev(`(function(){
+              var b=document.querySelector('#taskMapNodes [data-card-id="${goodWs.card_id}"]');
+              if(!b) return 'wait';
+              b.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+              var q=b.querySelector('.task-map-qbtn[data-q="agentcfg"]');
+              if(!q) return 'no-cfg';
+              q.click(); return 'opened';
+            })()`);
+            if (w33c === 'opened') break;
+        }
+        await sleep(1200);
+        const ctl = await ev(`(function(){
+          var m=document.querySelector('.ask-form-modal'); if(!m) return 'no-modal';
+          var dl=m.querySelector('#agentModelList'), mi=m.querySelector('[data-k="model"]');
+          return JSON.stringify({pick:!!m.querySelector('[data-ws-pick]'),list:mi&&mi.getAttribute('list'),
+            opts:dl?dl.options.length:-1, ws:(m.querySelector('[data-k="workspace"]')||{}).value,
+            modelVal:(mi||{}).value, prefilled:((m.querySelector('[data-k="agent_key"]')||{}).value||'')});
+        })()`);
+        await ev(`(function(){var b=document.querySelector('.ask-form-modal [data-cancel]');if(b)b.click()})()`);
+        rec('W33c 向导含「📂 选择工作区」+ 模型 datalist，且编辑态回填工作区与模型',
+            w33c === 'opened' && String(ctl).includes('"pick":true') && String(ctl).includes('"list":"agentModelList"') &&
+            String(ctl).includes('probe-model') && /"ws":"[^"]/.test(String(ctl)),
+            `state=${w33c} ctl=${String(ctl).slice(0, 170)}`);
+    } else {
+        rec('W33c 向导含「📂 选择工作区」+ 模型 datalist，且编辑态回填工作区/模型/载体不丢', false, '建档案失败 ' + JSON.stringify(goodWs).slice(0, 120));
+    }
+    if (goodWs.profile_id) await api('DELETE', '/api/agent-profiles/' + goodWs.profile_id); // 临时库数据用完即清（响应字段是 profile_id，不是 id）
+    const wsLeft = await (await api('GET', '/api/agent-profiles')).json();
+    rec('W33e 测试档案清理归零（不留探针残留）',
+        !(wsLeft.profiles || []).some(p => String(p.name || '').startsWith('wb-walk-ws')),
+        '档案数=' + (wsLeft.profiles || []).length);
+    const cand = await (await api('GET', '/api/rules/project-candidates')).json();
+    rec('W33d 工作区候选源复用 /api/rules/project-candidates（不新开目录遍历端点）',
+        Array.isArray(cand.projects) && (cand.projects.length === 0 || cand.projects.every(p => p.dir && p.name)),
+        '候选 ' + (cand.projects || []).length + ' 项');
+
     rec('CDP 0 未捕获异常', cdpErrs.length === 0, cdpErrs.join(' | ').slice(0, 200));
 }
 catch (e) {

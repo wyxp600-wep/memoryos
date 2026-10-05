@@ -7,6 +7,9 @@ import { randomBytes } from "node:crypto";
 import { TASK_NORMALIZE, CARD_TO_TASK } from "./task-status-map.js";
 import { scanAgents } from "./scan.js"; // 节点画布：智能体卡载体在位探测（agent_key 对账）
 import { overridesOf } from "./dashboard-exec-util.js"; // ★ 批1：launch_overrides 解析与两个执行器同口径（含双重编码容错）
+import { cliAcceptsModel } from "./dashboard-reg-cliexec.js"; // ★ 批2：向导要如实告知「该载体填了模型会不会真传出去」
+import fs from "node:fs";
+import path from "node:path";
 export function registerCards(app, ctx) {
     const { db, restricted, RESTRICTED } = ctx;
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1759,6 +1762,80 @@ export function registerCards(app, ctx) {
         return PROFILE_CHANNELS.includes(String(v ?? "")) ? String(v) : "queue";
     }
 
+    /** ★ 2026-10-05 批2：工作区入参校验 —— 空 = 跟随默认（放行），非空必须是真实存在的目录。
+     *  原实现照单全收 ⇒ 拼错/已删的路径存进档案后，CLI 落 `os.homedir()`、驾驶开空窗
+     *  （`cliexec:158` / `cdpexec:425` 的兜底），故障点离真因太远，用户只看到「智能体在乱跑」。 */
+    function workspaceError(v) {
+        const s = String(v ?? "").trim();
+        if (!s)
+            return null;
+        let abs = "";
+        try {
+            abs = path.resolve(s);
+        }
+        catch {
+            return `工作区路径无法解析：${s}`;
+        }
+        if (!fs.existsSync(abs))
+            return `工作区目录不存在：${abs}（点「📂 选择」挑一个真实目录，或先建好它）`;
+        try {
+            if (!fs.statSync(abs).isDirectory())
+                return `工作区必须是目录，现在指向文件：${abs}`;
+        }
+        catch (e) {
+            return `工作区不可读：${abs}（${e instanceof Error ? e.message : e}）`;
+        }
+        return null;
+    }
+
+    /** ★ 2026-10-05 批2：向导「模型」下拉的数据源。刻意**不**内置厂商模型清单（会过期、本机也没验证过），
+     *  只回三类真数据：① 设置页当前默认模型 ② 本机 Ollama /api/tags 实探（1.5s 超时，没起就跳过）
+     *  ③ 本机各智能体档案**已经用过**的模型（历史复用）。supportsModelFlag 决定前端是否如实标注
+     *  「该载体填了也不会传给 CLI」。 */
+    app.get("/api/agent-models", async (req) => {
+        const key = String(req.query?.agent_key ?? "").trim();
+        const models = [];
+        const seen = new Set();
+        const add = (id, source) => {
+            const v = String(id ?? "").trim();
+            if (v && !seen.has(v)) {
+                seen.add(v);
+                models.push({ id: v, source });
+            }
+        };
+        try {
+            const cfg = (ctx.readDiskConfig ? ctx.readDiskConfig() : {}) || {};
+            const url = String(cfg.llmUrl || process.env.LLM_BASE_URL || process.env.MIMOS_URL || "").trim();
+            add(cfg.llmModel || process.env.LLM_MODEL || process.env.INGEST_MODEL || "", "config");
+            if (!url || /:11434|ollama/i.test(url)) {
+                const base = (url || "http://127.0.0.1:11434/v1").replace(/\/v1\/?$/, "");
+                const ctl = new AbortController();
+                const timer = setTimeout(() => ctl.abort(), 1500);
+                try {
+                    const r = await fetch(base + "/api/tags", { signal: ctl.signal });
+                    if (r.ok)
+                        for (const m of ((await r.json()).models || []))
+                            add(m?.name, "ollama");
+                }
+                catch (e) {
+                    // 探测失败按「未安装 Ollama」降级：只回清单类数据，不拦向导下拉（留痕防静默）
+                    console.warn('[agent-models] Ollama /api/tags 探测失败，降级为只回配置与历史清单：' + (e instanceof Error ? e.message : e));
+                }
+                finally { clearTimeout(timer); }
+            }
+        }
+        catch (e) {
+            console.warn('[agent-models] 读磁盘 LLM 配置失败，清单端点降级为空：' + (e instanceof Error ? e.message : e));
+        }
+        for (const r of db.prepare(`SELECT DISTINCT model FROM agent_profiles WHERE model IS NOT NULL AND model <> '' ORDER BY model`).all())
+            add(r.model, "profile");
+        const supports = key ? cliAcceptsModel(key) : true;
+        return {
+            ok: true, agent_key: key, models, supportsModelFlag: supports,
+            note: key && !supports ? "该载体预设未接入模型参数：填了也不会传给 CLI（要控模型请在高级栏 args 里自行加旗标）" : "",
+        };
+    });
+
     app.get("/api/card-types", async () => {
         return { ok: true, types: db.prepare(`SELECT * FROM card_types ORDER BY builtin DESC, type_key`).all() };
     });
@@ -1888,6 +1965,9 @@ export function registerCards(app, ctx) {
         if (!name)
             return reply.code(400).send({ ok: false, error: "智能体卡名称不能为空" });
         const channel = validProfileChannel(b.channel);
+        const wsErr = workspaceError(b.workspace); // ★ 批2：先校验再开事务，非法路径不落库
+        if (wsErr)
+            return reply.code(400).send({ ok: false, error: wsErr });
         txBegin(); // 档案 + 投影卡一笔事务：不留孤儿半截
         let profileId = 0, cardId = 0;
         try {
@@ -1934,6 +2014,11 @@ export function registerCards(app, ctx) {
         const name = b.name !== undefined ? String(b.name).trim() : p.name;
         if (!name)
             return reply.code(400).send({ ok: false, error: "名称不能为空" });
+        if (b.workspace !== undefined) { // ★ 批2：编辑态同样校验（原实现照单全收 → 档案里存着不存在的路径）
+            const wsErr = workspaceError(b.workspace);
+            if (wsErr)
+                return reply.code(400).send({ ok: false, error: wsErr });
+        }
         db.prepare(`UPDATE agent_profiles SET name=?, agent_key=?, channel=?, workspace=?, model=?, context_tokens=?, reasoning=?, concurrency=?, launch_overrides=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
             .run(name,
                 b.agent_key !== undefined ? (String(b.agent_key).trim() || null) : p.agent_key,

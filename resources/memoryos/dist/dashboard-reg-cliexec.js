@@ -90,6 +90,12 @@ const HEARTBEAT_MS = 60000;
 const DEFAULT_TIMEOUT_MS = 30 * 60000;
 const MAX_BUFFER_LINES = 800;
 
+/** 该载体预设是否接入模型旗标（批2）：`/api/agent-models` 与向导据此**如实告知**
+ *  「填了模型会不会真传给 CLI」—— dsh/zcode 无 modelArgs，填了也不生效，不能假装能配。 */
+export function cliAcceptsModel(agentKey) {
+    return !!CLI_PRESETS[String(agentKey ?? "")]?.modelArgs;
+}
+
 export function registerCliExec(app, ctx) {
     const { db } = ctx;
     /** runId → job；queues: profileId → FIFO（串行队列，D5） */
@@ -143,7 +149,16 @@ export function registerCliExec(app, ctx) {
         const ov = overridesOf(p); // ★ 批1：容忍双重编码存量（档案 #8），旧口径会把字符串当配置 → cmd 丢失
         const preset = CLI_PRESETS[String(p.agent_key ?? "")] ?? null;
         const cmd = ov?.cmd ?? preset?.cmd ?? String(p.agent_key ?? "");
-        let args = ov?.args ?? (preset ? [...preset.args, ...(preset.modelArgs?.(p.model) ?? [])] : []);
+        let args = ov?.args ?? (preset ? [...preset.args] : []);
+        // ★ 2026-10-05 批2（用户「模型下拉要真生效」）：原实现是
+        //   `args = ov?.args ?? [...preset.args, ...preset.modelArgs(p.model)]` —— 模型旗标被关在
+        //   「没有 launch_overrides.args」这条分支里，而本机档案 #9-#12 全带自定义 args，
+        //   ⇒ 档案里填了模型也永远传不出去（且无声）。改为独立幂等追加。
+        const modelArgs = p.model && preset?.modelArgs ? preset.modelArgs(String(p.model)) : [];
+        if (modelArgs.length && !args.includes(modelArgs[0]))
+            args = [...args, ...modelArgs];
+        else if (p.model && !modelArgs.length)
+            pushLine(job, "sys", `[直控] ⚠ 档案模型「${p.model}」未生效：该载体预设没有模型参数（可在配置的高级栏 args 里自行加旗标）`);
         if (!ov && !preset && p.reasoning)
             args = [...args, "--reasoning", String(p.reasoning)]; // 无预设的自定义 CLI：推理强度按通用flag尽力传
         // ★ 提示词两种交付形态：

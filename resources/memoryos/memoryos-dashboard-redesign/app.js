@@ -6202,9 +6202,14 @@
           <option value="cdp"${curCh === 'cdp' ? ' selected' : ''}>驾驶 · 拉起桌面软件并直播画面（Chromium 系应用）</option>
         </select>
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">工作区（留空 = 用户主目录）</label>
-        <input data-k="workspace" style="${inStyle}" placeholder="例：D:\\项目\\某目录" value="${esc(p0?.workspace || '')}">
+        <div style="display:flex;gap:6px;align-items:center">
+          <input data-k="workspace" style="${inStyle}" placeholder="例：D:\\项目\\某目录" value="${esc(p0?.workspace || '')}">
+          <button type="button" data-ws-pick class="btn-ghost" style="padding:6px 10px;font-size:12px;white-space:nowrap" title="从候选目录里选（Desktop / WorkBuddy / Documents 一级子目录 + 档案在用过的）">📂 选择…</button>
+        </div>
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">模型（留空 = 智能体默认）</label>
-        <input data-k="model" style="${inStyle}" value="${esc(p0?.model || '')}">
+        <input data-k="model" list="agentModelList" style="${inStyle}" placeholder="可下拉选，也可直接输入模型名" value="${esc(p0?.model || '')}">
+        <datalist id="agentModelList"></datalist>
+        <div data-model-hint style="font-size:11px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">推理强度（留空 = 默认）</label>
         <input data-k="reasoning" style="${inStyle}" placeholder="例：standard / high" value="${esc(p0?.reasoning || '')}">
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">上下文 token（留空 = 默认）</label>
@@ -6225,6 +6230,60 @@
       document.body.appendChild(ov);
       const ta = ov.querySelector('[data-k="launch_overrides"]'); if (ta) ta.value = lo0;
       const q = k => ov.querySelector(`[data-k="${k}"]`);
+      /* ★ 2026-10-05 批2（用户「智能体卡内不能选择工作区和模型」）：
+         ① 工作区 —— 原只有一个自由文本框，拼错的路径会一路存进档案（CLI 落主目录、驾驶开空窗）。
+            现补「📂 选择…」候选层：复用既有 /api/rules/project-candidates（只扫 Desktop/WorkBuddy/
+            Documents 一级子目录，规则页已在用）+ 本机档案用过的目录，**不新开目录遍历端点**；
+            保存时后端 workspaceError 兜底 400。
+         ② 模型 —— 改成 datalist：能下拉选也能直接输入（清单只含真数据：设置页默认 / Ollama 实探 /
+            档案用过，不内置会过期的厂商清单）。载体没接模型旗标或选了驾驶通道时，如实标注不假装能配。 */
+      const wsInput = q('workspace');
+      const wsBtn = ov.querySelector('[data-ws-pick]');
+      if (wsBtn) wsBtn.onclick = async () => {
+        wsBtn.disabled = true; wsBtn.textContent = '读取中…';
+        const items = [];
+        try {
+          const [cand, prof] = await Promise.all([
+            fetch('/api/rules/project-candidates').then(x => x.json()).catch(() => ({})),
+            fetch('/api/agent-profiles').then(x => x.json()).catch(() => ({})),
+          ]);
+          for (const d of [...new Set((prof.profiles || []).map(x => String(x.workspace || '').trim()).filter(Boolean))])
+            items.push({ dir: d, name: d.split(/[\\/]/).pop(), used: true });
+          for (const p of (cand.projects || []))
+            if (!items.some(x => x.dir === p.dir)) items.push({ dir: p.dir, name: p.name, hasAgents: p.hasAgents });
+        }
+        finally { wsBtn.disabled = false; wsBtn.textContent = '📂 选择…'; }
+        if (!items.length) { toast('没有候选目录（候选源 = Desktop / WorkBuddy / Documents 一级子目录 + 档案在用过的）；可直接手输路径'); return; }
+        const pk = document.createElement('div');
+        pk.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
+        pk.innerHTML = `<div style="max-width:520px;width:92%;max-height:70vh;overflow:auto;background:var(--surface-glass,#fff);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:12px;padding:14px 16px;box-sizing:border-box">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">选择工作区目录</div>
+          ${items.map(it => `<div data-dir="${esc(it.dir)}" style="padding:7px 9px;border:1px solid var(--border-glass,rgba(0,0,0,.1));border-radius:8px;margin-bottom:5px;cursor:pointer;font-size:12px"><b>${esc(it.name)}</b> <span style="color:var(--text-muted)">${esc(it.dir)}</span>${it.used ? ' <span style="color:#0ea5e9">· 档案在用</span>' : ''}${it.hasAgents ? ' <span style="color:#10b981">· 有 AGENTS.md</span>' : ''}</div>`).join('')}
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px">候选源：/api/rules/project-candidates（只扫 Desktop / WorkBuddy / Documents 一级子目录）+ 已登记档案的工作区。想选别的路径请关掉直接手输。</div>
+        </div>`;
+        document.body.appendChild(pk);
+        pk.addEventListener('click', e => { if (e.target === pk) pk.remove(); });
+        pk.querySelectorAll('[data-dir]').forEach(el => { el.onclick = () => { if (wsInput) wsInput.value = el.dataset.dir; pk.remove(); }; });
+      };
+      const modelHint = ov.querySelector('[data-model-hint]');
+      const refreshModels = async () => {
+        const key = q('agent_key') ? q('agent_key').value : '';
+        let r = null;
+        try { r = await fetch('/api/agent-models?agent_key=' + encodeURIComponent(key)).then(x => x.json()); } catch { /* 拿不到清单不拦配置 */ }
+        if (!r) return;
+        const dl = ov.querySelector('#agentModelList');
+        if (dl) dl.innerHTML = (r.models || []).map(m => `<option value="${esc(m.id)}">${esc(m.source)}</option>`).join('');
+        if (modelHint) {
+          const parts = [];
+          if (r.note) parts.push('⚠ ' + r.note);
+          if (q('channel') && q('channel').value === 'cdp') parts.push('⚠ 驾驶通道：模型由被驾驶的应用自身决定，此处设置不生效');
+          if (!parts.length && (r.models || []).length) parts.push(`候选 ${r.models.length} 项（设置页默认 / Ollama 实探 / 档案用过），也可直接输入其它模型名`);
+          modelHint.textContent = parts.join('；');
+        }
+      };
+      if (q('agent_key')) q('agent_key').onchange = refreshModels;
+      if (q('channel')) q('channel').onchange = refreshModels;
+      refreshModels();
       let done = false;
       const close = (val) => { if (done) return; done = true; ov.remove(); resolve(val); };
       const submit = async () => {
