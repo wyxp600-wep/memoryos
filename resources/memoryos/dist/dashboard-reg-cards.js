@@ -29,7 +29,11 @@ export function registerCards(app, ctx) {
         cancelled: [],
         archived: [],
     };
-    const CARD_LINK_KINDS = ["depends", "blocks", "relates", "spawned_by", "duplicates", "handoff"]; // ★ P4：handoff=交接文档挂边（任务卡→交接卡，图上派生视觉边）
+    // ★ 2026-10-07（辅助卡缺陷修复）：aux_* 挂载线入白名单——前端「挂辅助卡」建卡后连
+    //   aux_project/aux_memory/aux_rule/aux_skill/aux_error 五种卫星线，缺了会 400「非法关系」。
+    //   这五种线不参与 depends 前置校验（dispatchPrecheck 只看 depends），不阻塞派发。
+    const CARD_LINK_KINDS = ["depends", "blocks", "relates", "spawned_by", "duplicates", "handoff",
+        "aux_project", "aux_memory", "aux_rule", "aux_skill", "aux_error"]; // ★ P4：handoff=交接文档挂边（任务卡→交接卡，图上派生视觉边）
     /** M6：卡片 kind → sector 映射（cards/:id/to-memory 用） */
     const CARD_TO_SECTOR = {
         task: "social",
@@ -641,18 +645,41 @@ export function registerCards(app, ctx) {
         if (RESTRICTED)
             return restricted(reply, "cardCreate");
         const b = req.body ?? {};
-        const title = String(b.title ?? "").trim();
+        let title = String(b.title ?? "").trim();
         if (!title)
             return reply.code(400).send({ ok: false, error: "卡片标题不能为空" });
         // ★ 节点画布（D11 先建卡后选型）：缺省改为中性文档卡；kind 必须在类型注册表内（含自定义类型）
         const kind = String(b.kind ?? "doc").trim() || "doc";
         if (!db.prepare(`SELECT 1 x FROM card_types WHERE type_key=?`).get(kind))
             return reply.code(400).send({ ok: false, error: `未知卡片类型：${kind}` });
-        const status = CARD_STATES.includes(String(b.status ?? "")) ? String(b.status) : "triage";
+        // ★ 2026-10-07（改进方案 P0①）：人工建卡缺省从 triage 改 todo —— triage 是采集/导入链路的
+        //   「待分流」态，人工建卡时人已完成分流；默认 triage 会把新卡挡在派发预检外，逼用户多
+        //   手动流转一步。采集路径（计划/记忆/笔记等）各自显式写 'triage'，不受此处影响。
+        const status = CARD_STATES.includes(String(b.status ?? "")) ? String(b.status) : "todo";
+        // ★ 2026-10-07（改进方案 P2⑦）建卡模板：card_types.meta.template = { title_prefix, body_skeleton }。
+        //   命中模板自动套标题前缀 + 正文骨架；幂等——标题已带前缀、或正文调用方已给值时不重复套。
+        //   收敛在后端单点应用：任何建卡入口（前端弹窗/探针/未来接入面）行为一致，且可探针实证。
+        let body = String(b.body ?? "").trim() || null;
+        const tRow = db.prepare(`SELECT meta FROM card_types WHERE type_key=?`).get(kind);
+        if (tRow && tRow.meta) {
+            try {
+                const m = JSON.parse(tRow.meta);
+                const tpl = m && m.template && typeof m.template === "object" ? m.template : null;
+                if (tpl) {
+                    if (tpl.title_prefix && !title.startsWith(String(tpl.title_prefix)))
+                        title = String(tpl.title_prefix) + title;
+                    if (tpl.body_skeleton && !body)
+                        body = String(tpl.body_skeleton);
+                }
+            }
+            catch {
+                // meta 非法 JSON → 视为无模板，建卡不受阻
+            }
+        }
         const ins = db
             .prepare(`INSERT INTO cards(board,kind,title,body,status,assignee,priority,meta)
            VALUES (?,?,?,?,?,?,?,?)`)
-            .run(String(b.board ?? "default").trim() || "default", kind, title, String(b.body ?? "").trim() || null, status, String(b.assignee ?? "").trim() || null, Math.max(0, Math.floor(Number(b.priority ?? 0) || 0)), b.meta ? JSON.stringify(b.meta) : null);
+            .run(String(b.board ?? "default").trim() || "default", kind, title, body, status, String(b.assignee ?? "").trim() || null, Math.max(0, Math.floor(Number(b.priority ?? 0) || 0)), b.meta ? JSON.stringify(b.meta) : null);
         const id = Number(ins.lastInsertRowid);
         if (status === "running") {
             // ★ 2026-09-19（弊端 M2）：手工创建的 running 卡默认发放租约——否则租约回收器看不见它（僵尸泳道）
@@ -838,6 +865,10 @@ export function registerCards(app, ctx) {
         const channel = agentProfile ? String(agentProfile.channel) : "queue";
         const message = [
             `【一键派发】你被指派处理 MemoryOS 看板卡片 #${id}（认领人 ${agent}）。`,
+            // ★ 根治批（2026-10-06）：工作空间与模型随派发词下发 —— CDP 驾驶的聊天类载体（如 WorkBuddy）
+            //   进程 cwd 传不进它的会话，提示词是唯一载体；不带这两行，智能体「不知道在哪干活、用什么模型」（用户实测）。
+            ...(agentProfile?.workspace ? [`工作空间：${agentProfile.workspace}（所有文件操作都在此目录内进行）`] : []),
+            ...(agentProfile?.model ? [`使用模型：${agentProfile.model}`] : [`使用模型：（未指定——用你当前的默认模型即可）`]),
             taskId
                 ? `关联任务 #${taskId}，工作证 dispatch_key=${lock}：干完必须调用 task_done(memory_id=${taskId}, conclusion="<≤200字结论>", dispatch_key="${lock}")。`
                 : `本卡未关联任务记忆：不要调用 task_done，结论直接写在最终回复里。`,
@@ -1035,6 +1066,29 @@ export function registerCards(app, ctx) {
         const d = readCard(dst);
         if (!c || !d)
             return reply.code(404).send({ ok: false, error: "卡片不存在" });
+        // ★ 根治二版（2026-10-06）：depends 边的「前置」只能是任务卡（handoff 豁免——它天生 done）。
+        //   首版只拦 agent/aux，结果 doc 卡（running）依赖照样把任务永久卡死（用户二次踩坑）。
+        //   凡没有「经工作流到达 done」语义的卡（智能体/辅助/文档/…）一律不许当前置。
+        if (["depends", "blocks"].includes(kind)) {
+            const prereq = kind === "blocks" ? c : d;
+            if (!["task", "handoff"].includes(String(prereq.kind))) {
+                const kindLabel = { agent: "智能体卡", aux: "辅助卡", doc: "文档卡", handoff: "交接卡" }[String(prereq.kind)] || String(prereq.kind) + " 卡";
+                return reply.code(400).send({
+                    ok: false,
+                    error: `依赖线只能指向任务卡，不能指向${kindLabel}「${String(prereq.title || "").slice(0, 20)}」（#${prereq.id}）：它没有可完成的任务流，这条线大概率永远满足不了。`,
+                });
+            }
+            // ★ 2026-10-07（改进方案 P1⑤）：智能体卡也不能当「依赖方」——它没有可完成的任务流，
+            //   「智能体卡依赖任务卡」没有业务含义（既不会被派发也不会 done），只会积累噪音边。
+            //   要把任务交给它，用任务卡上的「⚡ 派发给…」：派发边由派发动作自动建立、跟工作证生命周期走。
+            const consumer = kind === "blocks" ? d : c;
+            if (String(consumer.kind) === "agent") {
+                return reply.code(400).send({
+                    ok: false,
+                    error: `智能体卡不参与依赖线：「智能体卡依赖任务卡」没有业务含义。要把任务 #${kind === "blocks" ? dst : id} 交给它，请在任务卡上用「⚡ 派发给…」。`,
+                });
+            }
+        }
         // blocks → 反向 depends（M3）
         const finalKind = kind === "blocks" ? "depends" : kind;
         if (finalKind === "depends") {
@@ -1609,7 +1663,7 @@ export function registerCards(app, ctx) {
     app.post("/api/dispatch", async (req, reply) => {
         if (RESTRICTED)
             return restricted(reply, "cardDispatch");
-        const out = { leased_back: 0, promoted: [], blocked: [], auto_refined: [], prospective_cards: [] };
+        const out = { leased_back: 0, promoted: [], blocked: [], auto_refined: [], auto_archived: [], prospective_cards: [] };
         const now = new Date().toISOString();
         txBegin(); // ★ 修 #9：事务内事件入队
         try {
@@ -1654,6 +1708,19 @@ export function registerCards(app, ctx) {
                 db.prepare(`UPDATE cards SET status='blocked', updated_at=? WHERE id=?`).run(now, f.id);
                 writeCardEvent(f.id, "dispatcher", "circuit_break", "failed", "blocked", "连续失败≥2 熔断");
                 out.blocked.push(f.id);
+            }
+            // ⑥ done 自动归档（改进方案 P2⑨，2026-10-07）：done 超 N 天自动 archived——「归档」只是清理
+            //    动作（/api/cards 活跃面本就剔除 archived），不值得人工惦记。CARD_AUTO_ARCHIVE_DAYS 环境变量
+            //    可调天数，0=关闭；默认 7 天。replace(' ','T') 与上方 ② 同口径（防双格式「同日恒真」）。
+            const archDays = Number(process.env.CARD_AUTO_ARCHIVE_DAYS ?? 7);
+            if (Number.isFinite(archDays) && archDays > 0) {
+                const archCutoff = new Date(Date.now() - archDays * 86400000).toISOString();
+                const dones = db.prepare(`SELECT id FROM cards WHERE status='done' AND replace(updated_at,' ','T') < ?`).all(archCutoff);
+                for (const d0 of dones) {
+                    db.prepare(`UPDATE cards SET status='archived', updated_at=? WHERE id=? AND status='done'`).run(now, d0.id);
+                    writeCardEvent(d0.id, "dispatcher", "auto_archive", "done", "archived", `完成满 ${archDays} 天自动归档`);
+                    out.auto_archived.push(d0.id);
+                }
             }
             // ⑤ 前瞻联动（H6）：cron 到期 → 自动建卡（防重放由 due 内部处理）
             const dueRes = await (async () => {
@@ -1869,10 +1936,12 @@ export function registerCards(app, ctx) {
         const label = b.label !== undefined ? String(b.label).trim() : row.label;
         if (!label)
             return reply.code(400).send({ ok: false, error: "类型显示名不能为空" });
-        db.prepare(`UPDATE card_types SET label=?, color=?, can_dispatch_out=?, can_dispatch_in=?, can_inject_out=?, can_inject_in=? WHERE type_key=?`)
+        db.prepare(`UPDATE card_types SET label=?, color=?, can_dispatch_out=?, can_dispatch_in=?, can_inject_out=?, can_inject_in=?, meta=? WHERE type_key=?`)
             .run(label,
                 b.color !== undefined ? (String(b.color).trim() || null) : row.color,
                 ...CARD_TYPE_FLAGS.map((f) => (b[f] !== undefined ? (b[f] ? 1 : 0) : (Number(row[f]) ? 1 : 0))),
+                // ★ 2026-10-07（P2⑦）：PUT 支持 meta（模板等）；未传保持原值
+                b.meta !== undefined ? (b.meta ? JSON.stringify(b.meta) : null) : (row.meta ?? null),
                 row.type_key);
         return { ok: true, type_key: row.type_key };
     });

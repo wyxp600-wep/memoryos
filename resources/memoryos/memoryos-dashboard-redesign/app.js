@@ -172,6 +172,10 @@
       agentWrite: !!r.agentWrite,
     };
     document.body.classList.toggle('restricted', RESTRICTED.enabled);
+    // ★ 2026-10-05 动效批：能力位变化即时反映到已渲染的地图卡片（快捷条 ⚡ 的显隐画在卡内容里）
+    if (typeof _taskViewMode !== 'undefined' && typeof refreshCurrentTaskView === 'function') {
+      try { refreshCurrentTaskView(); } catch { /* 首屏尚未就绪时忽略 */ }
+    }
   }
 
   /* ===== 加载失败可见性（P0-2 / P0-3）：全失败→全屏错误态；部分失败→顶部警示条 + 重试 ===== */
@@ -268,7 +272,8 @@
       box.onclick = () => { loadDaemonHealth(); };
     }
     loadDaemonHealth();
-    setInterval(loadDaemonHealth, 300000); // 5 分钟刷新一次
+    // E6：后台标签页跳过本次拉取，恢复可见后继续按 5 分钟周期跑
+    setInterval(guardTick(loadDaemonHealth), 300000); // 5 分钟刷新一次
   }
 
   /* ===== 概览 ===== */
@@ -319,7 +324,7 @@
           };
         });
       } else {
-        wc.innerHTML = '<span style="color:var(--text-muted);font-size:13px">暂无足够数据生成热词云</span>';
+        wc.innerHTML = '<span class="empty-inline" style="display:block;padding:12px 0">暂无足够数据生成热词云</span>';
       }
     }
     // eff 分布直方图
@@ -430,6 +435,71 @@
   function sectorFieldAvailable() {
     return !S.memories.length || S.memories.some(m => Object.prototype.hasOwnProperty.call(m, 'sector'));
   }
+  /* ★ F（2026-10-06 UI 优化批）表格交互改事件委托（渲染性能）
+     原实现：每次 renderAllTable() 都要对当页最多 100 行做 5 轮全表查询 + 逐项赋值：
+       $$('#allTableBody [data-clear-filters]') / 'tr' / '.row-checkbox' / '[data-edit]' / '[data-del]'
+     → 单次渲染 ≈5 次遍历 + ~400 次属性写入；而筛选、翻页、删除、load() 都会重跑。
+     改为委托：绑 1 次，内部分派。前提已实证 —— #allTableBody 是 index.html:4099 的静态
+     <tbody>，app.js 只设其 innerHTML，元素本身在重渲染时被保留，故监听器不丢。
+     幂等标记沿用本项目既有 dataset.bound 模式（见同文件分页按钮的写法）。
+     ★ 行为与原逐项绑定**逐一对照**（无功能变更）：
+       ① 清除筛选按钮 → 同原回调
+       ② data-edit / data-del 在「行点击」之前分派并 return ⇒ 等价于原来的 e.stopPropagation()
+       ③ 复选框点击不触发详情 ⇒ 等价于原来的 closest('.row-checkbox') 判断
+       ④ 剩余情况整行点击开详情 ⇒ 用 closest('tr[data-id]')，空态行（无 data-id）自然排除
+       ⑤ 复选框状态用 change 事件（原为 onchange） */
+  function bindAllTableDelegation() {
+    const tbody = $('#allTableBody');
+    if (!tbody || tbody.dataset.delegated === '1') return;
+    tbody.dataset.delegated = '1';
+
+    tbody.addEventListener('click', async (e) => {
+      // ① 空态里的「显示全部记忆」按钮
+      if (e.target.closest('[data-clear-filters]')) {
+        currentStatus = 'all'; currentType = 'all'; currentSector = 'all'; allPage = 1;
+        syncFilterButtons(); saveFilterState(); renderAllTable();
+        toast('已清除全部筛选');
+        return;
+      }
+      // ② 编辑（需先于行点击分派）
+      const editBtn = e.target.closest('[data-edit]');
+      if (editBtn) { openEdit(Number(editBtn.dataset.edit)); return; }
+      // ② 删除（同上）
+      const delBtn = e.target.closest('[data-del]');
+      if (delBtn) {
+        const id = Number(delBtn.dataset.del);
+        if (!confirm('确定删除记忆 #' + id + '？此操作不可撤销。')) return;
+        try {
+          const r = await fetch('/api/memory/' + id, { method: 'DELETE' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) { toast('删除失败: ' + (j.error || r.status)); return; }
+          selectedIds.delete(id);
+          toast('已删除 #' + id);
+          await load();
+          renderAllTable();
+          updateBatchBar();
+        } catch (err) { toast('删除失败: ' + err.message); }
+        return;
+      }
+      // ③ 复选框 / 行内操作按钮：均不打开详情（选中态由下面 change 处理）
+      //    与原实现 `if (closest('.row-checkbox') || closest('.row-action-btn')) return;` 等价
+      if (e.target.closest('.row-checkbox') || e.target.closest('.row-action-btn')) return;
+      // ④ 其余：整行点击打开详情
+      const tr = e.target.closest('tr[data-id]');
+      if (tr) openDetail(Number(tr.dataset.id));
+    });
+
+    tbody.addEventListener('change', (e) => {
+      const cb = e.target.closest('.row-checkbox');
+      if (!cb) return;
+      const id = Number(cb.dataset.id);
+      if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+      cb.closest('tr').classList.toggle('selected', cb.checked);
+      updateBatchBar();
+      syncSelectAll();
+    });
+  }
+
   function renderAllTable() {
     let rows = S.memories;
     if (currentStatus !== 'all') rows = rows.filter(m => m.status === currentStatus);
@@ -467,57 +537,20 @@
        <td class="mono" style="font-size:13px;color:var(--accent-cyan)">${fmtNum(m.hits)}</td>
        <td class="mono text-secondary" style="font-size:12px" title="${fmtRelative(m.created_at)}">${fmtDate(m.created_at)}</td>
        <td><div class="row-actions">
-         <button class="row-action-btn" data-edit="${m.id}" title="编辑">✎</button>
-         <button class="row-action-btn del" data-del="${m.id}" title="删除">🗑</button>
+         <button class="row-action-btn" data-edit="${m.id}" title="编辑"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+         <button class="row-action-btn del" data-del="${m.id}" title="删除"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
        </div></td></tr>`;
     }).join('')
       : emptyAllRowsHtml();
-    // 「显示全部记忆」一键脱离空态（筛选状态存在 localStorage，不清就会一直空）
-    $$('#allTableBody [data-clear-filters]').forEach(btn => btn.onclick = () => {
-      currentStatus = 'all'; currentType = 'all'; currentSector = 'all'; allPage = 1;
-      syncFilterButtons(); saveFilterState(); renderAllTable();
-      toast('已清除全部筛选');
-    });
+    // ★ F：交互改事件委托（原为 5 轮逐项绑定，见 bindAllTableDelegation 注释）；幂等，只需绑一次
+    bindAllTableDelegation();
     // 筛选标签
     updateFilterTags();
-    // 行点击（除复选框和操作按钮外）打开详情
-    $$('#allTableBody tr').forEach(tr => {
-      tr.onclick = (e) => {
-        if (e.target.closest('.row-checkbox') || e.target.closest('.row-action-btn')) return;
-        openDetail(Number(tr.dataset.id));
-      };
-    });
-    // 复选框
-    $$('#allTableBody .row-checkbox').forEach(cb => {
-      cb.onchange = () => {
-        const id = Number(cb.dataset.id);
-        if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
-        cb.closest('tr').classList.toggle('selected', cb.checked);
-        updateBatchBar();
-        syncSelectAll();
-      };
-    });
-    // 编辑/删除按钮
-    $$('#allTableBody [data-edit]').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); openEdit(Number(btn.dataset.edit)); });
-    $$('#allTableBody [data-del]').forEach(btn => btn.onclick = async (e) => {
-      e.stopPropagation();
-      const id = Number(btn.dataset.del);
-      if (!confirm('确定删除记忆 #' + id + '？此操作不可撤销。')) return;
-      try {
-        const r = await fetch('/api/memory/' + id, { method: 'DELETE' });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok || !j.ok) { toast('删除失败: ' + (j.error || r.status)); return; }
-        selectedIds.delete(id);
-        toast('已删除 #' + id);
-        await load();
-        renderAllTable();
-        updateBatchBar();
-      } catch (err) { toast('删除失败: ' + err.message); }
-    });
     syncSelectAll();
     const prev = $('#allPrevBtn'), next = $('#allNextBtn');
-    if (prev) { prev.disabled = allPage <= 1; prev.style.opacity = allPage <= 1 ? '0.4' : '1'; prev.style.cursor = allPage <= 1 ? 'not-allowed' : 'pointer'; }
-    if (next) { next.disabled = allPage >= totalPages; next.style.opacity = allPage >= totalPages ? '0.4' : '1'; next.style.cursor = allPage >= totalPages ? 'not-allowed' : 'pointer'; }
+    // ★ E2 收口：原为 JS 手写 style.opacity/cursor 补丁，现由 CSS `.page-btn:disabled` 统一承担
+    if (prev) prev.disabled = allPage <= 1;
+    if (next) next.disabled = allPage >= totalPages;
   }
   function syncSelectAll() {
     const all = $('#selectAllCb'); if (!all) return;
@@ -708,8 +741,8 @@
     const desc = sectorUnsupported
       ? '当前内核的 /api/all 未返回<b>类别（sector）</b>字段，类别筛选需要重启内核后生效：<br>托盘图标 → <b>重启内核</b>（或退出后重开 MemoryOS），刷新本页即可。'
       : (label ? `当前筛选：<b>${esc(label)}</b><br>该组合下没有记忆。` : '当前筛选条件下没有匹配的记忆，试试调整筛选或写入新记忆');
-    return `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">暂无记忆</div><div class="empty-desc">${desc}</div>
-      ${label ? '<button class="btn-ghost" data-clear-filters style="margin-top:12px;padding:6px 16px;font-size:12px">显示全部记忆（清除筛选）</button>' : ''}
+    return `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></div><div class="empty-title">暂无记忆</div><div class="empty-desc">${desc}</div>
+      ${label ? '<button class="btn-ghost btn-sm" data-clear-filters style="margin-top:12px">显示全部记忆（清除筛选）</button>' : ''}
       </div></td></tr>`;
   }
 
@@ -746,11 +779,11 @@
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
         <div style="display:flex;gap:8px">
-          <button class="btn-ghost" id="detailPrevBtn" style="padding:6px 14px;font-size:12px">← 上一条</button>
-          <button class="btn-ghost" id="detailNextBtn" style="padding:6px 14px;font-size:12px">下一条 →</button>
+          <button class="btn-ghost btn-sm" id="detailPrevBtn">← 上一条</button>
+          <button class="btn-ghost btn-sm" id="detailNextBtn">下一条 →</button>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn-ghost" id="detailCopyBtn" style="padding:6px 14px;font-size:12px">📋 复制</button>
+          <button class="btn-ghost btn-sm" id="detailCopyBtn">📋 复制</button>
           <button class="btn-primary" id="detailEditBtn">编辑这段记忆</button>
         </div>
       </div>`;
@@ -930,7 +963,7 @@
        <td><span class="eff-bar"><span class="eff-bar-fill" style="width:15%"></span></span><span class="mono text-secondary">副闲置</span></td>
        <td><span class="mono" style="color:var(--warning);font-weight:600">${z.days}</span> 天</td>
        <td class="mono text-secondary" style="font-size:12px">${fmtDate(z.created_at)}</td></tr>`).join('')
-      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">✨</div><div class="empty-title">暂无闲置记忆</div><div class="empty-desc">记忆库很健康，没有长期闲置未命中的记忆</div></div></td></tr>';
+      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></div><div class="empty-title">暂无闲置记忆</div><div class="empty-desc">记忆库很健康，没有长期闲置未命中的记忆</div></div></td></tr>';
     $$('#zombieTableBody .checkbox').forEach(cb => cb.onclick = e => {
       e.stopPropagation();
       const id = Number(cb.dataset.zid);
@@ -958,7 +991,7 @@
       $('#crossMatrix').innerHTML = '<div class="cross-header">写入方 → 引用方 <span class="text-muted">（事件类型）</span></div>' +
         rows.map(r => `<div class="cross-row"><span class="cross-path"><span class="agent-tag">${esc(r.writer_agent)}</span> → <span class="agent-tag">${esc(r.reader_agent)}</span> <span class="text-muted" style="font-size:11px">(${esc(r.event)})</span></span><span class="cross-count">${r.n}</span></div>`).join('');
     } else {
-      $('#crossMatrix').innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-title">暂无跨工具复用</div><div class="empty-desc">还没有 AI 智能体引用其他工具写入的记忆，随着使用会逐渐出现</div></div>';
+      $('#crossMatrix').innerHTML = '<div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div><div class="empty-title">暂无跨工具复用</div><div class="empty-desc">还没有 AI 智能体引用其他工具写入的记忆，随着使用会逐渐出现</div></div>';
     }
     window.EChartsLoaded.when(() => {
       if (!window.echarts) return;
@@ -991,7 +1024,7 @@
       return `<div class="audit-item ${type}"><div class="audit-time">${fmtDate(l.created_at)}</div>
         <div class="audit-action">${esc(l.task)} · ${esc(l.op)}${l.memory_id ? ' (#' + l.memory_id + ')' : ''}</div>
         <div class="audit-meta"><span class="operator ${l.operator === 'daemon' ? 'daemon' : 'human'}">${esc(l.operator)}</span>${esc(l.detail || '')}</div></div>`;
-    }).join('') : '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">暂无审计记录</div><div class="empty-desc">治理守护和人工操作的审计日志会显示在这里</div></div>';
+    }).join('') : '<div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></div><div class="empty-title">暂无审计记录</div><div class="empty-desc">治理守护和人工操作的审计日志会显示在这里</div></div>';
   }
   function bindAudit() {
     bindGroup('#auditFilter', d => { auditFilter = d; renderAudit(); });
@@ -1200,9 +1233,28 @@
     } catch (e) { console.error('cross charts', e); }
   }
 
-  function toast(msg) {
-    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 2500);
+  /* ★ E6（2026-10-06 UI 优化批）修 P0 缺陷：原签名只有 (msg)，但全站 40 处调用传了第二参
+     （毫秒数，如 toast('...', 8000)），这些参数被静默丢弃 → 所有提示一律固定 2.5s，
+     错误/长提示来不及读完。此处补上可选 ms 与语义色，**向后兼容**：单参调用行为不变。
+     语义色可选第二类参数 kind（'ok'|'err'|'warn'），不影响既有调用。 */
+  let _toastTimer = null;
+  function toast(msg, ms, kind) {
+    const t = $('#toast'); if (!t) return;
+    t.textContent = msg;
+    /* 语义分色：仅在显式传 kind 时加类，未传则保持原样式（不改变既有观感） */
+    t.classList.remove('toast-ok', 'toast-err', 'toast-warn');
+    if (kind === 'ok' || kind === 'err' || kind === 'warn') t.classList.add('toast-' + kind);
+    t.classList.add('show');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => t.classList.remove('show'), ms > 0 ? ms : 2500);
+  }
+  /* ★ E6：页面隐藏时暂停高频轮询 —— 实证 visibilitychange/document.hidden 原为 0 匹配，
+     9 个 setInterval 在后台标签页继续跑（CPU 空转 + 内存驻留）。
+     采用「不销毁定时器、只在隐藏时跳过 tick」的最小改法：恢复可见立即续跑，
+     不触碰任何数据流与接口契约。 */
+  const _pageHidden = () => (typeof document !== 'undefined' && document.hidden === true);
+  function guardTick(fn) {
+    return function (...args) { if (_pageHidden()) return; return fn.apply(this, args); };
   }
   /* ★ 批次⑨（2026-09-24）：通用输入弹窗 —— Electron 壳的渲染进程不实现 window.prompt（点了无反应），
      本 helper 以 Promise 语义等价替代（resolve(values) / 取消 resolve(null)）：
@@ -1235,8 +1287,8 @@
         <div data-fields style="font-size:12px">${fieldsHtml}</div>
         <div data-msg style="display:none;font-size:12px;color:#ef4444;margin-top:8px"></div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
-          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">${esc(opts.okText || '确定')}</button>
+          <button data-cancel class="btn-ghost btn-sm">取消</button>
+          <button data-ok class="btn-primary btn-sm">${esc(opts.okText || '确定')}</button>
         </div>
       </div>`;
       document.body.appendChild(wrap);
@@ -1553,7 +1605,7 @@
        <td class="mono" style="font-size:12px">${Number(m.confidence || 0).toFixed(2)}</td>
        <td class="mono text-secondary" style="font-size:12px">${fmtDate(m.created_at)}</td>
        <td><div style="display:flex;gap:6px"><button class="btn-ghost rule-inject" data-rid="${m.id}" title="${m.inject ? '已强制注入：除内置 8 条门禁外，本条也常驻所有智能体约束文件（点击取消）' : '点击强制注入：本条常驻所有智能体约束文件（自动同步）'}" style="padding:4px 10px;font-size:12px;${m.inject ? 'color:var(--success);border-color:rgba(16,185,129,0.35)' : ''}">${m.inject ? '注入✓' : '注入'}</button><button class="btn-ghost rule-edit" data-rid="${m.id}" style="padding:4px 10px;font-size:12px">编辑</button><button class="btn-ghost rule-del" data-rid="${m.id}" style="padding:4px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.3)">删除</button></div></td></tr>`).join('')
-      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📏</div><div class="empty-title">暂无规则</div><div class="empty-desc">还没有创建 AI 智能体协同约束规则，点击右上角"新建规则"开始</div></div></td></tr>';
+      : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="empty-title">暂无规则</div><div class="empty-desc">还没有创建 AI 智能体协同约束规则，点击右上角"新建规则"开始</div></div></td></tr>';
     $$('#ruleTableBody tr[data-id]').forEach(tr => tr.onclick = () => openDetail(Number(tr.dataset.id), ruleRows));
     $$('#ruleTableBody .rule-edit').forEach(b => b.onclick = e => { e.stopPropagation(); openEdit(Number(b.dataset.rid), 'rule'); });
     $$('#ruleTableBody .rule-del').forEach(b => b.onclick = e => { e.stopPropagation(); delRule(Number(b.dataset.rid)); });
@@ -1645,7 +1697,7 @@
     const body = $('#ingestSourceBody');
     if (!body) return;
     if (!sources.length) {
-      body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📥</div><div class="empty-title">尚未探测到可采集的来源</div><div class="empty-desc">采集地址由系统自动分配，无需手动配置；装了对应 AI 智能体后其记忆目录会自动出现</div></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div><div class="empty-title">尚未探测到可采集的来源</div><div class="empty-desc">采集地址由系统自动分配，无需手动配置；装了对应 AI 智能体后其记忆目录会自动出现</div></div></td></tr>';
       return;
     }
     body.innerHTML = sources.map((s, i) => {
@@ -1931,7 +1983,7 @@
             <td class="mono">${a.revoked || 0}</td>
             <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc((a.latest_expires || '').slice(0, 16).replace('T', ' '))}</td>
           </tr>`).join('')
-        : '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">暂无凭据（点「签发凭据」生成短生命周期凭据）</td></tr>';
+        : '<tr><td colspan="5"><div class="empty-inline">暂无凭据（点「签发凭据」生成短生命周期凭据）</div></td></tr>';
     } catch (e) {
       body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#ef4444">加载凭据失败：' + esc(e.message) + '</td></tr>';
     }
@@ -1979,7 +2031,7 @@
        <td><a href="#all" data-action="focus-mem-search" style="color:var(--accent-cyan)">#${r.memory_id}</a></td>
        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.note_hash)}</td>
        <td class="mono" style="font-size:11px;color:var(--text-secondary)">${esc((r.created_at || '').slice(0, 19).replace('T', ' '))}</td></tr>`).join('')
-      : '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">暂无已导入笔记</div><div class="empty-desc">选择 Obsidian 仓库后点击"导入笔记"开始同步</div></div></td></tr>';
+      : '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><div class="empty-title">暂无已导入笔记</div><div class="empty-desc">选择 Obsidian 仓库后点击"导入笔记"开始同步</div></div></td></tr>';
   }
   async function loadObsidianStatus() {
     const vault = currentVault();
@@ -2123,7 +2175,7 @@
     const cnt = $('#notesRailCount');
     if (cnt) cnt.textContent = vault ? `${rows.length} / ${NOTE_ALL.length}` : String(rows.length);
     if (!NOTE_ALL.length) {
-      box.innerHTML = '<div class="notes-empty"><span class="big">📓</span>还没有索引到笔记<br>选好仓库后点右上角「导入笔记」</div>';
+      box.innerHTML = '<div class="notes-empty"><span class="big"><svg class="ic" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></span>还没有索引到笔记<br>选好仓库后点右上角「导入笔记」</div>';
       return;
     }
     if (!rows.length) {
@@ -2131,17 +2183,35 @@
       return;
     }
     box.innerHTML = rows.map(n => `
-      <div class="notes-item${n.id === NOTE_SELECTED_ID ? ' active' : ''}" data-nid="${n.id}" title="${esc(n.rel_path)}">
+      <div class="notes-item${n.id === NOTE_SELECTED_ID ? ' active' : ''}" role="button" tabindex="0" data-nid="${n.id}" title="${esc(n.rel_path)}">
         <div class="notes-item-title">${esc(n.title)}${n.origin === 'user' ? '<span class="nbadge">自建</span>' : ''}</div>
         <div class="notes-item-sub">${esc(n.rel_path || '')}</div>
       </div>`).join('');
-    $$('#notesRailList .notes-item').forEach(el => {
-      // ★ a11y P0-1（2026-10-03）：整行点击的笔记项须键盘可达 —— role=button + tabIndex + Enter/Space 激活
-      //   （此前仅 .onclick，属「可点但键盘不可聚焦」；随 vault 笔记增多首次被 a11y 门禁暴露）
-      el.setAttribute('role', 'button');
-      el.tabIndex = 0;
-      el.onclick = () => selectNote(Number(el.dataset.nid));
-      el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } };
+    // ★ F（2026-10-06）：a11y 属性（role/tabindex）改为直接写在模板里 —— 原实现对每项做
+    //   setAttribute + tabIndex 赋值（笔记多时有 N 次 × 2 的 DOM 写入），移入模板后为 0 次，语义不变。
+    //   点击 / 键盘激活改事件委托（见 bindNotesRailDelegation）。
+    bindNotesRailDelegation();
+  }
+
+  /* ★ F（2026-10-06 UI 优化批）笔记列表事件委托
+     原实现每渲染一次就逐项绑 onclick + onkeydown（O(N) 次赋值）；改绑到静态容器 #notesRailList
+     （index.html:4722 静态元素，仅重设 innerHTML，元素本身保留）一次即可，幂等沿用 dataset 标记。
+     行为对照：click → selectNote(dataset.nid)；Enter/Space → 原为 el.click()，委托下直接调
+     selectNote，等价（且避免再触发一轮 click 委托）。 */
+  function bindNotesRailDelegation() {
+    const box = $('#notesRailList');
+    if (!box || box.dataset.delegated === '1') return;
+    box.dataset.delegated = '1';
+    box.addEventListener('click', (e) => {
+      const el = e.target.closest('.notes-item[data-nid]');
+      if (el) selectNote(Number(el.dataset.nid));
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const el = e.target.closest('.notes-item[data-nid]');
+      if (!el) return;
+      e.preventDefault();
+      selectNote(Number(el.dataset.nid));
     });
   }
 
@@ -2588,16 +2658,7 @@
     loadSkillsStatus();
   }
 
-  /* ===== 任务看板（v1.1 七态）===== */
-  const TASK_STATUS_META = {
-    pending: { label: '待处理', color: '#94a3b8' },
-    in_progress: { label: '进行中', color: '#06b6d4' },
-    blocked: { label: '阻塞', color: '#f59e0b' },
-    done: { label: '已完成', color: '#10b981' },
-    cancelled: { label: '已取消', color: '#64748b' },
-    merged: { label: '已合并', color: '#a855f7' },
-    archived: { label: '已归档', color: '#64748b' },
-  };
+  /* ===== 任务看板（卡片/地图双视图）===== */
   /* ★ D-5：节点状态文字色对照表 [亮色, 暗色]。状态色（圆点/描边/强调）保持原色相，
      只有 10px 小字换到同色系高对比档，解决 in_progress 2.43:1 / blocked 2.15:1。
      查表未命中时回退原状态色，不影响新状态接入。 */
@@ -2611,13 +2672,10 @@
     '#a855f7': ['#7e22ce', '#d8b4fe'],
     '#ef4444': ['#b91c1c', '#fca5a5'],
   };
-  const TASK_ORDER = ['pending', 'in_progress', 'blocked', 'done', 'cancelled', 'merged', 'archived']; // ★ E-0 六持久态 + archived（review/failed 已取消）
-  let _taskAll = []; // 任务看板全量（供详情弹窗查询）
   let _taskViewMode = 'map'; // ★ 2026-09-13：任务地图为唯一任务模块（看板/任务视图功能已并入地图）
   let _taskMapFilter = null; // 状态过滤（看板列式速览并入地图）
   function refreshCurrentTaskView() {
     if (_taskViewMode === 'map') return renderTaskMap();
-    if (_taskViewMode === 'legacy') return loadTasks();
     return renderCards();
   }
   /* ★ 实时看板 SSE：卡片任何变更（后端 /api/cards/stream，writeCardEvent 中心点推送）
@@ -2653,130 +2711,14 @@
     if (_cardsEs) { _cardsEs.close(); _cardsEs = null; }
     if (_cardsRefreshTimer) { clearTimeout(_cardsRefreshTimer); _cardsRefreshTimer = null; }
   }
-  async function loadTasks() {
-    const board = $('#tasksBoard');
-    if (!board) return;
-    board.innerHTML = '<div style="grid-column:1/-1;padding:40px;text-align:center;color:var(--text-muted)">加载中…</div>';
-    const data = await fetch('/api/tasks?limit=300').then(r => r.json()).catch(() => ({ total: 0 }));
-    _taskAll = [];
-    TASK_ORDER.forEach(s => { (data[s] || []).forEach(t => _taskAll.push(Object.assign({ status: s }, t))); });
-    const nOcc = {};
-    TASK_ORDER.forEach(s => nOcc[s] = 0);
-    const html = TASK_ORDER.map(s => {
-      const items = data[s] || [];
-      nOcc[s] = items.length;
-      const meta = TASK_STATUS_META[s];
-      const cards = items.length ? items.map(t => `
-        <div data-task-id="${t.id}" style="padding:10px 12px;background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.06);border-radius:10px;margin-bottom:8px;cursor:pointer" title="点击查看详情">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-            <span class="mono" style="font-size:10px;color:var(--text-muted)">#${t.id}</span>
-            <span style="font-size:10px;color:${esc(t.assignee) ? 'var(--text-secondary)' : 'var(--text-muted)'}">${esc(t.assignee || '未分配')}</span>
-          </div>
-          <div style="font-size:12px;color:var(--text-primary);margin-top:4px;line-height:1.5">${esc(t.body || t.body)}</div>
-          ${t.blocked ? '<div style="font-size:10px;color:var(--danger);margin-top:4px">⛔ 等待依赖完成</div>' : ''}
-          ${t.deps && t.deps.length ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">依赖: ${t.deps.map(d => '#' + d).join(',')}${t.conclusion ? ' · ' + esc(t.concludedBy) : ''}</div>` : ''}
-          ${t.conclusion ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">✓ ${esc(t.conclusion)}</div>` : ''}
-        </div>`).join('')
-        : '<div style="text-align:center;color:var(--text-muted);font-size:11px;padding:16px 0">—</div>';
-      return `<div style="display:flex;flex-direction:column;background:rgba(255,255,255,0.03);border:1px solid rgba(0,0,0,0.06);border-radius:12px;padding:10px;min-height:120px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <span style="width:8px;height:8px;border-radius:50%;background:${meta.color};display:inline-block"></span>
-          <span style="font-size:12px;font-weight:600;color:var(--text-primary)">${meta.label}</span>
-          <span class="mono" style="font-size:10px;color:var(--text-muted)">${nOcc[s]}</span>
-          <button class="col-add" data-status="${s}" title="在该列新建任务" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px">＋</button>
-        </div>
-        ${cards}
-      </div>`;
-    }).join('');
-    board.innerHTML = html;
-    // 卡片点击 → 任务详情
-    $$('#tasksBoard [data-task-id]').forEach(el => el.onclick = () => {
-      const t = _taskAll.find(x => x.id === Number(el.dataset.taskId));
-      if (t) openTaskDetail(t);
-    });
-    // 列头「＋」→ 预置该列状态新建
-    board.querySelectorAll('.col-add').forEach(b => {
-      b.onclick = (e) => { e.stopPropagation(); openTaskModal(b.dataset.status); };
-    });
-  }
-  /** 任务详情弹窗（复用 detailModal） */
-  function openTaskDetail(t) {
-    const meta = TASK_STATUS_META[t.status] || { label: t.status, color: '#64748b' };
-    const idStr = '#' + t.id;
-    $('#modalBody').innerHTML = `
-      <div class="detail-content-box" style="border-left-color:${meta.color}">${renderContent(t.body || '—')}</div>
-      <div class="detail-grid">
-        ${pair('编号', idStr, true)}
-        ${pair('状态', '', false, `<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:${meta.color};display:inline-block"></span>${esc(meta.label)}</span>`)}
-        ${pair('接收方', esc(t.assignee) || '未分配', true)}
-        ${pair('提交方', esc(t.submittedBy) || '—', true)}
-        ${pair('依赖', (t.deps && t.deps.length ? t.deps.map(d => '#' + d).join(', ') : '—'), true)}
-        ${t.blocked ? pair('阻塞', '等待依赖完成') : ''}
-        ${pair('置信度', (t.confidence || 0).toFixed(2), true)}
-        ${pair('创建时间', fmtDate(t.created_at), true)}
-      </div>
-      ${t.conclusion ? `<div style="margin-top:16px;padding:12px 14px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);border-radius:10px"><div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">完成结论 · ${esc(t.concludedBy || '')}</div><div style="font-size:13px;color:var(--text-primary);white-space:pre-wrap">${renderContent(t.conclusion)}</div></div>` : ''}
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
-        <button class="btn-ghost" id="taskDetailCopyBtn" style="padding:6px 14px;font-size:12px">📋 复制</button>
-        <button class="btn-danger" id="taskDeleteBtn" style="padding:6px 14px;font-size:12px">删除任务</button>
-        <button class="btn-ghost" id="taskDetailCloseBtn" style="padding:6px 14px;font-size:12px">关闭</button>
-      </div>`;
-    $('#detailModal').classList.add('show');
-    $('#taskDetailCloseBtn').onclick = () => $('#detailModal').classList.remove('show');
-    $('#taskDetailCopyBtn').onclick = () => {
-      const md = `# 任务 #${t.id}\n\n**状态**: ${meta.label}\n**接收方**: ${t.assignee || '未分配'}\n**提交方**: ${t.submittedBy || '—'}\n**依赖**: ${(t.deps && t.deps.length ? t.deps.map(d => '#' + d).join(', ') : '—')}\n**创建**: ${fmtDate(t.created_at)}${t.conclusion ? '\n\n**结论**(' + (t.concludedBy || '') + '):\n' + t.conclusion : ''}\n\n---\n\n${t.body || ''}`;
-      navigator.clipboard.writeText(md).then(() => {
-        const btn = $('#taskDetailCopyBtn');
-        btn.textContent = '✅ 已复制';
-        setTimeout(() => btn.textContent = '📋 复制', 1500);
-        }).catch(() => toast('复制失败，请手动复制'));
-    };
-    $('#taskDeleteBtn').onclick = async () => {
-      if (!confirm(`删除任务 #${t.id}？任务将从看板消失并保留归档记录。`)) return;
-      const res = await fetch(`/api/tasks/${t.id}`, { method: 'DELETE' });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { toast(j.error || '删除任务失败'); return; }
-      $('#detailModal').classList.remove('show');
-      toast(`已删除任务 #${t.id}`);
-      refreshCurrentTaskView();
-    };
-  }
-  /* ===== 任务看板：人工派活（新建任务 / 导入计划）===== */
+  /* ===== 任务看板：初始化（卡片/地图双视图；旧七态任务视图链已随 2026-10-05 精简批删除）===== */
   function initTasks() {
     const btn = $('#tasksRefreshBtn');
     if (btn && !btn.dataset.bound) { btn.dataset.bound = '1'; btn.onclick = refreshCurrentTaskView; }
-    const create = $('#createTaskBtn');
-    if (create && !create.dataset.bound) { create.dataset.bound = '1'; create.onclick = () => openTaskModal(); }
-    const imp = $('#importPlanBtn');
-    if (imp && !imp.dataset.bound) { imp.dataset.bound = '1'; imp.onclick = openPlanModal; }
-    const tm = $('#taskModal');
-    if (tm && !tm.dataset.bound) {
-      tm.dataset.bound = '1';
-      $('#taskModalClose').onclick = closeTaskModal;
-      $('#taskCancelBtn').onclick = closeTaskModal;
-      $('#taskSaveBtn').onclick = saveTask;
-      $('#taskTitle').addEventListener('keydown', e => { if (e.key === 'Enter') saveTask(); });
-      tm.addEventListener('click', e => { if (e.target === tm) closeTaskModal(); });
-    }
-    const pm = $('#planModal');
-    if (pm && !pm.dataset.bound) {
-      pm.dataset.bound = '1';
-      $('#planModalClose').onclick = closePlanModal;
-      $('#planCancelBtn').onclick = closePlanModal;
-      $('#planValidateBtn').onclick = () => validatePlanForm(true);
-      $('#planImportBtn').onclick = importPlan;
-      $('#planFileSelect').onchange = onPlanFileChange;
-      $('#planJsonInput').addEventListener('input', () => { if ($('#planJsonInput').value.trim()) $('#planFileSelect').value = ''; });
-      pm.addEventListener('click', e => { if (e.target === pm) closePlanModal(); });
-    }
-    // ★ 2026-09-20：初始化不再加载旧任务视图 —— loadTasks() 会把含 done 的七态列表渲染进 #tasksBoard
-    //   （地图已是唯一任务入口，容器默认 display:none，此调用属无用请求 + 已完成任务重复展示的隐患）。
-    //   showTaskView('legacy') 分支仍会按需 loadTasks()。
     initSystemPlans();
-    /* ★ P6：卡片看板视图（/api/cards，与旧 /api/tasks 任务视图并存 Tab） */
-    const tabCards = $('#tabCards'), tabMap = $('#tabMap'), tabLegacy = $('#tabLegacy');
-    const cardsBoard = $('#cardsBoard'), mapEl = $('#taskMap'), boardEl = $('#tasksBoard');
-    const ccb = $('#createCardBtn'), dpb = $('#dispatchBtn'), ilb = $('#importLegacyBtn');
+    const tabCards = $('#tabCards'), tabMap = $('#tabMap');
+    const cardsBoard = $('#cardsBoard'), mapEl = $('#taskMap');
+    const ccb = $('#createCardBtn'), dpb = $('#dispatchBtn');
     const anchor = tabCards || tabMap;
     if (anchor && !anchor.dataset.bound) {
       anchor.dataset.bound = '1';
@@ -2784,37 +2726,18 @@
       const showTaskView = (mode) => {
         _taskViewMode = mode;
         const cardsOn = mode === 'cards';
-        const mapOn = mode === 'map';
         if (cardsBoard) cardsBoard.style.display = cardsOn ? 'block' : 'none';
-        if (mapEl) mapEl.style.display = mapOn ? 'block' : 'none';
-        if (boardEl) boardEl.style.display = mode === 'legacy' ? 'grid' : 'none';
-        if (ccb) ccb.style.display = ((cardsOn || mapOn) && !restricted.cardCreate) ? '' : 'none';
-        if (dpb) dpb.style.display = ((cardsOn || mapOn) && !restricted.cardDispatch) ? '' : 'none';
-        if (ilb) ilb.style.display = ((cardsOn || mapOn) && !restricted.cardCreate) ? '' : 'none';
-        if (tabCards) {
-          tabCards.className = cardsOn ? 'btn-primary' : 'btn-ghost';
-          tabCards.setAttribute('aria-selected', cardsOn ? 'true' : 'false');
-        }
-        if (tabMap) {
-          tabMap.className = mapOn ? 'btn-primary' : 'btn-ghost';
-          tabMap.setAttribute('aria-selected', mapOn ? 'true' : 'false');
-        }
-        if (tabLegacy) {
-          tabLegacy.className = mode === 'legacy' ? 'btn-primary' : 'btn-ghost';
-          tabLegacy.setAttribute('aria-selected', mode === 'legacy' ? 'true' : 'false');
-        }
+        if (mapEl) mapEl.style.display = cardsOn ? 'none' : 'block';
+        if (ccb) ccb.style.display = !restricted.cardCreate ? '' : 'none';
+        if (dpb) dpb.style.display = !restricted.cardDispatch ? '' : 'none';
+        // 选中态由 CSS [aria-selected] 控制，JS 只翻属性（样式单一来源）
+        if (tabCards) tabCards.setAttribute('aria-selected', cardsOn ? 'true' : 'false');
+        if (tabMap) tabMap.setAttribute('aria-selected', cardsOn ? 'false' : 'true');
         if (cardsOn) renderCards();
-        else if (mapOn) renderTaskMap();
-        else loadTasks();
+        else renderTaskMap();
       };
-      // ★ 2026-09-13：tabCards/tabLegacy 已从 DOM 移除（功能并入任务地图），仅保留地图入口
-      // ★ P4 简化批（2026-10-03）：恢复 tabCards「列式看板」入口 —— 列式视图的「拖卡片改状态」是步骤最少的状态流转（1 次拖拽），
-      //   且 renderCards/拖拽逻辑本就完整可用，此前只是入口按钮被删（_taskViewMode 恒为 'map' 导致 4208 行拖拽段成死代码）。
       if (tabMap) tabMap.onclick = () => showTaskView('map');
       if (tabCards) tabCards.onclick = () => showTaskView('cards');
-      if (tabLegacy) tabLegacy.onclick = () => showTaskView('legacy');
-      // ★ 2026-09-13：旧任务视图（七态 #tasksBoard）仍隐藏 —— 与卡片看板重复展示，不属本次范围
-      if (tabLegacy) tabLegacy.style.display = 'none';
       if (ccb) ccb.onclick = createCard;
       initCreateCardPanel(); // 画布左上角「＋」悬浮入口（点选建卡；随受限模式显隐）
       initTaskBoardGuide(); // ? 使用指引面板（首访自动展开；不再显示后收起）
@@ -2825,8 +2748,7 @@
         p.style.display = p.style.display === 'none' ? '' : 'none';
       };
       if (dpb) dpb.onclick = runDispatch;
-      if (ilb) ilb.onclick = importLegacy;
-      showTaskView('map'); // ★ 2026-09-13：任务地图为默认模块入口
+      showTaskView('map'); // 任务地图为默认模块入口
     }
   }
   /* ===== 系统计划（受限模式：用户只能「应用」系统下发的计划，不能自行创建/导入）===== */
@@ -2845,7 +2767,7 @@
       const r = await fetch('/api/plans').then(x => x.json());
       const rows = r.rows || [];
       if (!rows.length) {
-        list.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">系统尚未下发计划</div><div class="empty-desc">任务由系统计划统一派发，无需手动创建</div></div>';
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon"><svg class="ic" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="empty-title">系统尚未下发计划</div><div class="empty-desc">任务由系统计划统一派发，无需手动创建</div></div>';
         return;
       }
       const statusMap = { active: '进行中', completed: '已完成', draft: '草稿', cancelled: '已取消' };
@@ -2856,7 +2778,7 @@
           <span style="font-size:13px;color:var(--text-primary);font-weight:600">${esc(p.plan_id || p.file)}</span>
           <span class="text-muted" style="font-size:11px">${esc(statusText)} · ${p.tasks || 0} 个任务 · ${esc(p.file)}</span>
           ${ok ? '' : '<span style="font-size:11px;color:var(--danger)">结构校验未通过</span>'}
-          <button class="btn-primary sysplan-apply" data-file="${esc(p.file)}" style="margin-left:auto;padding:5px 14px;font-size:12px"${ok ? '' : ' disabled'}>应用</button>
+          <button class="btn-primary btn-sm sysplan-apply" data-file="${esc(p.file)}" style="margin-left:auto"${ok ? '' : ' disabled'}>应用</button>
         </div>`;
       }).join('');
       list.querySelectorAll('.sysplan-apply').forEach(b => { b.onclick = () => applySystemPlan(b.dataset.file); });
@@ -2875,148 +2797,9 @@
       if (!r.ok) { toast('应用失败：' + (r.error || '未知错误')); return; }
       const created = r.inserted ?? r.created ?? 0;
       toast('已应用计划 ' + r.plan_id + '：新增 ' + created + ' / 更新 ' + (r.overwritten || 0) + ' / 依赖 ' + (r.linksCreated || 0) + ' / 跳过 ' + (r.skipped || 0) + ' / 失败 ' + (r.failed || 0));
-      await Promise.all([loadTasks(), renderCards()]);
+      refreshCurrentTaskView();
     } catch (e) { toast('应用失败：' + e.message); }
   }
-  function openTaskModal(status) {
-    $('#taskTitle').value = ''; $('#taskAssignee').value = '';
-    $('#taskStatus').value = status || 'pending';
-    $('#taskDepends').value = ''; $('#taskSummary').value = '';
-    const hint = $('#taskHint'); hint.style.display = 'none'; hint.textContent = '';
-    $('#taskModal').style.display = 'flex';
-    setTimeout(() => { const el = $('#taskTitle'); if (el) el.focus(); }, 50);
-  }
-  function closeTaskModal() {
-    const m = $('#taskModal'); if (m) m.style.display = 'none';
-  }
-  async function saveTask() {
-    const hint = $('#taskHint'); hint.style.display = 'none';
-    const title = $('#taskTitle').value.trim();
-    if (!title) { hint.textContent = '任务标题不能为空'; hint.style.display = 'block'; return; }
-    const deps = $('#taskDepends').value.split(/[,，\s]+/).map(x => Number(x.trim())).filter(n => Number.isFinite(n) && n > 0);
-    const btn = $('#taskSaveBtn'); btn.disabled = true; btn.style.opacity = '0.6';
-    try {
-      const r = await fetch('/api/task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, assignee: $('#taskAssignee').value.trim(), status: $('#taskStatus').value, depends: deps, summary: $('#taskSummary').value.trim() }),
-      }).then(x => x.json());
-      if (!r.ok) { hint.textContent = r.error || '创建失败'; hint.style.display = 'block'; return; }
-      closeTaskModal();
-      const meta = TASK_STATUS_META[r.status];
-      toast('已创建任务 #' + r.id + '（' + (meta ? meta.label : r.status) + '）');
-      await loadTasks();
-    } catch (e) {
-      hint.textContent = '创建失败：' + e.message; hint.style.display = 'block';
-    } finally { btn.disabled = false; btn.style.opacity = '1'; }
-  }
-  let _planList = [];
-  async function openPlanModal() {
-    $('#planJsonInput').value = '';
-    $('#planCheck').style.display = 'none';
-    const hint = $('#planHint'); hint.style.display = 'none'; hint.textContent = '';
-    $('#planModal').style.display = 'flex';
-    const sel = $('#planFileSelect');
-    sel.innerHTML = '<option value="">— 选择计划文件 —</option>';
-    try {
-      const r = await fetch('/api/plans').then(x => x.json());
-      _planList = r.rows || [];
-      const dirEl = $('#planDirPath'); if (dirEl) dirEl.textContent = r.dir || '—';
-      _planList.forEach(p => {
-        const o = document.createElement('option');
-        o.value = p.file;
-        o.textContent = `${p.file} · ${p.tasks} 任务 · ${p.plan_status || '?'}${p.valid ? '' : ' ⚠ 校验未通过'}`;
-        sel.appendChild(o);
-      });
-      if (!_planList.length) {
-        const o = document.createElement('option');
-        o.value = ''; o.disabled = true; o.textContent = '（plans 目录下暂无可导入的 plan-*.json）';
-        sel.appendChild(o);
-      }
-    } catch (e) {
-      const dirEl = $('#planDirPath'); if (dirEl) dirEl.textContent = '加载失败：' + e.message;
-    }
-  }
-  function closePlanModal() {
-    const m = $('#planModal'); if (m) m.style.display = 'none';
-  }
-  function planFormPayload() {
-    return { content: $('#planJsonInput').value.trim(), path: $('#planFileSelect').value };
-  }
-  function renderPlanCheck(res) {
-    const box = $('#planCheck');
-    box.style.display = 'block';
-    if (res && res.ok) {
-      box.style.background = 'rgba(34,197,94,0.08)';
-      box.style.color = 'var(--text-secondary)';
-      const parts = ['<strong style="color:var(--success)">✅ 校验通过</strong>'];
-      if (res.plan_id) parts.push('plan_id <span class="mono">' + esc(res.plan_id) + '</span>');
-      if (res.plan_status) parts.push('状态 <span class="mono">' + esc(res.plan_status) + '</span>');
-      if (res.tasks != null) parts.push('任务 ' + res.tasks + ' 条');
-      if (res.willImport != null) parts.push('<strong style="color:var(--accent-cyan)">将导入 ' + res.willImport + '</strong>');
-      if (res.skipped != null) parts.push('已存在跳过 ' + res.skipped);
-      if (res.forcedDone) parts.push('<span style="color:#f59e0b">计划已完成 → 任务按 done 落库</span>');
-      if (res.source) parts.push('来源 ' + esc(res.source));
-      box.innerHTML = parts.join(' · ');
-    } else {
-      box.style.background = 'rgba(239,68,68,0.08)';
-      box.style.color = '#ef4444';
-      box.innerHTML = '⛔ 校验未通过' + (res && res.source ? '（' + esc(res.source) + '）' : '') + '：<br>' +
-        ((res && res.errors) || ['未知错误']).map(e => '· ' + esc(e)).join('<br>');
-    }
-    return !!(res && res.ok);
-  }
-  async function onPlanFileChange() {
-    const f = $('#planFileSelect').value;
-    const box = $('#planCheck');
-    if (!f) { if (box) box.style.display = 'none'; return; }
-    $('#planJsonInput').value = '';
-    await validatePlanForm(false, { path: f });
-  }
-  async function validatePlanForm(showToast, override) {
-    const hint = $('#planHint'); hint.style.display = 'none';
-    const body = override || planFormPayload();
-    if (!body.content && !body.path) {
-      hint.textContent = '请选择计划文件，或粘贴计划备份内容';
-      hint.style.display = 'block';
-      return false;
-    }
-    try {
-      const r = await fetch('/api/plans/import', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({ dryRun: true }, body)),
-      }).then(x => x.json());
-      const ok = renderPlanCheck(r);
-      if (showToast) toast(ok ? '校验通过，可导入' : '校验未通过');
-      return ok;
-    } catch (e) {
-      renderPlanCheck({ ok: false, errors: ['校验请求失败：' + e.message] });
-      return false;
-    }
-  }
-  async function importPlan() {
-    const hint = $('#planHint'); hint.style.display = 'none';
-    const body = planFormPayload();
-    if (!body.content && !body.path) { hint.textContent = '请选择计划文件，或粘贴计划备份内容'; hint.style.display = 'block'; return; }
-    const btn = $('#planImportBtn'); btn.disabled = true; btn.style.opacity = '0.6';
-    try {
-      const r = await fetch('/api/plans/import', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }).then(x => x.json());
-      if (!r.ok) {
-        renderPlanCheck({ ok: false, errors: r.errors || [r.error || '导入失败'], source: r.source });
-        hint.textContent = r.error || '导入失败'; hint.style.display = 'block';
-        return;
-      }
-      const created = r.inserted ?? r.created ?? 0;
-      toast('导入完成：新增 ' + created + ' · 更新 ' + (r.overwritten || 0) + ' · 依赖 ' + (r.linksCreated || 0) + ' · 跳过 ' + (r.skipped || 0) + ' · 失败 ' + (r.failed || 0));
-      closePlanModal();
-      await Promise.all([loadTasks(), renderCards()]);
-    } catch (e) {
-      hint.textContent = '导入失败：' + e.message; hint.style.display = 'block';
-    } finally { btn.disabled = false; btn.style.opacity = '1'; }
-  }
-
   /* ===== 新功能增强模块 ===== */
 
   // 暗色模式切换
@@ -3981,8 +3764,8 @@
               <details open><summary>HTML（${String(p.html || '').length} 字符）</summary><pre>${esc(p.html)}</pre></details>
               <details><summary>计算样式（CSS，${Object.keys(p.styles || {}).length} 项）</summary><pre>${esc(cssText(p))}</pre></details>
               <div class="design-pick-actions">
-                <button class="btn-primary design-attach" data-id="${esc(p.id)}" style="padding:4px 12px;font-size:11px">附到输入框</button>
-                <button class="btn-ghost design-copy" data-id="${esc(p.id)}" style="padding:4px 12px;font-size:11px">复制 HTML</button>
+                <button class="btn-primary btn-xs design-attach" data-id="${esc(p.id)}">附到输入框</button>
+                <button class="btn-ghost btn-xs design-copy" data-id="${esc(p.id)}">复制 HTML</button>
               </div>
             </div>
           </div>
@@ -4095,7 +3878,7 @@
     const list = $('#prospectiveList'); if (!list) return;
     const res = await fetch('/api/prospective/due?auto_card=0').then(r => r.json()).catch(() => null);
     if (!res) { list.innerHTML = '<div class="text-muted" style="font-size:12px;padding:12px">加载失败</div>'; return; }
-    if (!res.due.length) { list.innerHTML = '<div class="text-muted" style="font-size:12px;padding:12px">暂无到期前瞻记忆</div>'; return; }
+    if (!res.due.length) { list.innerHTML = '<div class="empty-inline">暂无到期前瞻记忆</div>'; return; }
     list.innerHTML = res.due.map(d => `
       <div style="display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-glass);font-size:12px">
         <span class="sdot" style="background:#fb923c;margin-top:4px"></span>
@@ -4763,12 +4546,21 @@
     world.style.height = worldH + 'px';
     edgesEl.setAttribute('width', String(worldW));
     edgesEl.setAttribute('height', String(worldH));
-    nodesEl.innerHTML = '';
-    renderTaskMapEdges(); // 边渲染抽离（拖动时增量复用）
+    renderTaskMapEdges(); // 边渲染抽离（diff 复用，动画不被 SSE 重绘打断）
 
     // ★ 2026-09-15：地图状态三态（未完成 / 已完成 / 已归档）；细粒度状态仍在卡片抽屉与右键菜单；终结态不再误标的「未完成」
     // ★ 2026-09-18：running 单列「已领取」（琥珀色）—— 认领者是谁一眼可见（配合 SSE 实时推送）
-    const statusBucket = (s) => { const st = String(s); if (st === 'done') return { label: '已完成', color: '#10b981' }; if (st === 'running') return { label: '已领取', color: '#f59e0b' }; if (st === 'archived' || st === 'cancelled' || st === 'failed') return { label: '已归档', color: '#64748b' }; return { label: '未完成', color: '#06b6d4' }; };
+    const statusBucket = (s) => {
+      // ★ 2026-10-07（改进方案 P1④）地图分桶五组收敛：待办（triage/todo/ready）/执行中/待验收/受阻（blocked/failed）/已完结。
+      //   旧版把 failed 归进「已归档」灰桶——失败卡被视觉藏起来了；底层 10 态状态机不动，只收敛展示文案与配色。
+      const st = String(s);
+      if (st === 'done') return { label: '已完成', color: '#10b981' };
+      if (st === 'review') return { label: '待验收', color: '#f59e0b' };
+      if (st === 'blocked') return { label: '受阻', color: '#ef4444' };
+      if (st === 'failed') return { label: '失败', color: '#f97316' };
+      if (st === 'archived' || st === 'cancelled') return { label: '已完结', color: '#64748b' };
+      return { label: '待办', color: '#06b6d4' }; // triage / todo / ready 同组——「依赖是否满足」由派发自动升档，不向用户分列
+    };
     const nodeById = new Map(nodes.map(x => [Number(x.id), x]));
     const auxKindOf = new Map();
     const hostOf = new Map(); // 辅助卡 → 宿主卡（辅助卡没有自身状态：标签/过滤/连线都跟随宿主）
@@ -4781,6 +4573,22 @@
       else if (auxKindOfK(nodeById.get(s)?.kind)) { auxKindOf.set(s, lk); hostOf.set(s, d); }
     });
     const AUX_LABELS_LOCAL = { aux_project: '相关项目', aux_memory: '用户记忆', aux_rule: '规则定义', aux_skill: 'Skill 技能', aux_error: '历史错误' };
+    // ★ 2026-10-05 动效批：节点 diff 复用 —— 旧实现 nodesEl.innerHTML='' 整层重建，SSE 每 800ms
+    //   重建全部卡片 DOM：hover 态丢失、快捷条闪、加入场动画必被周期性重放。
+    //   现按 cardId 复用：位置/状态色每帧更新；内容（innerHTML）有变化才重写（仅该卡瞬间丢 hover，可接受）；
+    //   事件三件套只绑一次（都挂在 button 本体，innerHTML 换子节点不影响）。
+    nodesEl.querySelectorAll(':scope > :not(.task-map-node)').forEach(x => x.remove()); // 清「加载卡片…」等占位
+    // ★ 暗色修复批：已领取却显示「未分配」——卡 body.assignee 常空，从 active 派发边反查目标智能体卡标题作认领者
+    const agentTitleOf = new Map(nodes.map(n => [Number(n.id), String(n.title || '')]));
+    const runningAssignee = new Map();
+    (_taskMapState.data.edges || []).forEach(e => {
+      if (String(e.kind) === 'dispatch' && String(e.status || 'active') === 'active') {
+        // 派发边 source=任务卡 / target=智能体卡 → 任务卡的认领者 = 目标智能体卡标题
+        const a = agentTitleOf.get(Number(e.target_id));
+        if (a) runningAssignee.set(Number(e.source_id), a);
+      }
+    });
+    const nodeWanted = new Set();
     nodes.forEach(node => {
       const position = _taskMapState.positions.get(Number(node.id));
       if (!position) return;
@@ -4788,10 +4596,12 @@
       const isReal = /^\d+$/.test(String(node.id)); // ★ 非数字 id（mem-N 动态子卡）不是真实卡片
       // 辅助卡：右上标签显示挂载类型（非 完成/未完成），边框色用类型色
       // ★ 2026-09-18：running 且有认领者 → 标签直显「已领取·智能体名」（实时：SSE claim 事件 → 800ms 防抖重画）
+      // ★ 暗色修复批：body.assignee 空时从 active 派发边反查目标智能体卡标题，避免「已领取」却显「未分配」
+      const runningAs = String(node.status) === 'running' ? (node.assignee || runningAssignee.get(Number(node.id)) || '') : '';
       const status = isAux
         ? { label: AUX_LABELS_LOCAL[auxKindOf.get(node.id)] || '辅助卡', color: (TASK_MAP_LINK_STYLE[auxKindOf.get(node.id)] || { color: '#64748b' }).color }
-        : (String(node.status) === 'running' && node.assignee
-          ? { label: `已领取·${String(node.assignee).slice(0, 14)}`, color: '#f59e0b' }
+        : (String(node.status) === 'running'
+          ? { label: runningAs ? `已领取·${String(runningAs).slice(0, 14)}` : '执行中', color: '#f59e0b' }
           : statusBucket(node.status));
       const progress = Number(node.meta && node.meta.progress && node.meta.progress.percent);
       const progressText = Number.isFinite(progress) ? `${Math.round(progress)}%` : '';
@@ -4806,10 +4616,61 @@
       // ★ 2026-10-05 批1：失败原因贴到卡上（本会话 SSE 收到的 detail），不再只有一张悄悄变红的卡
       const failDetail = String(node.status) === 'failed' ? (_failReason.get(Number(node.id)) || '') : '';
       const failTag = failDetail ? ` ⚠ ${esc(failDetail.slice(0, 34))}` : '';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'task-map-node';
-      button.dataset.cardId = String(node.id);
+      // ★ 2026-10-05 动效批：受限模式补防 —— 派发入口（⚡）按 RESTRICTED.cardDispatch 隐藏（此前只有后端 403 兜底）
+      const dispatchBtnHtml = RESTRICTED.cardDispatch ? '' : `<span class="task-map-qbtn" data-q="dispatch" title="派发给智能体卡（选目标 + 按通道执行）">⚡</span>`;
+      const depsBtnHtml = RESTRICTED.cardDispatch ? '' : `<span class="task-map-qbtn" data-q="deps" title="补全依赖并继续派发（LLM 自动补齐/建前置子任务并连线）">🪄</span>`;
+      const html = `
+        <span class="task-map-node-top">
+          <span>#${node.id}${taskId ? ' · ' + esc(taskId) : ''}${nk === 'agent' ? '<span class="task-map-kind-chip">🤖 智能体</span>' : ''}</span>
+          <span class="task-map-node-status">${esc(status.label)}</span>
+        </span>
+        <span class="task-map-node-title">${esc(node.title)}</span>
+        <span class="task-map-node-meta">
+          <span>${esc(isAux ? '' : (node.assignee || (String(node.status) === 'running' ? (runningAs || '执行中') : '未分配')))}</span>
+          <span>${esc(isAux ? '' : (metaTail || kindLabel || ''))}${esc(missingTag)}${failTag}</span>
+        </span>
+        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">＋</span>
+        ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
+          ${nk === 'agent'
+            ? `<span class="task-map-qbtn" data-q="log" title="执行终端：实时看它干活的输出">⌨</span>
+               <span class="task-map-qbtn" data-q="live" title="驾驶直播：桌面软件画面 + 输出">📺</span>
+               <span class="task-map-qbtn" data-q="agentcfg" title="编辑智能体配置（智能体/通道/工作区/模型…）">⚙️</span>`
+            : `<span class="task-map-qbtn" data-q="agent" title="交给智能体干（自动填好任务说明）">🚀</span>
+               ${dispatchBtnHtml}${depsBtnHtml}
+               <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
+               <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>`}
+        </span>` : ''}`;
+      const idStr = String(node.id);
+      nodeWanted.add(idStr);
+      let button = nodesEl.querySelector(`.task-map-node[data-card-id="${idStr}"]`);
+      const isNew = !button;
+      if (isNew) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'task-map-node task-map-node-in'; // 入场动画只在首次创建播一次（diff 复用后不会重放）
+        button.dataset.cardId = idStr;
+        // ★ 2026-09-14：非数字 id 节点（内存/自动匹配的 mem-N 子卡）不是真实卡片，点击/拖拽/右键均跳过，避免 openCardDetail(NaN) 与位置误存
+        const realCard = isReal;
+        button.onclick = (ev) => {
+          if (_taskMapState.suppressClick) return;
+          // ★ P4：悬停快捷条（🚀 交给 Agent / ✅ 完成 / 🔧 工作区）优先于「打开详情」
+          const qb = ev.target && ev.target.closest ? ev.target.closest('.task-map-qbtn') : null;
+          if (qb) { ev.stopPropagation(); void quickCardAction(qb.dataset.q, Number(button.dataset.cardId)); return; }
+          if (!realCard) { toast(`关联子卡「${esc(node.title)}」为动态匹配，点击任务主卡操作`); return; }
+          openCardDetail(Number(button.dataset.cardId));
+        };
+        // ★ 2026-09-13：卡片交互三件套 —— 拖拽定位 / 边框拖出连线 / 富右键菜单
+        button.addEventListener('pointerdown', ev => {
+          if (!realCard) { ev.stopPropagation(); return; } // 非真实卡不拖拽不连线
+          if (ev.button !== 0) return;
+          // ★ P4：快捷按钮按下不进拖拽（否则微小位移会被当成移动节点、suppressClick 吞掉点击）
+          if (ev.target && ev.target.closest && ev.target.closest('.task-map-qbtn')) { ev.stopPropagation(); return; }
+          if (ev.target.classList.contains('task-map-node-link')) { ev.preventDefault(); ev.stopPropagation(); startLinkDraft(Number(button.dataset.cardId)); return; }
+          ev.stopPropagation();
+          dragTaskMapNode(Number(button.dataset.cardId), ev, viewKey);
+        });
+        button.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (realCard) showCardCtxMenu(ev, Number(button.dataset.cardId)); });
+      }
       button.style.left = position.x + 'px';
       button.style.top = position.y + 'px';
       button.style.setProperty('--node-color', status.color);
@@ -4820,66 +4681,103 @@
       }
       button.title = `#${node.id} ${node.title}${failDetail ? `\n失败原因：${failDetail}` : ''}`;
       button.setAttribute('aria-label', `打开卡片 #${node.id} ${node.title}`);
-      // 辅助卡样式（虚线小卡）；注意 classList.add 不接受空串，非 aux 不加类
-      if (isAux) button.classList.add('task-map-node-aux');
-      // ★ 2026-10-05：智能体卡醒目化（用户报「新建后不知是不是智能体卡」）：紫色描边 + 🤖 角标
-      if (nk === 'agent' && !isAux) button.classList.add('task-map-node--agent');
-      button.innerHTML = `
-        <span class="task-map-node-top">
-          <span>#${node.id}${taskId ? ' · ' + esc(taskId) : ''}${nk === 'agent' ? '<span class="task-map-kind-chip">🤖 智能体</span>' : ''}</span>
-          <span class="task-map-node-status">${esc(status.label)}</span>
-        </span>
-        <span class="task-map-node-title">${esc(node.title)}</span>
-        <span class="task-map-node-meta">
-          <span>${esc(isAux ? '' : (node.assignee || '未分配'))}</span>
-          <span>${esc(isAux ? '' : (metaTail || kindLabel || ''))}${esc(missingTag)}${failTag}</span>
-        </span>
-        <span class="task-map-node-link" data-card-id="${node.id}" title="按住拖到目标卡：建立依赖连线" aria-label="拖出连线">＋</span>
-        ${isReal && !isAux ? `<span class="task-map-quick" aria-hidden="true">
-          ${nk === 'agent'
-            ? `<span class="task-map-qbtn" data-q="log" title="执行终端：实时看它干活的输出">⌨</span>
-               <span class="task-map-qbtn" data-q="live" title="驾驶直播：桌面软件画面 + 输出">📺</span>
-               <span class="task-map-qbtn" data-q="agentcfg" title="编辑智能体配置（智能体/通道/工作区/模型…）">⚙️</span>`
-            : `<span class="task-map-qbtn" data-q="agent" title="交给智能体干（自动填好任务说明）">🚀</span>
-               <span class="task-map-qbtn" data-q="dispatch" title="派发给智能体卡（选目标 + 按通道执行）">⚡</span>
-               <span class="task-map-qbtn" data-q="toggle" title="一键完成（已完成的卡点这里重开）">✅</span>
-               <span class="task-map-qbtn" data-q="ws" title="打开工作区：代码变更 + 行级批注">🔧</span>`}
-        </span>` : ''}`;
+      // 辅助卡样式（虚线小卡）/ 智能体卡醒目化（紫描边 + 🤖 角标）——toggle 同时处理复用节点两侧切换
+      button.classList.toggle('task-map-node-aux', isAux);
+      button.classList.toggle('task-map-node--agent', nk === 'agent' && !isAux);
+      if (button.dataset.sig !== html) { button.innerHTML = html; button.dataset.sig = html; }
       if (_taskMapFilter) {
         // 辅助卡过滤跟随宿主卡（自身无状态）
         const hostId = hostOf.get(node.id);
         const ref = (hostId != null && isAux) ? (nodeById.get(hostId) || node) : node;
         // 优先用后端 bucket（三态），aux 无 bucket 时按宿主状态回退三态
         const bkt = node.bucket != null ? node.bucket : (String(ref.status) === 'done' ? 'done' : (['archived', 'cancelled', 'failed'].includes(String(ref.status)) ? 'terminal' : 'open'));
-        if (bkt !== _taskMapFilter) button.style.display = 'none';
+        button.style.display = bkt !== _taskMapFilter ? 'none' : '';
+      } else if (button.style.display === 'none') {
+        button.style.display = ''; // 上次被过滤隐藏、本次无过滤 → 恢复显示
       }
-      // ★ 2026-09-14：非数字 id 节点（内存/自动匹配的 mem-N 子卡）不是真实卡片，点击/拖拽/右键均跳过，避免 openCardDetail(NaN) 与位置误存
-      const realCard = isReal;
-      button.onclick = (ev) => {
-        if (_taskMapState.suppressClick) return;
-        // ★ P4：悬停快捷条（🚀 交给 Agent / ✅ 完成 / 🔧 工作区）优先于「打开详情」
-        const qb = ev.target && ev.target.closest ? ev.target.closest('.task-map-qbtn') : null;
-        if (qb) { ev.stopPropagation(); void quickCardAction(qb.dataset.q, Number(node.id)); return; }
-        if (!realCard) { toast(`关联子卡「${esc(node.title)}」为动态匹配，点击任务主卡操作`); return; }
-        openCardDetail(Number(node.id));
-      };
-      // ★ 2026-09-13：卡片交互三件套 —— 拖拽定位 / 边框拖出连线 / 富右键菜单
-      button.addEventListener('pointerdown', ev => {
-        if (!realCard) { ev.stopPropagation(); return; } // 非真实卡不拖拽不连线
-        if (ev.button !== 0) return;
-        // ★ P4：快捷按钮按下不进拖拽（否则微小位移会被当成移动节点、suppressClick 吞掉点击）
-        if (ev.target && ev.target.closest && ev.target.closest('.task-map-qbtn')) { ev.stopPropagation(); return; }
-        if (ev.target.classList.contains('task-map-node-link')) { ev.preventDefault(); ev.stopPropagation(); startLinkDraft(Number(node.id)); return; }
-        ev.stopPropagation();
-        dragTaskMapNode(Number(node.id), ev, viewKey);
-      });
-      button.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (realCard) showCardCtxMenu(ev, Number(node.id)); });
-      nodesEl.appendChild(button);
+      if (isNew) nodesEl.appendChild(button);
     });
+    nodesEl.querySelectorAll('.task-map-node').forEach(el => { if (!nodeWanted.has(el.dataset.cardId)) el.remove(); });
     taskMapTransform();
   }
 
-  /* —— ★ 2026-09-13：边渲染抽离（整幅重绘 / 拖动增量刷新共用；含状态过滤 + 辅助卡连线样式） —— */
+  /* —— ★ 2026-10-05 动效批：边渲染 diff 化重写 ——
+     旧实现每次 edgesEl.innerHTML='' 整层重建：SSE 每 800ms 重画，任何动画/悬停态都被打断；
+     且 .task-map-edges 根节点 pointer-events:none，右键删线从未真正收到事件。
+     新实现：① 按 key 复用 <g class="task-map-edge">，只增量更新 d/样式，动画不重启；
+             ② 可交互边配一条加宽透明命中 path（pointer-events:stroke），右键删线真正可用；
+             ③ depends/inject 虚线边带 stroke-dashoffset 流动动画（reduced-motion 由站点全局兜底关闭）。 */
+  const _EDGE_FLOW_KINDS = { depends: true, inject: true }; // 带流动动画的虚线边
+  function _dashPeriod(dash) {
+    return String(dash || '').split(/[\s,]+/).reduce((a, x) => a + (Number(x) || 0), 0);
+  }
+  function _setEdgeLineAttrs(line, w) {
+    line.setAttribute('d', w.dstr);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', w.style.color);
+    line.style.color = w.style.color; // 供 CSS drop-shadow(currentColor) 悬停发光取色
+    line.setAttribute('stroke-width', String(w.style.width));
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    line.setAttribute('opacity', w.opacity);
+    if (w.style.dash) line.setAttribute('stroke-dasharray', w.style.dash);
+    else line.removeAttribute('stroke-dasharray');
+    line.setAttribute('marker-end', `url(#taskMapArrow-${w.markerId})`);
+    // 流动动画：虚线沿路径向前流动；速度按虚线周期归一（周期越大一圈走得越远，时长同比拉长）
+    const period = _dashPeriod(w.style.dash);
+    if (w.flow && period > 0) {
+      line.classList.add('edge-flow');
+      line.style.setProperty('--edge-flow-by', String(-period));
+      line.style.animationDuration = (period / 13).toFixed(2) + 's';
+    } else {
+      line.classList.remove('edge-flow');
+      line.style.removeProperty('--edge-flow-by');
+      line.style.removeProperty('animation-duration');
+    }
+  }
+  function _buildTaskMapEdge(key, w, ns) {
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'task-map-edge');
+    g.dataset.key = key;
+    g.dataset.kind = w.kind;
+    g.dataset.src = String(w.s);
+    g.dataset.dst = String(w.d);
+    if (w.hit) {
+      // 加宽透明命中描边：只负责接住鼠标（右键删线/提示），不参与绘制
+      const hit = document.createElementNS(ns, 'path');
+      hit.setAttribute('class', 'task-map-edge-hit');
+      hit.setAttribute('fill', 'none');
+      hit.setAttribute('stroke', 'rgba(0,0,0,0)');
+      hit.setAttribute('stroke-width', '14');
+      hit.setAttribute('stroke-linecap', 'round');
+      hit.setAttribute('vector-effect', 'non-scaling-stroke');
+      hit.style.cursor = 'pointer';
+      hit.addEventListener('contextmenu', w.onCtx);
+      g.appendChild(hit);
+    }
+    const line = document.createElementNS(ns, 'path');
+    line.setAttribute('class', 'task-map-edge-line');
+    // ★ 边带端点身份（s/d 已是「绘制方向」= 前置 → 依赖方）：回归门禁按 path[data-kind]
+    //   核对「依赖边是否真的从左带指向右带」，不能只看像素 —— dataset 同时挂在 g 与 line 上保兼容。
+    line.dataset.kind = w.kind;
+    line.dataset.src = String(w.s);
+    line.dataset.dst = String(w.d);
+    _setEdgeLineAttrs(line, w);
+    if (w.onCtx) line.addEventListener('contextmenu', w.onCtx); // 命中层之外，细线本体也保右键入口（onCtx 判空防 inject 无 id）
+    const title = document.createElementNS(ns, 'title');
+    title.textContent = w.title;
+    line.appendChild(title);
+    g.appendChild(line);
+    return g;
+  }
+  function _updateTaskMapEdge(g, w) {
+    const line = g.querySelector('.task-map-edge-line');
+    const hit = g.querySelector('.task-map-edge-hit');
+    if (line) _setEdgeLineAttrs(line, w);
+    if (hit) hit.setAttribute('d', w.dstr);
+    const title = line && line.querySelector('title');
+    if (title) title.textContent = w.title;
+  }
   function renderTaskMapEdges() {
     const edgesEl = $('#taskMapEdges');
     if (!edgesEl) return;
@@ -4887,11 +4785,12 @@
     const links = _taskMapState.data.links || [];
     const vertical = _taskMapState.vertical;
     const statusOf = new Map(nodes.map(n => [Number(n.id), n.status]));
-    edgesEl.innerHTML = '';
     const ns = 'http://www.w3.org/2000/svg';
-    const defs = document.createElementNS(ns, 'defs');
-    edgesEl.appendChild(defs);
+    // defs/marker：只补缺不重建（marker 无动画，整层重建纯属浪费）
+    let defs = edgesEl.querySelector('defs');
+    if (!defs) { defs = document.createElementNS(ns, 'defs'); edgesEl.appendChild(defs); }
     Object.entries(TASK_MAP_LINK_STYLE).forEach(([kind, style]) => {
+      if (defs.querySelector(`marker[id="taskMapArrow-${kind}"]`)) return;
       const marker = document.createElementNS(ns, 'marker');
       marker.setAttribute('id', `taskMapArrow-${kind}`);
       marker.setAttribute('viewBox', '0 0 10 10');
@@ -4906,6 +4805,13 @@
       marker.appendChild(arrow);
       defs.appendChild(marker);
     });
+    // —— 1. 计算本帧应有的边集合（过滤规则与旧版一致），key 唯一 ——
+    const wanted = new Map();
+    const pushEdge = (keyBase, w) => {
+      let key = keyBase, i = 2;
+      while (wanted.has(key)) key = `${keyBase}#${i++}`;
+      wanted.set(key, w);
+    };
     const kindOfNode = new Map(nodes.map(n => [Number(n.id), String(n.kind)]));
     links.forEach(link => {
       const kind = String(link.kind);
@@ -4931,29 +4837,15 @@
       const target = _taskMapState.positions.get(d);
       if (!source || !target) return;
       const style = TASK_MAP_LINK_STYLE[kind] || { color: '#94a3b8', width: 1.5, dash: '2 4' };
-      const path = document.createElementNS(ns, 'path');
-      path.setAttribute('d', taskMapEdgePath(source, target, vertical));
-      // ★ 2026-10-05 批1：边带端点身份（s/d 已是「绘制方向」= 前置 → 依赖方）。
-      //   排布模式改的是几何，回归门禁要能按类型核对「依赖边是否真的从左带指向右带」，不能只看像素。
-      path.dataset.kind = kind;
-      path.dataset.src = String(s);
-      path.dataset.dst = String(d);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', style.color);
-      path.setAttribute('stroke-width', String(style.width));
-      path.setAttribute('stroke-linecap', 'round');
-      path.setAttribute('vector-effect', 'non-scaling-stroke');
-      path.setAttribute('opacity', '0.78');
-      if (style.dash) path.setAttribute('stroke-dasharray', style.dash);
-      const markerId = TASK_MAP_LINK_STYLE[kind] ? kind : 'relates';
-      path.setAttribute('marker-end', `url(#taskMapArrow-${markerId})`);
-      const title = document.createElementNS(ns, 'title');
-      title.textContent = `${kind === 'depends' ? '依赖' : kind === 'handoff' ? '交接' : kind}${link.context ? ' · ' + link.context : ''}`;
-      path.appendChild(title);
-      // ★ 2026-10-05 并入批：依赖线右键可删（后端 DELETE /api/cards/:id/links?dst_card_id=&kind= 现成；误连有出口）
-      if (kind === 'depends') {
-        path.style.cursor = 'pointer';
-        path.addEventListener('contextmenu', (ev) => {
+      pushEdge(`L:${kind}:${s}:${d}`, {
+        kind, s, d, style,
+        dstr: taskMapEdgePath(source, target, vertical),
+        markerId: TASK_MAP_LINK_STYLE[kind] ? kind : 'relates',
+        opacity: '0.78',
+        flow: !!_EDGE_FLOW_KINDS[kind],
+        hit: kind === 'depends' ? 'depends' : null,
+        // ★ 2026-10-05 并入批：依赖线右键可删（后端 DELETE /api/cards/:id/links 现成；误连有出口）
+        onCtx: kind === 'depends' ? (ev) => {
           ev.preventDefault(); ev.stopPropagation();
           confirmInline('删除这条依赖连线？', async () => {
             const lr = await fetch(`/api/cards/${Number(link.src_id)}/links?dst_card_id=${Number(link.dst_id)}&kind=depends`, { method: 'DELETE' })
@@ -4961,9 +4853,9 @@
             toast(lr && lr.ok ? '已删除连线' : '删除失败');
             renderTaskMap();
           });
-        });
-      }
-      edgesEl.appendChild(path);
+        } : null,
+        title: `${kind === 'depends' ? '依赖' : kind === 'handoff' ? '交接' : kind}${link.context ? ' · ' + link.context : ''}`,
+      });
     });
     // ★ 2026-10-05 并入批：card_edges（派发/注入持久边；status 纯投影，来自 dispatches 真源）
     (_taskMapState.data.edges || []).forEach(e => {
@@ -4975,22 +4867,14 @@
       let key = ek;
       if (ek === 'dispatch') key = st === 'completed' ? 'dispatch_completed' : (st === 'superseded' || st === 'cancelled' ? 'superseded' : 'dispatch');
       const style = TASK_MAP_LINK_STYLE[key] || { color: '#3b82f6', width: 2, dash: '' };
-      const path = document.createElementNS(ns, 'path');
-      path.setAttribute('d', taskMapEdgePath(source, target, vertical));
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', style.color);
-      path.setAttribute('stroke-width', String(style.width));
-      path.setAttribute('stroke-linecap', 'round');
-      path.setAttribute('vector-effect', 'non-scaling-stroke');
-      path.setAttribute('opacity', '0.85');
-      if (style.dash) path.setAttribute('stroke-dasharray', style.dash);
-      path.setAttribute('marker-end', `url(#taskMapArrow-${TASK_MAP_LINK_STYLE[key] ? key : 'dispatch'})`);
-      const title = document.createElementNS(ns, 'title');
-      title.textContent = `${ek === 'inject' ? '前情注入' : '派发'}（${st}） #${s} → #${d}`;
-      path.appendChild(title);
-      if (ek === 'inject' && e.id) {
-        path.style.cursor = 'pointer';
-        path.addEventListener('contextmenu', (ev) => {
+      pushEdge(`E:${e.id || `${ek}:${st}:${s}:${d}`}`, {
+        kind: key, s, d, style,
+        dstr: taskMapEdgePath(source, target, vertical),
+        markerId: TASK_MAP_LINK_STYLE[key] ? key : 'dispatch',
+        opacity: '0.85',
+        flow: !!_EDGE_FLOW_KINDS[ek],
+        hit: (ek === 'inject' || ek === 'dispatch') ? ek : null,
+        onCtx: ek === 'inject' && e.id ? (ev) => {
           ev.preventDefault(); ev.stopPropagation();
           confirmInline('删除这条前情注入连线？', async () => {
             const dr = await fetch(`/api/card-edges/${e.id}`, { method: 'DELETE' })
@@ -4998,43 +4882,79 @@
             toast(dr && dr.ok ? '已删除连线' : ('删除失败：' + ((dr && dr.error) || '')));
             renderTaskMap();
           });
-        });
-      } else if (ek === 'dispatch') {
-        path.addEventListener('contextmenu', (ev) => {
+        } : (ek === 'dispatch' ? (ev) => {
           ev.preventDefault(); ev.stopPropagation();
           toast('派发边是历史链的一部分，不可手删（随派发收口自动翻状态）');
-        });
-      }
-      edgesEl.appendChild(path);
+        } : null),
+        title: `${ek === 'inject' ? '前情注入' : '派发'}（${st}） #${s} → #${d}`,
+      });
     });
+    // —— 2. diff：复用/更新/删除（动画与悬停态因此不被 SSE 重绘打断）——
+    const live = new Map();
+    edgesEl.querySelectorAll('g.task-map-edge').forEach(g => live.set(g.dataset.key, g));
+    wanted.forEach((w, key) => {
+      const g = live.get(key);
+      if (g) _updateTaskMapEdge(g, w);
+      else edgesEl.appendChild(_buildTaskMapEdge(key, w, ns));
+      live.delete(key);
+    });
+    live.forEach(g => g.remove());
   }
 
-  /* —— ★ 2026-09-13：卡片拖动 → 位置持久化（meta.map_pos h/v 分屏保存；后端 POST /api/cards/:id/position）—— */
+  /* —— ★ 2026-09-13：卡片拖动 → 位置持久化（meta.map_pos h/v 分屏保存；后端 POST /api/cards/:id/position）——
+     ★ 2026-10-05 动效批：pointermove 改 rAF 节流（原实现每帧直写 style + 全量重画所有边，卡多必卡）；
+     拖动中只更新与被拖卡相连的边（taskMapUpdateEdgesAround），松手才整幅 diff 刷新。 */
+  /** 只重算与 cardId 相连的边几何（拖动热路径专用；正则按 data-src/dst 精确命中） */
+  function taskMapUpdateEdgesAround(cardId) {
+    const edgesEl = $('#taskMapEdges');
+    if (!edgesEl) return;
+    const posOf = (id) => {
+      const nEl = document.querySelector(`#taskMapNodes .task-map-node[data-card-id="${id}"]`);
+      if (nEl) return { x: parseFloat(nEl.style.left) || 0, y: parseFloat(nEl.style.top) || 0 };
+      return _taskMapState.positions.get(Number(id));
+    };
+    edgesEl.querySelectorAll(`g.task-map-edge[data-src="${cardId}"], g.task-map-edge[data-dst="${cardId}"]`).forEach(g => {
+      const s = posOf(g.dataset.src), d = posOf(g.dataset.dst);
+      if (!s || !d) return;
+      const dstr = taskMapEdgePath(s, d, _taskMapState.vertical);
+      g.querySelectorAll('path').forEach(p => p.setAttribute('d', dstr));
+    });
+  }
   function dragTaskMapNode(cardId, e, viewKey) {
     const el = document.querySelector(`#taskMapNodes .task-map-node[data-card-id="${cardId}"]`);
     if (!el) return;
-    const startLeft = Number(el.style.left) || 0;
-    const startTop = Number(el.style.top) || 0;
+    const startLeft = parseFloat(el.style.left) || 0; // ★ 暗色修复批：原 Number("123px")=NaN 使起点恒 0，卡片跳到画布原点只跟增量（用户报「不跟手」）
+    const startTop = parseFloat(el.style.top) || 0;
     const sx = e.clientX, sy = e.clientY;
     const scale = _taskMapState.scale || 1;
     let moved = false;
+    let raf = 0, lastEv = null;
+    const applyFrame = () => {
+      raf = 0;
+      if (!lastEv) return;
+      el.style.left = (startLeft + (lastEv.clientX - sx) / scale) + 'px';
+      el.style.top = (startTop + (lastEv.clientY - sy) / scale) + 'px';
+      taskMapUpdateEdgesAround(cardId);
+    };
     const move = ev => {
       moved = true;
-      el.style.left = (startLeft + (ev.clientX - sx) / scale) + 'px';
-      el.style.top = (startTop + (ev.clientY - sy) / scale) + 'px';
-      renderTaskMapEdges();
+      lastEv = ev;
+      if (!raf) raf = requestAnimationFrame(applyFrame);
     };
     const up = ev => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       el.classList.remove('dragging');
       // ★ 2026-10-05：手势收尾——清手势标记，补跑被挡下的 SSE 重渲（数据已新）
       _taskMapState.gesture = null;
       if (_taskMapState.renderQueued) { _taskMapState.renderQueued = false; renderTaskMap(); }
       if (!moved) return;
-      const x = Math.round(startLeft + (ev.clientX - sx) / scale);
-      const y = Math.round(startTop + (ev.clientY - sy) / scale);
+      const endX = ev && typeof ev.clientX === 'number' ? ev.clientX : (lastEv ? lastEv.clientX : sx);
+      const endY = ev && typeof ev.clientY === 'number' ? ev.clientY : (lastEv ? lastEv.clientY : sy);
+      const x = Math.round(startLeft + (endX - sx) / scale);
+      const y = Math.round(startTop + (endY - sy) / scale);
       _taskMapState.positions.set(Number(cardId), { x, y, rank: 0 });
       _taskMapState.suppressClick = true;
       setTimeout(() => { _taskMapState.suppressClick = false; }, 60);
@@ -5051,19 +4971,27 @@
     window.addEventListener('pointercancel', up);
   }
 
-  /* —— ★ 2026-09-13：卡片边框拖出连线（depends 依赖边；后端 dependsPathExists 环检测，409 即回显原因）—— */
+  /* —— ★ 2026-09-13：卡片边框拖出连线（depends 依赖边；后端 dependsPathExists 环检测，409 即回显原因）——
+     ★ 2026-10-05 动效批：临时线从硬折线「M src L cursor」改为与正式边同款的贝塞尔曲线，
+     跟随光标 rAF 节流；虚线流动复用 .edge-flow 动画，拖线预览与成品边视觉一致。 */
   function startLinkDraft(srcCardId) {
     const edgesEl = $('#taskMapEdges'), world = $('#taskMapWorld');
     const srcPos = _taskMapState.positions.get(Number(srcCardId));
     if (!edgesEl || !world || !srcPos) return;
     const ns = 'http://www.w3.org/2000/svg';
     const tmp = document.createElementNS(ns, 'path');
+    tmp.setAttribute('class', 'task-map-edge-line edge-flow');
     tmp.setAttribute('fill', 'none');
     tmp.setAttribute('stroke', '#f59e0b');
     tmp.setAttribute('stroke-width', '2');
     tmp.setAttribute('stroke-dasharray', '6 4');
     tmp.setAttribute('vector-effect', 'non-scaling-stroke');
+    tmp.setAttribute('opacity', '0.9');
+    tmp.style.setProperty('--edge-flow-by', '-10'); // 周期 6+4=10
+    tmp.style.animationDuration = '0.77s';
+    tmp.setAttribute('marker-end', 'url(#taskMapArrow-depends)');
     edgesEl.appendChild(tmp);
+    edgesEl.classList.add('task-map-linking'); // 手势期间关掉边命中层，防加宽命中 path 挡住 elementFromPoint 的目标卡检测
     const srcPt = { x: srcPos.x + TASK_MAP_NODE_W, y: srcPos.y + TASK_MAP_NODE_H / 2 };
     let hoverId = null;
     const toWorld = ev => {
@@ -5071,10 +4999,18 @@
       const s = _taskMapState.scale || 1;
       return { x: (ev.clientX - wr.left) / s, y: (ev.clientY - wr.top) / s };
     };
-    const move = ev => {
-      const p = toWorld(ev);
-      tmp.setAttribute('d', `M ${srcPt.x} ${srcPt.y} L ${p.x} ${p.y}`);
-      const elAt = document.elementFromPoint(ev.clientX, ev.clientY);
+    const draftPath = (p) => {
+      const dir = p.x >= srcPt.x ? 1 : -1;
+      const bend = Math.max(46, Math.min(150, Math.abs(p.x - srcPt.x) * 0.45));
+      return `M ${srcPt.x} ${srcPt.y} C ${srcPt.x + dir * bend} ${srcPt.y}, ${p.x - dir * bend} ${p.y}, ${p.x} ${p.y}`;
+    };
+    let raf = 0, lastEv = null;
+    const applyFrame = () => {
+      raf = 0;
+      if (!lastEv) return;
+      const p = toWorld(lastEv);
+      tmp.setAttribute('d', draftPath(p));
+      const elAt = document.elementFromPoint(lastEv.clientX, lastEv.clientY);
       const t = elAt && elAt.closest ? elAt.closest('.task-map-node') : null;
       const newId = t ? Number(t.dataset.cardId) : null;
       const hit = (newId && newId !== Number(srcCardId)) ? newId : null;
@@ -5084,15 +5020,36 @@
         if (hoverId) { const el2 = document.querySelector(`.task-map-node[data-card-id="${hoverId}"]`); if (el2) el2.classList.add('link-target'); }
       }
     };
+    const move = ev => {
+      lastEv = ev;
+      if (!raf) raf = requestAnimationFrame(applyFrame);
+    };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       tmp.remove();
+      edgesEl.classList.remove('task-map-linking');
       document.querySelectorAll('.task-map-node.link-target').forEach(n => n.classList.remove('link-target'));
       // ★ 2026-10-05：连线手势收尾——清手势标记，补跑被挡下的 SSE 重渲
       _taskMapState.gesture = null;
       if (_taskMapState.renderQueued) { _taskMapState.renderQueued = false; renderTaskMap(); }
       if (hoverId) {
+        // ★ 2026-10-07（改进方案 P0②）「连线即派发」手势：任务卡拖线落到智能体卡不是建依赖边
+        //   （后端对 dst=agent 也会 400 拒——智能卡没有可完成的任务流），而是唤起派发确认层
+        //   （预填目标）。确认才真正派发，取消不留任何边——交互成本还给确认门，不放开连线建派发边。
+        const nodes = _taskMapState.data.nodes || [];
+        const srcN = nodes.find(n => Number(n.id) === Number(srcCardId));
+        const dstN = nodes.find(n => Number(n.id) === Number(hoverId));
+        if (srcN && String(srcN.kind) === 'agent') {
+          // ★ 2026-10-07（改进方案 P1⑤ 前端镜像）：智能体卡拖不出依赖线（后端已 400 拒，这里免一跳）
+          toast('智能体卡不参与依赖线——要把任务交给它，请从任务卡拖线过来唤起派发');
+          return;
+        }
+        if (srcN && dstN && String(srcN.kind) === 'task' && String(dstN.kind) === 'agent') {
+          dispatchCardToAgent(Number(srcCardId), hoverId);
+          return;
+        }
         fetch(`/api/cards/${srcCardId}/links`, {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ dst_card_id: hoverId, kind: 'depends' }),
@@ -5148,6 +5105,7 @@
     if (kind === 'live') { agentCardLive(id); return; }
     if (kind === 'agentcfg') { editAgentProfileFromCard(id); return; }
     if (kind === 'dispatch') { dispatchCardToAgent(id); return; }
+    if (kind === 'deps') { completeDepsThenDispatch(id); return; }
     const r = await fetch(`/api/cards/${id}`).then(x => x.json()).catch(() => null);
     if (!r || !r.card) { toast('卡片不存在'); return; }
     const card = r.card;
@@ -5176,15 +5134,17 @@
     // ★ 2026-10-05 并入批：按卡片类型档位列「改型/派发/注入/编辑配置」项（card_types 注册表判档，缺省按内置四种）
     const ck = String(card.kind || '');
     const ckDef = _cardTypes.list.find(t => t.type_key === ck);
-    const canDsp = ckDef ? !!ckDef.can_dispatch_out : (ck === 'task');
-    const canInj = ckDef ? !!ckDef.can_inject_out : (ck === 'handoff');
+    // ★ 2026-10-05 动效批：受限模式补防 —— 派发/注入入口按 RESTRICTED 能力位隐藏（此前只有后端 403 兜底）
+    const canDsp = !RESTRICTED.cardDispatch && (ckDef ? !!ckDef.can_dispatch_out : (ck === 'task'));
+    const canInj = !RESTRICTED.cardDispatch && (ckDef ? !!ckDef.can_inject_out : (ck === 'handoff'));
     menu.innerHTML = `
       <div class="context-menu-title">卡片 #${card.id} · ${esc(String(card.title || '').slice(0, 18))}</div>
       <div class="context-menu-item" data-cardact="claim">✔ 认领</div>
       <div class="context-menu-item" data-cardact="detail">👁 打开详情</div>
       <div class="context-menu-item" data-cardact="link">➡ 拖出依赖连线</div>
       ${ck !== 'agent' ? `<div class="context-menu-item" data-cardact="retype">🔄 改卡片类型…</div>
-      ${canDsp ? `<div class="context-menu-item" data-cardact="dispatch">⚡ 派发给…（交给智能体干）</div>` : ''}
+      ${canDsp ? `<div class="context-menu-item" data-cardact="dispatch">⚡ 派发给…（交给智能体干）</div>
+      <div class="context-menu-item" data-cardact="deps">🪄 补全依赖（LLM 补前置 + 连线，然后可派）</div>` : ''}
       ${canInj ? `<div class="context-menu-item" data-cardact="inject">🔗 注入前情…（把本卡内容喂给下游任务）</div>` : ''}` : ''}
       ${ck === 'agent' ? `<div class="context-menu-item" data-cardact="agentcfg">⚙️ 编辑智能体配置</div>` : ''}
       ${AUX_CARD_TYPES.map(([k, l]) => `<div class="context-menu-item" data-cardact="aux" data-aux="${k}">📎 挂${l}</div>`).join('')}
@@ -5216,6 +5176,8 @@
           changeCardKind(cardId);
         } else if (act === 'dispatch') {
           dispatchCardToAgent(cardId);
+        } else if (act === 'deps') {
+          completeDepsThenDispatch(cardId);
         } else if (act === 'inject') {
           injectCardTo(cardId);
         } else if (act === 'agentcfg') {
@@ -5228,7 +5190,8 @@
           if (!av) return;
           const t = (av.t || '').trim();
           if (!t) return;
-          const cr = await fetch('/api/cards', { ...H, body: JSON.stringify({ title: t, kind: 'aux' }) }).then(x => x.json().catch(() => ({})));
+          // 辅助卡显式落「待分流」桶：不随人工建卡默认 todo 的改动漂移（aux 卡不派发，状态只影响归组）
+          const cr = await fetch('/api/cards', { ...H, body: JSON.stringify({ title: t, kind: 'aux', status: 'triage' }) }).then(x => x.json().catch(() => ({})));
           if (!cr.ok || !cr.id) { toast('辅助卡创建失败：' + (cr.error || '')); return; }
           const lr = await fetch(`/api/cards/${cardId}/links`, { ...H, body: JSON.stringify({ dst_card_id: cr.id, kind }) }).then(x => x.json().catch(() => ({})));
           if (!lr.ok) { toast('连线失败：' + (lr.error || '')); return; }
@@ -5382,7 +5345,7 @@
   async function openArchiveCenter() {
     const j = await fetch('/api/cards/archive/grouped?by=topic').then(r => r.json()).catch(() => null);
     if (!j || !j.ok) { toast('归档数据读取失败'); return; }
-    if (!j.total) { _cockpitModal('归档中心', '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">暂无归档任务</div>'); return; }
+    if (!j.total) { _cockpitModal('归档中心', '<div class="empty-inline" style="padding:8px 0">暂无归档任务</div>'); return; }
     const fmt = t => (t ? String(t).slice(0, 10) : '—');
     const body = j.groups.map(g => `
       <div style="margin-bottom:10px;border:1px solid var(--border-glass);border-radius:10px;overflow:hidden">
@@ -5579,23 +5542,23 @@
     const mems = (card.memories || []).map(m => `记忆#${m.memory_id}（${m.relation}）`).join('<br>') || '—';
     $('#modalBody').innerHTML = `
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border-glass);padding-bottom:10px;margin-bottom:12px;flex-wrap:wrap">
-        ${[['body','📋 正文'],['workspace','🔧 工作区'],['github','🌐 GitHub'],['comments','💬 评论'],['events','🕒 事件'],['links','🔗 关联']].map(([k, t]) => `<button class="btn-ghost" data-ctab="${k}" style="padding:6px 14px;font-size:12px;${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
+        ${[['body','📋 正文'],['workspace','🔧 工作区'],['github','🌐 GitHub'],['comments','💬 评论'],['events','🕒 事件'],['links','🔗 关联']].map(([k, t]) => `<button class="btn-ghost btn-sm" data-ctab="${k}" style="${_cardTab === k ? 'background:rgba(65,187,200,0.15);color:var(--accent-cyan);border-color:rgba(65,187,200,0.35)' : ''}">${t}${k === 'comments' ? `<span id="commentDot" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block"></span>` : ''}</button>`).join('')}
       </div>
       <div id="cardTabBody"></div>
       <div class="cw-actions">
         <button class="btn-primary" id="cardAgentBtn" title="跳到智能体页并预填本卡任务说明（不自动发送，你过目后回车）">🚀 交给智能体</button>
         <button class="btn-ghost" id="cardTermBtn" title="打开准终端，并把工作目录切到本卡的工作区">⌨ 终端</button>
         <button class="btn-ghost" id="cardDesignBtn" title="打开 Design Mode：去真实浏览器点元素，抓 HTML+CSS+截图">🎯 拾取</button>
-        <button class="btn-ghost" id="cardClaimBtn" style="padding:6px 14px;font-size:12px">✔ 认领</button>
-        <button class="btn-ghost" id="cardPushMcpBtn" style="padding:6px 14px;font-size:12px;${_mcpBound ? '' : 'opacity:0.45;cursor:not-allowed'}" title="${_mcpBound ? '把本卡当前状态/标题回写到绑定的 MCP 任务记忆' : '该卡未绑定 MCP 任务'}" ${_mcpBound ? '' : 'disabled'}>⚡ 同步到 MCP</button>
+        <button class="btn-ghost btn-sm" id="cardClaimBtn">✔ 认领</button>
+        <button class="btn-ghost btn-sm" id="cardPushMcpBtn" style="${_mcpBound ? '' : 'opacity:0.45;cursor:not-allowed'}" title="${_mcpBound ? '把本卡当前状态/标题回写到绑定的 MCP 任务记忆' : '该卡未绑定 MCP 任务'}" ${_mcpBound ? '' : 'disabled'}>⚡ 同步到 MCP</button>
         <span style="flex:1"></span>
-        <button class="btn-ghost" id="cardCloseBtn" style="padding:6px 14px;font-size:12px">关闭（Esc）</button>
+        <button class="btn-ghost btn-sm" id="cardCloseBtn">关闭（Esc）</button>
       </div>
       <div class="cw-status" role="group" aria-label="改卡片状态">
         <span class="cw-status-label">改状态（当前：${esc(meta[1])}）：</span>
         ${cwTargets(card.status).map(s => `<button class="cw-status-btn" data-st="${s}" title="改成${esc(CW_STATUS_LABEL[s] || s)}">${esc(CW_STATUS_LABEL[s] || s)}</button>`).join('') || '<span class="cw-status-label">已是终态，不能再流转</span>'}
         <span style="flex:1"></span>
-        <button class="btn-danger" id="cardDeleteBtn" style="padding:4px 12px;font-size:11px">🗑 删除卡片</button>
+        <button class="btn-danger btn-xs" id="cardDeleteBtn">🗑 删除卡片</button>
       </div>`;
     const bodyBox = $('#cardTabBody');
     const renderBody = () => {
@@ -5619,10 +5582,10 @@
       const cs = cj.comments || [];
       bodyBox.innerHTML = `
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">评论（${cs.length}）</div>
-        ${cs.length ? cs.map(cm => `<div style="padding:8px 10px;background:var(--bg-card);border:1px solid rgba(0,0,0,0.06);border-radius:8px;margin-bottom:6px;font-size:12px"><div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">${esc(cm.author)} · ${fmtDate(cm.created_at)}</div><div style="color:var(--text-primary);white-space:pre-wrap">${esc(cm.body)}</div></div>`).join('') : '<div style="padding:10px 0;color:var(--text-muted);font-size:12px">暂无评论</div>'}
+        ${cs.length ? cs.map(cm => `<div style="padding:8px 10px;background:var(--bg-card);border:1px solid rgba(0,0,0,0.06);border-radius:8px;margin-bottom:6px;font-size:12px"><div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">${esc(cm.author)} · ${fmtDate(cm.created_at)}</div><div style="color:var(--text-primary);white-space:pre-wrap">${esc(cm.body)}</div></div>`).join('') : '<div class="empty-inline" style="padding:10px 0">暂无评论</div>'}
         <div style="display:flex;gap:8px;margin-top:10px">
           <textarea id="cardCommentInput" rows="2" placeholder="写评论（进展 / 交接 / secret 内容会被拒绝）" style="flex:1;padding:8px 10px;border-radius:8px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-glass);font-size:12px"></textarea>
-          <button class="btn-ghost" id="cardCommentSendBtn" style="padding:6px 14px;font-size:12px">发送</button>
+          <button class="btn-ghost btn-sm" id="cardCommentSendBtn">发送</button>
         </div>`;
       const send = $('#cardCommentSendBtn');
       if (send) send.onclick = async () => {
@@ -5639,7 +5602,7 @@
       const evs = ej.events || [];
       bodyBox.innerHTML = `
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">事件时间线（${evs.length}）</div>
-        ${evs.length ? evs.map(ev => `<div style="display:flex;gap:8px;padding:4px 0;font-size:12px"><span class="mono" style="color:var(--text-muted);font-size:10px;white-space:nowrap">${fmtDate(ev.created_at)}</span><span style="color:var(--text-primary)">${esc(ev.action)}${ev.from_status ? ` <span style="color:var(--text-muted)">${esc(ev.from_status)} → ${esc(ev.to_status || '')}</span>` : ''}</span></div>`).join('') : '<div style="padding:10px 0;color:var(--text-muted);font-size:12px">暂无事件</div>'}`;
+        ${evs.length ? evs.map(ev => `<div style="display:flex;gap:8px;padding:4px 0;font-size:12px"><span class="mono" style="color:var(--text-muted);font-size:10px;white-space:nowrap">${fmtDate(ev.created_at)}</span><span style="color:var(--text-primary)">${esc(ev.action)}${ev.from_status ? ` <span style="color:var(--text-muted)">${esc(ev.from_status)} → ${esc(ev.to_status || '')}</span>` : ''}</span></div>`).join('') : '<div class="empty-inline" style="padding:10px 0">暂无事件</div>'}`;
     };
     /* ══ ★ Orca 融合 P1（2026-10-03 CLAIM §5）：工作区 Tab ══
        worktree 编排（创建/清理，共享优先原则）+ 只读 diff（手写 unified 解析，零第三方依赖）
@@ -5694,7 +5657,7 @@
         const g2 = r.t !== 'del' ? r.line : '';
         const keys = [r.file + '|' + r.line];
         if (r.t === 'ctx') keys.push(r.file + '|' + r.lineOld);
-        html += `<div class="wb-line ${cls}"><span class="wb-gutter">${g1 === '' ? '' : esc(String(g1))}</span><span class="wb-gutter">${g2 === '' ? '' : esc(String(g2))}</span><code>${esc(r.text)}</code><button class="wb-mark" data-file="${esc(r.file || '')}" data-line="${r.line}" data-side="${r.side}" aria-label="批注 ${esc(r.file || '')} 第${r.line}行">✎</button></div>`;
+        html += `<div class="wb-line ${cls}"><span class="wb-gutter">${g1 === '' ? '' : esc(String(g1))}</span><span class="wb-gutter">${g2 === '' ? '' : esc(String(g2))}</span><code>${esc(r.text)}</code><button class="wb-mark" data-file="${esc(r.file || '')}" data-line="${r.line}" data-side="${r.side}" aria-label="批注 ${esc(r.file || '')} 第${r.line}行"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></div>`;
         const seen = new Set();
         for (const k of keys) {
           for (const a of (annByKey[k] || [])) {
@@ -5718,8 +5681,8 @@
           <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">批注 ${esc(file)}:${line}（${side ? '新行' : '旧行'}）</div>
           <textarea aria-label="行级批注内容" placeholder="写给智能体的意见（存入卡片评论，可一键回传）"></textarea>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
-            <button class="btn-ghost" data-wb-cancel style="padding:4px 12px;font-size:11px">取消</button>
-            <button class="btn-primary" data-wb-ok style="padding:4px 12px;font-size:11px">提交批注</button>
+            <button class="btn-ghost btn-xs" data-wb-cancel>取消</button>
+            <button class="btn-primary btn-xs" data-wb-ok>提交批注</button>
           </div>`;
         row.after(form);
         const ta = form.querySelector('textarea');
@@ -5816,12 +5779,12 @@
         <div class="wb-gh-form" style="align-items:flex-start">
           ${linked ? `
             <span style="font-size:11px;line-height:26px">本卡关联：<a href="${esc(linked.url)}" target="_blank" rel="noopener">${esc(linked.ref)}</a> ${badge(linked.state)}</span>
-            <button class="btn-ghost" id="wbGhRefresh" style="padding:4px 10px;font-size:11px">刷新状态</button>
-            <button class="btn-ghost" id="wbGhUnlink" style="padding:4px 10px;font-size:11px">解除关联</button>
+            <button class="btn-ghost btn-xs" id="wbGhRefresh">刷新状态</button>
+            <button class="btn-ghost btn-xs" id="wbGhUnlink">解除关联</button>
             ${ghState && ghState.stale ? `<div class="wb-gh-meta" style="color:#f59e0b">状态刷新失败：${esc(ghState.error || '网络/权限问题')}（显示最后已知态）</div>` : ''}
           ` : `
             <input id="wbGhLinkUrl" placeholder="粘贴 issue/PR 链接关联到本卡，例：https://github.com/owner/repo/issues/1" aria-label="GitHub issue 或 PR 链接" style="flex:1 1 300px" autocomplete="off" spellcheck="false">
-            <button class="btn-ghost" id="wbGhLink" style="padding:4px 12px;font-size:11px">关联本卡</button>
+            <button class="btn-ghost btn-xs" id="wbGhLink">关联本卡</button>
           `}
         </div>
         ${cfg.repo ? `
@@ -5927,7 +5890,7 @@
             本仓现有隔离区：${others.length ? others.map(w => esc(w.name)).join('、') : '无'}${policy ? `<br><span style="opacity:.75">${esc(policy)}</span>` : ''}
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="btn-ghost" id="wbCreateBtn" style="padding:6px 14px;font-size:12px">创建工作区并关联本卡</button>
+            <button class="btn-ghost btn-sm" id="wbCreateBtn">创建工作区并关联本卡</button>
           </div>`;
         const cb = $('#wbCreateBtn');
         if (cb) cb.onclick = async () => {
@@ -6010,6 +5973,7 @@
     let lastCount = (await fetch(`/api/cards/${id}/comments`).then(x => x.json()).catch(() => ({ comments: [] }))).comments?.length ?? 0;
     stopCardPoll();
     _cardPollTimer = setInterval(async () => {
+      if (_pageHidden()) return; // E6：后台标签页不拉评论轮询
       const cj = await fetch(`/api/cards/${id}/comments?poll=1`).then(x => x.json()).catch(() => ({ comments: [] }));
       const c = (cj.comments || []).length;
       if (c > lastCount && _cardTab !== 'comments') { const dot = $('#commentDot'); if (dot) dot.style.display = 'inline-block'; }
@@ -6235,8 +6199,8 @@
         </details>
         <div style="font-size:11px;color:var(--text-muted);margin-top:6px">高级栏留空 = 保存时不动已有配置（PUT 整替换语义，防误清空）。直控/驾驶通道需登录态/选择器配好，未配会如实显示「未连通」；拿不准就选「队列」。</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
-          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">保存</button>
+          <button data-cancel class="btn-ghost btn-sm">取消</button>
+          <button data-ok class="btn-primary btn-sm">保存</button>
         </div>
       </div>`;
       // ★ 2026-10-05 补挂载：原实现 createElement + innerHTML + 绑事件后**从不 appendChild**，
@@ -6375,14 +6339,17 @@
         <input data-k="type_key" style="${inStyle}" placeholder="例：milestone">
         <label style="display:block;font-size:12px;color:var(--text-muted);margin:8px 0 4px">颜色（可选）</label>
         <input data-k="color" style="${inStyle}" placeholder="例：#8f7a3d（可空）">
+        <div style="font-size:12px;color:var(--text-muted);margin:10px 0 4px">建卡模板（可选）：该类型的卡创建时自动带标题前缀和正文骨架</div>
+        <input data-k="tpl_prefix" style="${inStyle}" placeholder="标题前缀，例：【里程碑】">
+        <textarea data-k="tpl_body" rows="3" style="${inStyle};margin-top:6px" placeholder="正文骨架，例：目标：&#10;验收标准："></textarea>
         <div style="font-size:12px;color:var(--text-muted);margin:8px 0 4px">连线能力档位（不勾 = 纯文档节点，不参与任何连线）</div>
         <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_dispatch_out"> 可发起派发（→ 智能体卡）</label>
         <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_dispatch_in"> 可接收派发</label>
         <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_inject_out"> 可发起前情注入（→ 任务卡）</label>
         <label style="font-size:12px;margin:4px 0"><input type="checkbox" data-k="can_inject_in"> 可接收前情注入</label>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button data-cancel class="btn-ghost" style="padding:6px 14px;font-size:12px">取消</button>
-          <button data-ok class="btn-primary" style="padding:6px 16px;font-size:12px">创建</button>
+          <button data-cancel class="btn-ghost btn-sm">取消</button>
+          <button data-ok class="btn-primary btn-sm">创建</button>
         </div>
       </div>`;
       const q = k => ov.querySelector(`[data-k="${k}"]`);
@@ -6398,6 +6365,11 @@
           can_inject_out: q('can_inject_out').checked ? 1 : 0,
           can_inject_in: q('can_inject_in').checked ? 1 : 0,
         };
+        // ★ 2026-10-07（P2⑦）建卡模板：填了前缀/骨架才写 meta.template，端点透传落 card_types.meta
+        const tpl = {};
+        if (q('tpl_prefix').value.trim()) tpl.title_prefix = q('tpl_prefix').value.trim();
+        if (q('tpl_body').value.trim()) tpl.body_skeleton = q('tpl_body').value;
+        if (Object.keys(tpl).length) body.meta = { template: tpl };
         if (!body.type_key || !body.label) { toast('显示名与标识必填'); return; }
         const r = await fetch('/api/card-types', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
@@ -6424,7 +6396,7 @@
     if (!host) return;
     const panel = document.createElement('div');
     panel.id = 'taskBoardGuide';
-    panel.style.cssText = 'margin:0 0 12px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:10px;background:rgba(255,255,255,.5);padding:10px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9';
+    panel.style.cssText = 'margin:0 0 12px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:10px;background:var(--surface-glass,rgba(255,255,255,.55));backdrop-filter:blur(10px);padding:10px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9';
     const L = [
       ['① 建任务', '点画布左侧 ＋（或顶栏「新建卡片」）→ 先选类型（任务/智能体/交接/文档）→ 填标题'],
       ['② 连任务', '按住卡片右侧的 ＋ 拖到另一张卡 = 依赖连线；右键连线可删'],
@@ -6453,13 +6425,45 @@
     const btn = document.createElement('button');
     btn.id = 'taskMapPlusBtn';
     btn.type = 'button';
+    btn.className = 'task-map-plus'; // ★ 2026-10-05 动效批：样式收敛到 CSS（含 :hover），不再内联 cssText + JS 模拟 hover
     btn.textContent = '＋';
-    btn.title = '新建卡片：先选类型（任务/智能体/交接/文档/自定义），卡片落到地图（当前视图中心）';
+    btn.title = '新建卡片：点按=选类型建卡（落到当前视图中心）；按住拖到画布空白处松手=原地建卡';
     btn.setAttribute('aria-label', '新建卡片');
-    btn.style.cssText = 'position:absolute;left:10px;top:10px;z-index:30;width:36px;height:36px;border-radius:50%;border:1px solid var(--border-glass,rgba(0,0,0,.15));background:var(--surface-glass,#fff);color:var(--text-primary);font-size:18px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)';
-    btn.onmouseenter = () => { btn.style.outline = '2px solid #06b6d4'; };
-    btn.onmouseleave = () => { btn.style.outline = 'none'; };
-    btn.onclick = () => createCard();
+    // ★ 2026-10-07（P2⑧）拖拽即建卡：点按=原 createCard 流程；按住拖过 6px 阈值→画布空白处松手=原地建卡。
+    //   拖拽后的 click 事件用 suppressClick 标记吞掉（与节点拖拽同款手法），防止拖完又弹出建卡弹窗。
+    let suppressClick = false;
+    btn.onclick = () => {
+      if (suppressClick) { suppressClick = false; return; }
+      createCardAt();
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const sx = e.clientX, sy = e.clientY;
+      let moved = false;
+      const mv = (ev) => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) { moved = true; btn.style.opacity = '0.55'; }
+      };
+      const up = (ev) => {
+        window.removeEventListener('pointermove', mv);
+        window.removeEventListener('pointerup', up);
+        btn.style.opacity = '';
+        if (!moved) return; // 普通点按：交给 onclick 走原流程
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 200);
+        const world = $('#taskMapWorld');
+        if (!world) return;
+        const wr = world.getBoundingClientRect();
+        if (ev.clientX < wr.left || ev.clientX > wr.right || ev.clientY < wr.top || ev.clientY > wr.bottom) {
+          toast('松手位置在画布外——拖到画布空白处才能原地建卡');
+          return;
+        }
+        const s = _taskMapState.scale || 1;
+        const worldPos = { x: (ev.clientX - wr.left) / s, y: (ev.clientY - wr.top) / s };
+        createCardAt(worldPos);
+      };
+      window.addEventListener('pointermove', mv);
+      window.addEventListener('pointerup', up);
+    });
     canvas.appendChild(btn);
     const sync = () => { btn.style.display = (RESTRICTED && RESTRICTED.cardCreate) ? 'none' : ''; };
     sync();
@@ -6468,13 +6472,27 @@
 
   /** 新建卡片（点选式：先选类型+标题 → 按类型走不同端点；智能体卡自动进配置向导。
    *  替代旧「单字段建 task 卡」——卡片类型不再随意。RESTRICTED=1 时端点拒绝，toast 透出。 */
-  async function createCard() {
+  /** 新建卡片（点选式：先选类型+标题 → 按类型走不同端点；智能体卡自动进配置向导。
+   *  ★ 2026-10-07（P2⑧）：支持指定落点 worldPos——画布「＋」按住拖到空白处松手=原地建卡；点按=视图中心。
+   *  位置走 POST /position（'h' 桶，读侧唯一认的桶）——原来写 meta.map_pos.c 是已废弃死桶，
+   *  建卡实际落自动布局位，按钮「落到当前视图中心」的承诺一直没兑现，此处一并修掉。
+   *  类型模板（P2⑦）在后端 POST /api/cards 单点应用。 */
+  async function createCardAt(worldPos = null) {
     await loadCardTypes();
     const typeOpts = _cardTypes.list.map(t => ({ value: t.type_key, label: t.builtin ? t.label : `${t.label}（自定义）` }));
     typeOpts.push({ value: '__new__', label: '＋ 新建自定义类型…' });
+    // ★ 2026-10-07（改进方案 P1③）「创建即派发」：表单加可选派发目标（列地图上的智能体卡并标注通道）。
+    //   选了目标且类型是 task → 建卡后自动走派发确认层（预填目标）；非 task 类型选了目标 → 建卡成功但不派发并说明。
+    const agentNodes = ((_taskMapState.data || {}).nodes || []).filter(n => String(n.kind) === 'agent');
+    const CHN = { cli: '直控', cdp: '驾驶', queue: '队列' };
+    const dispatchField = agentNodes.length ? [{
+      key: 'dispatch_to', type: 'select', label: '创建后派发给（可选）',
+      options: [{ value: '', label: '暂不派发' }, ...agentNodes.map(n => ({ value: String(n.id), label: `${n.title || ('#' + n.id)}（${CHN[n.profileChannel] || '队列'}）` }))],
+    }] : [];
     const v = await askForm({ title: '新建卡片', fields: [
       { key: 'kind', type: 'select', label: '卡片类型', options: typeOpts, value: 'task', required: true },
       { key: 'title', label: '卡片标题', placeholder: '例：梳理记忆检索链路', required: true },
+      ...dispatchField,
     ], okText: '创建' });
     if (!v) return;
     let kind = v.kind;
@@ -6488,14 +6506,33 @@
       if (ok) refreshCurrentTaskView();
       return;
     }
-    const title = (v.title || '').trim();
-    if (!title) return;
-    const res = await fetch('/api/cards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, kind, meta: { map_pos: { c: taskMapViewCenter() } } }) });
+    const rawTitle = (v.title || '').trim();
+    if (!rawTitle) return;
+    // 类型模板（P2⑦）由后端 POST /api/cards 单点应用（标题前缀+正文骨架，幂等），前端不重复套
+    const res = await fetch('/api/cards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: rawTitle, kind, status: 'todo' }) });
     const j = await res.json().catch(() => ({}));
     const kindLabel = (_cardTypes.list.find(t => t.type_key === kind) || {}).label || kind;
     toast(res.ok ? `已建卡片 #${j.id}（${kindLabel}）` : (`创建失败：${j.error || res.status}`));
-    if (res.ok) refreshCurrentTaskView();
+    if (res.ok) {
+      if (worldPos) {
+        // 指定落点：走 /position（读侧只认 h/v 桶）；画布边缘留 8px 内边距
+        const x = Math.max(8, Math.round(worldPos.x - TASK_MAP_NODE_W / 2));
+        const y = Math.max(8, Math.round(worldPos.y - TASK_MAP_NODE_H / 2));
+        _taskMapState.positions.set(Number(j.id), { x, y, rank: 0 }); // 先内存生效，持久化失败也不闪位
+        await fetch(`/api/cards/${j.id}/position`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ view: 'h', x, y }) }).catch(() => { /* 静默降级：仅内存生效 */ });
+      }
+      const dst = v.dispatch_to ? Number(v.dispatch_to) : 0;
+      if (dst && kind === 'task') {
+        await refreshCurrentTaskView(); // 让预检能在地图数据里看到新卡（todo、无依赖）再走确认层
+        dispatchCardToAgent(j.id, dst);
+      } else if (dst) {
+        toast('只有任务卡能派发——卡片已按所选类型创建，未派发', 4200);
+      } else {
+        refreshCurrentTaskView();
+      }
+    }
   }
+  async function createCard() { return createCardAt(); }
 
   /* ===== 2026-10-05 并入批：派发/注入/改型/实时窗口（端点全部现成，前端只做编排与诚实降级）===== */
 
@@ -6512,7 +6549,7 @@
     const ov = document.createElement('div');
     _agentPopOv = ov;
     ov.style.cssText = 'position:fixed;right:16px;top:64px;z-index:10000;width:340px;max-width:94vw;background:var(--surface-glass,#fff);backdrop-filter:blur(14px);border:1px solid var(--border-glass,rgba(0,0,0,.12));border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.3);padding:14px 16px;box-sizing:border-box';
-    ov.innerHTML = `<div style="display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px"><span>${esc(title)}</span><button style="margin-left:auto;background:none;border:none;font-size:14px;color:var(--text-muted);cursor:pointer" aria-label="关闭">✕</button></div><div class="ap-body">${bodyHtml}</div>${footerBtns.length ? `<div style="display:flex;gap:8px;margin-top:10px">${footerBtns.map(b => `<button class="btn-ghost ap-btn" data-act="${b.act}" style="padding:4px 12px;font-size:12px">${esc(b.label)}</button>`).join('')}</div>` : ''}`;
+    ov.innerHTML = `<div style="display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px"><span>${esc(title)}</span><button style="margin-left:auto;background:none;border:none;font-size:14px;color:var(--text-muted);cursor:pointer" aria-label="关闭">✕</button></div><div class="ap-body">${bodyHtml}</div>${footerBtns.length ? `<div style="display:flex;gap:8px;margin-top:10px">${footerBtns.map(b => `<button class="btn-ghost btn-xs ap-btn" data-act="${b.act}">${esc(b.label)}</button>`).join('')}</div>` : ''}`;
     document.body.appendChild(ov);
     ov.querySelector('div > button[aria-label="关闭"]').onclick = closeAgentPops;
     return ov;
@@ -6539,17 +6576,54 @@
     const ST = { triage: '待分流', todo: '待办', ready: '可认领', running: '执行中', review: '待验收', done: '已完成', failed: '失败', cancelled: '已取消', blocked: '受阻', archived: '已归档' };
     const st = String(src.status || '');
     if (st !== 'todo' && st !== 'ready') {
-      agentOverlay('⛔ 还不能派发', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">这张卡 <b>#${srcCardId}</b> 当前是「${esc(ST[st] || st)}」。<br>只有「待办 / 可认领」的卡能派给智能体——先把状态流转过去再派。</div>`);
+      agentOverlay('⛔ 还不能派发', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">这张卡 <b>#${srcCardId}</b> 当前是「${esc(ST[st] || st)}」。<br>只有「待办 / 可认领」的卡能派给智能体——人工建的卡默认就是待办；若是采集导入的「待分流」卡，先把状态流转到「待办」再派。</div>`);
       return true;
     }
     const byId = new Map(nodes.map(n => [Number(n.id), n]));
-    const pend = (_taskMapState.data.links || [])
+    const pendRows = (_taskMapState.data.links || [])
       .filter(l => l && l.kind === 'depends' && Number(l.src_id) === Number(srcCardId) && Number(l.dst_id) > 0)
       .map(l => byId.get(Number(l.dst_id)))
       .filter(d => !d || !['done', 'archived'].includes(String(d.status)))
-      .map(d => d ? `#${d.id}「${esc(String(d.title || '').slice(0, 16))}」（${esc(ST[d.status] || d.status)}）` : '#?（依赖卡已删除）');
-    if (pend.length) {
-      agentOverlay('⛔ 还不能派发', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">依赖还没完成，派了也拿不到完整上下文：<br>${pend.join('<br>')}<br><br>完成它们，或右键那条依赖线删除后再派。</div>`);
+      .map(d => {
+        if (!d) return { dstId: 0, dead: true, label: '#?（依赖卡已删除——这条线永远无法满足）' };
+        const kind = String(d.kind || 'task');
+        // ★ 根治二版：只有任务卡（和天生 done 的交接卡）能当前置；其余（智能体/辅助/文档…）全是死线
+        const KIND_LABEL = { agent: '智能体卡', aux: '辅助卡', doc: '文档卡', handoff: '交接卡' };
+        const dead = !['task', 'handoff'].includes(kind);
+        return {
+          dstId: Number(d.id), dead,
+          label: `#${d.id}「${esc(String(d.title || '').slice(0, 16))}」` +
+            (dead ? ` <span style="color:#ef4444">— ${KIND_LABEL[kind] || kind + ' 卡'}，没有可完成的任务流，这条线满足不了</span>`
+                  : `（${esc(ST[d.status] || d.status)}）`),
+        };
+      });
+    if (pendRows.length) {
+      const hasTaskDeps = pendRows.some(r => !r.dead);
+      const rowsHtml = pendRows.map(r => `
+        <div style="display:flex;align-items:center;gap:8px;margin:5px 0">
+          <span style="font-size:12px;color:var(--text-secondary);flex:1;min-width:0">${r.label}</span>
+          ${r.dead ? `<button class="btn-ghost btn-xs" data-dellink="${r.dstId}" style="flex:none">删这条线</button>` : ''}
+        </div>`).join('');
+      const html = `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">
+          派发要求所有前置依赖完成。当前卡着的依赖：${rowsHtml}
+          ${hasTaskDeps ? '<div style="margin-top:6px;color:var(--text-muted)">任务类依赖可让 agent 一键补全。</div>' : '<div style="margin-top:6px;color:var(--text-muted)">把红色死线删掉即可派发。</div>'}
+        </div>`;
+      const foot = [];
+      if (hasTaskDeps) foot.push({ act: 'completedeps', label: '🪄 补全依赖并继续派发' });
+      const ov = agentOverlay('⛔ 还不能派发', html, foot);
+      const b = ov.querySelector('[data-act="completedeps"]');
+      if (b) b.onclick = () => completeDepsThenDispatch(srcCardId, true);
+      ov.querySelectorAll('[data-dellink]').forEach(btn => {
+        btn.onclick = async () => {
+          const dst = Number(btn.dataset.dellink);
+          const q = dst > 0 ? `dst_card_id=${dst}&kind=depends` : '';
+          await fetch(`/api/cards/${srcCardId}/links${q ? '?' + q : ''}`, { method: 'DELETE' }).catch(() => {});
+          closeAgentPops();
+          await refreshCurrentTaskView(); // ★ 根治批：等图数据刷掉死线再续派，防旧数据二次拦截
+          if (dst > 0) { toast('已删除死依赖线，继续派发'); dispatchCardToAgent(srcCardId); }
+          else toast('该依赖卡已不存在，请在数据库/接口侧清理这条残留连线', 5000);
+        };
+      });
       return true;
     }
     return false;
@@ -6557,28 +6631,15 @@
 
   /** ⚡ 派发给…（按卡定向派发：选目标智能体卡 → state 拦截/确认层 → POST /api/cards/:id/dispatch-agent。
    *  收掉 A1 接线记录遗留待办「前端按钮真调 dispatch-agent」。carrier_missing=真 → 拦截并提示先配置。 */
-  async function dispatchCardToAgent(srcCardId) {
+  async function dispatchCardToAgent(srcCardId, presetTargetId) {
     /* ★ 2026-10-05 派发预检（与后端 /dispatch-agent 准入同口径）：先查状态/依赖卡点再放行，
      *   不再「点完确认才吃 409」。截图那类报错的真因就是依赖卡着、文案却只说「需 ready」——
-     *   依赖满足 = done 或 archived（archived 是 done 的下游终态，把它当「没干」会让卡永远派不出去）。 */
+     *   依赖满足 = done 或 archived（archived 是 done 的下游终态，把它当「没干」会让卡永远派不出去）。
+     * ★ 2026-10-07（改进方案 P0②）支持 presetTargetId：拖线手势已选定目标 → 跳过选卡弹层
+     *   直达确认层；目标失效/不是智能体卡则回落到选卡列表。 */
     const pre = dispatchPrecheck(srcCardId);
     if (pre) return pre;
-    const targets = (_taskMapState.data.nodes || []).filter(n => String(n.kind) === 'agent');
-    if (!targets.length) { toast('地图上还没有智能体卡——先点左上角 ＋ 建一张（类型选「智能体」）'); return; }
-    // ★ 2026-10-05 批1：目标列表按通道如实标注 —— 「派了没反应」的头号形态就是选中了 queue 通道卡
-    //   （它只走 MemoryOS 内部领单，不拉起任何外部智能体），原来列表里完全看不出来。
-    const CH = { queue: '队列', cli: '直控', cdp: '驾驶' };
-    const rows = targets.map(t => {
-      const ch = String(t.profileChannel || 'queue');
-      const miss = t.profileMissing ? ' <span style="color:#f59e0b;font-size:11px">⚠️ 载体缺失</span>' : '';
-      const tag = `<span style="color:var(--text-muted);font-size:11px">· ${CH[ch] || '队列'}</span>`;
-      const warn = (ch === 'queue' || t.profileMissing) ? ' <span style="color:#f59e0b;font-size:11px">⚠ 派了不会拉起外部应用</span>' : '';
-      return `<div data-next="${''}" data-target="${t.id}" class="ap-item" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">🤖 ${esc(t.title || ('#' + t.id))} ${tag}${warn}${miss}</div>`;
-    }).join('');
-    const ov = agentOverlay(`把 #${srcCardId} 派给哪个智能体？`, rows);
-    ov.querySelectorAll('[data-target]').forEach(el => {
-      el.onclick = async () => {
-        const dst = Number(el.dataset.target);
+    async function confirmDispatchTo(dst) {
         let st = {};
         try { st = await fetch(`/api/agent-cards/${dst}/state`).then(x => x.json()).catch(() => ({})); } catch { /* 状态拿不到仍可尝试派发 */ }
         if (st.carrier_missing) {
@@ -6614,8 +6675,56 @@
           o.querySelector('[data-act="cancel"]').onclick = closeAgentPops;
         };
         go(ov2);
+    }
+    if (presetTargetId != null) {
+      const ok = (_taskMapState.data.nodes || []).some(n => Number(n.id) === Number(presetTargetId) && String(n.kind) === 'agent');
+      if (ok) { await confirmDispatchTo(Number(presetTargetId)); return; }
+      toast('拖线落点的智能体卡已不在地图上，请重新选择目标');
+    }
+    const targets = (_taskMapState.data.nodes || []).filter(n => String(n.kind) === 'agent');
+    if (!targets.length) { toast('地图上还没有智能体卡——先点左上角 ＋ 建一张（类型选「智能体」）'); return; }
+    // ★ 2026-10-05 批1：目标列表按通道如实标注 —— 「派了没反应」的头号形态就是选中了 queue 通道卡
+    //   （它只走 MemoryOS 内部领单，不拉起任何外部智能体），原来列表里完全看不出来。
+    const CH = { queue: '队列', cli: '直控', cdp: '驾驶' };
+    const rows = targets.map(t => {
+      const ch = String(t.profileChannel || 'queue');
+      const miss = t.profileMissing ? ' <span style="color:#f59e0b;font-size:11px">⚠️ 载体缺失</span>' : '';
+      const tag = `<span style="color:var(--text-muted);font-size:11px">· ${CH[ch] || '队列'}</span>`;
+      const warn = (ch === 'queue' || t.profileMissing) ? ' <span style="color:#f59e0b;font-size:11px">⚠ 派了不会拉起外部应用</span>' : '';
+      return `<div data-next="${''}" data-target="${t.id}" class="ap-item" style="padding:8px 10px;border:1px solid var(--border-glass,rgba(0,0,0,.08));border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-primary)">🤖 ${esc(t.title || ('#' + t.id))} ${tag}${warn}${miss}</div>`;
+    }).join('');
+    const ov = agentOverlay(`把 #${srcCardId} 派给哪个智能体？`, rows);
+    ov.querySelectorAll('[data-target]').forEach(el => {
+      el.onclick = async () => {
+        await confirmDispatchTo(Number(el.dataset.target));
       };
     });
+  }
+
+  /** 🪄 补全依赖并继续派发（2026-10-06）：调后端 complete-deps，LLM 补全/建卡连线让依赖满足 →
+   *  成功后自动接着走派发选目标。剩余依赖里若有智能体/辅助卡死线 → 重开阻断弹层（可一键删线）；
+   *  LLM 不可达时给大白话 toast。 */
+  async function completeDepsThenDispatch(srcCardId, done) {
+    const j = await fetch(`/api/cards/${srcCardId}/complete-deps`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      .then(x => x.json()).catch(() => ({}));
+    if (!j.ok) { toast('补全依赖失败：' + (j.error || '未知'), 4200); return; }
+    const made = (j.completed || []).length + (j.created || []).length;
+    refreshCurrentTaskView();
+    const remaining = j.remaining || [];
+    if (remaining.length) {
+      const deadDeps = remaining.filter(r => !['task', 'handoff'].includes(String(r.kind || 'task')));
+      if (deadDeps.length) {
+        const kName = deadDeps.some(r => r.kind === 'agent') ? '智能体' : (deadDeps[0].kind === 'doc' ? '文档' : '辅助');
+        toast(`已补全任务类依赖；但剩 ${deadDeps.length} 条指向${kName}卡——它们没有可完成的任务流，不是缺任务，是线画错了。弹层里可一键删除`, 6000);
+        setTimeout(() => dispatchCardToAgent(srcCardId), 350); // 重开阻断弹层（红字死线 + 删线按钮）
+      } else {
+        toast(`已补全 ${made} 项，仍有 ${remaining.length} 条任务依赖未完成：` + remaining.slice(0, 3).map(r => '#' + r.id).join(' '), 5000);
+      }
+      return;
+    }
+    toast(`已补全 ${made} 项依赖，可继续派发`);
+    if (done) closeAgentPops();
+    setTimeout(() => dispatchCardToAgent(srcCardId), 250);
   }
 
   /** 📎 注入前情（POST /api/card-edges {kind:'inject'}；端点白名单=仅 inject，档位/重复/端点存在性由后端 409/404 拦截并透出） */
@@ -6701,10 +6810,10 @@
     ];
     for (const [re, why, fix] of rules) {
       if (re.test(t)) {
-        return `<div style="background:#fff7e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>${why}<br><span style="color:var(--text-secondary)">怎么办：${fix}</span><br><span style="color:var(--text-muted)">详细技术日志在上面，点开可查</span></div>`;
+        return `<div style="background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.45);border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>${why}<br><span style="color:var(--text-secondary)">怎么办：${fix}</span><br><span style="color:var(--text-muted)">详细技术日志在上面，点开可查</span></div>`;
       }
     }
-    return `<div style="background:#fff7e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>工具跑完但没干成事（退出码非 0）被系统判为失败。<br><span style="color:var(--text-secondary)">怎么办：</span>看上面日志里标 [err] 的行找线索；也可以右键智能体卡「⚙️ 编辑智能体配置」核对工具与凭据</div>`;
+    return `<div style="background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.45);border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px;line-height:1.6"><b>为什么失败（人话）：</b>工具跑完但没干成事（退出码非 0）被系统判为失败。<br><span style="color:var(--text-secondary)">怎么办：</span>看上面日志里标 [err] 的行找线索；也可以右键智能体卡「⚙️ 编辑智能体配置」核对工具与凭据</div>`;
   }
   function agentCardTerm(cardId) {
     closeAgentPops();
@@ -6789,13 +6898,6 @@
       toast(`派发完成：租约回收 ${j.leased_back ?? 0} · 提升 ${(j.promoted || []).length} · 熔断 ${(j.blocked || []).length} · 前瞻建卡 ${(j.prospective_cards || []).length}${sync}`);
       refreshCurrentTaskView();
     } else toast(j.error || '派发失败');
-  }
-
-  async function importLegacy() {
-    const res = await fetch('/api/cards/import-legacy', { method: 'POST' });
-    const j = await res.json().catch(() => ({}));
-    toast(res.ok ? `导入历史任务：新建 ${j.created} · 跳过 ${j.skipped}` : (j.error || '导入失败'));
-    if (res.ok) renderCards();
   }
 
   /* ===== ★ P6 笔记编辑器（Obsidian：Markdown + [[ 候选 + 双向链接面板）===== */
@@ -6930,13 +7032,6 @@
   }
 
   /* ★ 2026-09-20：结论/过程切分（输出契约见 agent-core.js buildSystemPrompt）。
-     模型按 <结论>…</结论><过程>…</过程> 输出；解析不到标记时整段视为结论（兜底，绝不丢内容）。 */
-  function _agentSplitAnswer(text) {
-    const s = String(text ?? '');
-    if (!/<结论>|<过程>/.test(s)) return { conclusion: s, process: '' };
-    const mc = /<结论>([\s\S]*?)<\/结论>/.exec(s);
-    const mp = /<过程>([\s\S]*?)<\/过程>/.exec(s);
-    const process = mp ? mp[1].trim() : '';
     const conclusion = mc ? mc[1].trim() : s.replace(/<过程>[\s\S]*?<\/过程>/g, '').replace(/<\/?结论>/g, '').trim();
     return { conclusion, process };
   }
@@ -7132,6 +7227,7 @@
       // 降级轮询（2s）
       if (_agentRunLivePoll) return;
       _agentRunLivePoll = setInterval(async () => {
+        if (_pageHidden()) return; // E6：后台标签页不轮询（秒表 _agentRunLiveTimer 不受影响，避免计时失准）
         const j = await fetch('/api/agent/runs/' + encodeURIComponent(runId)).then(r => r.json()).catch(() => null);
         if (j && j.ok) { _agentRunLiveSteps = j.steps || []; _agentRunLiveRender(); if (j.status !== 'running') _agentRunLiveStop(); }
       }, 2000);
@@ -8168,7 +8264,7 @@
     if (!board) return;
     board.innerHTML = '';
     if (!runs.length) {
-      board.innerHTML = '<div class="text-muted" style="font-size:12px;padding:14px">暂无运行记录。在「智能体」页发一条指令（带会话）即在此实时展开。</div>';
+      board.innerHTML = '<div class="empty-inline">暂无运行记录。在「智能体」页发一条指令（带会话）即在此实时展开。</div>';
       return;
     }
     for (const r of runs.slice(0, 12)) {
@@ -8410,6 +8506,13 @@
 
   async function initRuns() {
     runsInited = true;
+    // ★ 2026-10-05 精简批：工具栏「刷新」按钮此前从未绑定 handler（点了没反应），此处补上
+    const refreshBtn = $('#runsRefreshBtn');
+    if (refreshBtn && !refreshBtn.dataset.bound) {
+      refreshBtn.dataset.bound = '1';
+      refreshBtn.classList.add('btn-sm');
+      refreshBtn.onclick = () => { _runsLoadList(); _runsLoadSessions(); };
+    }
     _runsCloseSse();
     // 拉 runs（带 diff 全量，供 _runsStepDetail 用）
     _runsLoadList();

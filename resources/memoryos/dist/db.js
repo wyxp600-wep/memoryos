@@ -314,7 +314,7 @@ CREATE INDEX IF NOT EXISTS idx_dispatches_lease ON dispatches(lease_expires_at) 
 -- ═══ 节点画布（P0，2026-10-04）：类型注册表 / 卡片边 / 智能体档案（只增不改，drop 即回滚）═══
 -- 卡片类型注册表：内置四种种子不可改删；连线方向校验按四个端口行为档位判定（先建卡后选型交互的必需件）
 CREATE TABLE IF NOT EXISTS card_types (
-  type_key         TEXT PRIMARY KEY,               -- 'task'|'agent'|'handoff'|'doc' + 自定义（禁 aux 前缀）
+  type_key         TEXT PRIMARY KEY,               -- 'task'|'agent'|'handoff'|'doc'|'aux' + 自定义（禁 aux 前缀）
   label            TEXT NOT NULL,                  -- 显示名
   color            TEXT,                           -- 徽标色
   builtin          INTEGER NOT NULL DEFAULT 0,     -- 内置类型不可改删
@@ -329,7 +329,8 @@ INSERT OR IGNORE INTO card_types(type_key,label,builtin,can_dispatch_out,can_dis
   ('task','任务',1,1,0,0,1),
   ('agent','智能体',1,0,1,0,0),
   ('handoff','交接文档',1,0,0,1,0),
-  ('doc','文档',1,0,0,0,0);
+  ('doc','文档',1,0,0,0,0),
+  ('aux','辅助卡',1,0,0,0,0);
 
 -- 智能体档案：纯配置实体（无位置无状态）——Agent 卡 = cards.kind='agent' 投影卡 + meta.profile_id 指向此表
 CREATE TABLE IF NOT EXISTS agent_profiles (
