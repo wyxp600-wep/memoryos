@@ -22,7 +22,7 @@ import { openDb, queryByType } from "./db.js";
 const MIN_CONF = Math.max(0, Math.min(1, Number(process.env.RULE_MIN_CONF ?? 0.6) || 0.6));
 /** 内置门禁层：仅这 8 条常驻注入段（token 收益最大的低语义重复行为守则） */
 const GATE_RULES = [
-    { content: "开工先读记忆（硬性触发·不可跳过·第一步）：收到用户任何消息后，先调用 memory_context 注入当前项目高价值记忆，才能开始回复或调用其他工具；之后可按需 memory_search 精确检索（关键词覆盖主题/模块/报错现象）；命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。禁止跳过此步直接回复或开干，修改核心模块或遇报错时尤其如此。", agent: "gate" },
+    { content: "每条消息先读记忆（硬性·不可跳过·第一步）：收到用户任何消息后，第一件事必须是调用 memory_context（可带 focus=当前任务主题）注入当前项目高价值记忆，之后才能回复或调用其他工具；接着按需 memory_search 精确检索（关键词覆盖主题/模块/报错现象）；命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。若本机未安装或未连接 MemoryOS MCP，须先明确提示用户安装接入，不得跳过此步。禁止跳过直接回复或开干，修改核心模块或遇报错时尤其如此。", agent: "gate" },
     { content: "完成后沉淀：解决重要问题（>30min 修复/技术决策/踩坑/隐藏约定/阶段性结论）后，须 memory_write 沉淀一条核心结论+依据，与 memory_search/memory_cite 构成先查-命中-沉淀-回查闭环；未沉淀不得声明任务完成，且须在回复里报出本次沉淀的记忆编号（便于用户回查）。", agent: "gate" },
     { content: "实证后声明：完成声明必须附 build/curl/netstat 等实证日志，禁用 should/probably/basically 等模糊表述，坚持 docs before code、evidence before conclusions。", agent: "gate" },
     { content: "副本修改：严禁直接修改源文件，必须复制文件后在副本上修改，保留原始版本；修改文件前明确告知改动范围，避免污染原路径（修改产物统一放桌面/独立目录）。", agent: "gate" },
@@ -49,7 +49,10 @@ export const SEG_END = "<!-- MEMORYOS-SYNC-RULES-END -->";
  *   codex          → ~/.codex/AGENTS.md               （存在）
  *   claude         → ~/.claude/CLAUDE.md              （新建）
  *   trae-cn        → ~/.trae-cn/user_rules/rule-memoryos.md（Trae 规则入口目录，新建固定名文件）
+ *   opencode       → ~/.config/opencode/AGENTS.md     （★20261006 新增：OpenCode 官方全局规则文件，对所有会话生效）
+ *   qoder          → ~/.qoder/AGENTS.md               （★20261006 新增：AGENTS.md 通用约定，待实测确认 Qoder 是否读取该全局文件）
  * 无明文入口、不注入：ZCode（仅会话目录）、智谱清言/MiniMax（Electron 壳，记忆在私有/云端）、Codex++（无独立配置目录）。
+ * 无明文入口者仍有兜底通道：syncProjectRules 写项目根 AGENTS.md（打开该项目的 IDE 通用可见）。
  */
 export function getSyncTargets() {
     const h = os.homedir();
@@ -59,7 +62,66 @@ export function getSyncTargets() {
         { id: "codex", label: "Codex AGENTS.md", file: path.join(h, ".codex", "AGENTS.md") },
         { id: "claude", label: "Claude Code CLAUDE.md", file: path.join(h, ".claude", "CLAUDE.md") },
         { id: "trae-cn", label: "Trae CN 用户规则", file: path.join(h, ".trae-cn", "user_rules", "rule-memoryos.md") },
+        { id: "opencode", label: "OpenCode AGENTS.md（全局）", file: path.join(h, ".config", "opencode", "AGENTS.md") },
+        { id: "qoder", label: "Qoder AGENTS.md（全局·待实测）", file: path.join(h, ".qoder", "AGENTS.md") },
     ];
+}
+/**
+ * ★ 2026-10-06：把「扫描到的 agent」映射到「规则注入落点」，供自动接入（dist/auto-connect.js）复用。
+ *  已知载体（有实证规则入口）→ 复用 getSyncTargets() 的落点（幂等段写入）；
+ *  未知载体 → 仅当 hint 指向「家目录下的专属点目录」时，用 <dir>/AGENTS.md 作兜底落点
+ *    （返回 verified:false，调用方须标注「待实测」）；凡落点 == 家目录本身 / 在家目录之外 /
+ *    在 AppData / 系统目录下一律返回 null —— 宁可不写。
+ *  @param {string} agentId 扫描出的 agent id（codex / traecode / vscode …）
+ *  @param {string|null} hint 载体文件路径（configFile）或目录（configDir / autoWriteFile）
+ *  @returns {{file:string,targetId:string|null,verified:boolean}|null}
+ */
+export function resolveAgentRuleTarget(agentId, hint = null) {
+    const id = String(agentId || "").toLowerCase().trim();
+    if (!id)
+        return null;
+    // 扫描 id → 注入目标 id 别名（同一智能体的多种叫法）
+    const alias = { traecode: "trae-cn", traework: "trae-cn", trae: "trae-cn" };
+    const targetId = alias[id] ?? id;
+    const known = getSyncTargets().find((t) => t.id === targetId);
+    if (known)
+        return { file: known.file, targetId: known.id, verified: true };
+    if (!hint)
+        return null;
+    let dir = path.resolve(String(hint));
+    try {
+        if (fs.statSync(dir).isFile())
+            dir = path.dirname(dir);
+    }
+    catch {
+        // 路径不存在：按目录处理，交由下面的守卫否决
+    }
+    const home = path.resolve(os.homedir());
+    const rel = path.relative(home, dir);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel))
+        return null; // 家目录本身 / 家目录之外
+    if (/(^|[\\/])appdata([\\/]|$)/i.test(dir))
+        return null; // AppData（安装区 / 第三方配置区）不写
+    if (/(^|[\\/])(windows|program files|program files \(x86\))([\\/]|$)/i.test(dir))
+        return null; // 系统目录不写
+    if (!path.basename(dir).startsWith("."))
+        return null; // 只认「点目录」形态（~/.foo）
+    // ★ 备份/临时/回收类目录不写：载体指纹会命中「用户把 ~/.codex 复制成 ~/.codex-session-delete」
+    //   这类备份目录（实测该目录被扫成 connected），往里面写 AGENTS.md 属猜写、只会留垃圾。
+    if (/(delete|backup|\bbak\b|old|copy|tmp|temp|archive|trash|pending)/i.test(path.basename(dir)))
+        return null;
+    return { file: path.join(dir, "AGENTS.md"), targetId: null, verified: false };
+}
+/** 目标文件是否已含 MemoryOS 注入段（幂等判据：有则跳过，不重复写） */
+export function hasRuleSegment(file) {
+    let txt = "";
+    try {
+        txt = fs.readFileSync(file, "utf8");
+    }
+    catch {
+        return false; // 文件不存在 / 不可读 = 尚未注入
+    }
+    return txt.includes(SEG_START);
 }
 function buildSegment(rules) {
     const body = rules

@@ -48,7 +48,7 @@ console.error(`[embed] EMBED_MODE=${_embedMode}${_embedMode === "fake" ? "  ⚠ 
 const server = new FastMCP({
     name: "memory-hub",
     version: "0.2.0",
-    instructions: "共享记忆中心（语义检索）。会话开始/执行关键任务前先调用一次 memory_context 一键注入当前项目高价值记忆；提交修复结论/技术决策/隐藏约定/第三方坑时调用 memory_write；需要精确检索时 memory_search（scope 不确定先 memory_projects）。禁写：绝不写入敏感凭据。",
+    instructions: "共享记忆中心（语义检索）。【硬性·每条消息第一步】收到用户任何消息后，第一件事必须先调用 memory_context（可带 focus=当前任务主题）注入当前项目高价值记忆，之后才能回复或调用其他工具；随后按需 memory_search 精确检索，命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。若本机未安装或未连接 MemoryOS MCP，须先明确提示用户安装接入，不得跳过此步。提交修复结论/技术决策/隐藏约定/第三方坑时调用 memory_write；scope 不确定先 memory_projects。禁写：绝不写入敏感凭据。",
 });
 
 /**

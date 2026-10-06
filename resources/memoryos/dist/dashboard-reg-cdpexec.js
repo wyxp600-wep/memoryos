@@ -18,7 +18,7 @@
  *  - 收口复用 finalizeCardDispatch（结算/翻边/交接卡语义不变）。
  * 依赖：Node ≥22 内置 WebSocket 全局（runtime v24 实测可用），零新依赖。
  * ═══════════════════════════════════════════════════════════════════════════ */
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { renewCardLease } from "./db.js";
 import { killTree, overridesOf, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
@@ -107,10 +107,12 @@ export function registerCdpExec(app, ctx) {
         }
         catch { /* 读失败 = 降档为无调试口，不阻断拉起 */ return null; }
     }
-    /** 现存同名 exe 进程的 `pid|CommandLine`（异步 PowerShell；仅复用/失败诊断时调用，不在派发热路径） */
+    /** 现存同名 exe 进程的 `pid|CommandLine`（异步 PowerShell；仅复用/失败诊断时调用，不在派发热路径）
+     *  ★ 根治二版：进程名按真实 basename 匹配（保留空格，WQL 原生支持）——旧实现把
+     *  "TRAE SOLO CN.exe" 清成 "TRAESOLOCN.exe" 永远查不到 → 诊断失效 → 自动接管被跳过。 */
     function listProcCmdLines(exePath) {
         return new Promise((resolve) => {
-            const name = String(exePath ?? "").split(/[\\/]/).pop().replace(/[^A-Za-z0-9._-]/g, "");
+            const name = String(exePath ?? "").split(/[\\/]/).pop().replace(/'/g, "''");
             if (!name)
                 return resolve("");
             let out = "";
@@ -128,13 +130,27 @@ export function registerCdpExec(app, ctx) {
             catch { done(""); }
         });
     }
-    /** ① 复用：DevToolsActivePort 指向的端口必须实测 /json/list 通才算数（文件可能是上次残留） */
+    /** 目标页归属校验：DevToolsActivePort 是残留文件，端口可能已被别的应用占用（实测 ChatGPT.exe
+     *  声明 `--inspect=9329` 与 VS Code 残留文件同号）——/json/list 通 ≠ 是这个应用，按 exe 核对目标特征 */
+    function targetsOwnedBy(exe, targets) {
+        const name = String(exe ?? "").split(/[\\/]/).pop().toLowerCase();
+        if (name !== "code.exe") // 只对已有串口实证的 code.exe 收紧；其余维持原口径（chrome 默认页标题不稳，不猜）
+            return true;
+        const sig = /vscode|visual studio code/i;
+        return (targets ?? []).some((t) => sig.test(String(t?.title ?? "")) || sig.test(String(t?.url ?? "")));
+    }
+    /** ① 复用：DevToolsActivePort 指向的端口必须实测 /json/list 通才算数（文件可能是上次残留），
+     *  且目标页必须属于该 exe（防接错到占用同号端口的其它应用） */
     async function reuseExistingCdp(exe, args) {
         const port = readDevToolsPort(devToolsPortFile(exe, args));
         if (!port)
             return null;
         const targets = await pollHttp(`http://127.0.0.1:${port}/json/list`, 800);
-        return targets ? { port, targets } : null;
+        if (!targets)
+            return null;
+        if (!targetsOwnedBy(exe, targets))
+            return null;
+        return { port, targets };
     }
     /** ② 诊断：端口没等到时，区分「已有实例吞掉参数」（可行动）与「应用不支持/启动慢」（原文案） */
     async function diagnoseNoCdp(exe, excludePid) {
@@ -149,17 +165,84 @@ export function registerCdpExec(app, ctx) {
     }
 
 
-    /** 注入任务文本：chatSelector 找输入框 → 原生 setter 赋值 → input 事件 → 找发送按钮或回车 */
+    /** ★ 宿主保护（2026-10-06）：自动关闭旧实例前，先确认目标 exe 不是当前仪表盘的宿主应用
+     *  （如 ZCode.exe 托着本 dashboard 进程）——否则会把用户正在用的宿主连同本服务一起杀掉。 */
+    function ancestorExeNames() {
+        try {
+            const out = execSync("powershell -NoProfile -Command " +
+                "$p = Get-CimInstance Win32_Process -Filter (\"ProcessId=\" + $PID);" +
+                " while ($p) { $pp = Get-CimInstance Win32_Process -Filter (\"ProcessId=\" + $p.ParentProcessId); if (-not $pp) { break }; $pp.Name; $p = $pp }",
+                { encoding: "utf8", timeout: 8000, windowsHide: true });
+            return String(out).split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+        }
+        catch { return []; }
+    }
+    const _ancestorCache = { at: 0, names: [] };
+    function isHostApp(exe) {
+        if (Date.now() - _ancestorCache.at > 30000) {
+            _ancestorCache.names = ancestorExeNames();
+            _ancestorCache.at = Date.now();
+        }
+        const name = String(exe ?? "").split(/[\\/]/).pop().toLowerCase();
+        return !!name && _ancestorCache.names.includes(name);
+    }
+
+    /** 根治（2026-10-06）：单实例应用已有旧实例且未开调试口时，自动关闭旧实例再重启。
+     *  旧行为只报错让用户「先完全退出再重派」，等于把活推回给人（实测用户被这个死循环卡住）。
+     *  流程：taskkill（不带 /F，发 WM_CLOSE 优雅退）→ 等 2s → 残余 Stop-Process 强杀 → 返回剩余进程数。 */
+    function closeExistingInstances(exe) {
+        if (isHostApp(exe))
+            return Promise.resolve("宿主应用，跳过自动关闭");
+        return new Promise((resolve) => {
+            const name = String(exe ?? "").split(/[\\/]/).pop().replace(/'/g, "''");
+            if (!name)
+                return resolve("无可执行名");
+            let out = "";
+            let settled = false;
+            const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+            try {
+                const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+                    `$pids = (Get-CimInstance Win32_Process -Filter "Name='${name}'").ProcessId;` +
+                        ` foreach ($x in $pids) { taskkill /PID $x 2>$null | Out-Null };` +
+                        ` Start-Sleep -Seconds 2;` +
+                        ` $left = (Get-CimInstance Win32_Process -Filter "Name='${name}'").ProcessId;` +
+                        ` foreach ($x in $left) { Stop-Process -Id $x -Force -ErrorAction SilentlyContinue };` +
+                        ` Start-Sleep -Milliseconds 800;` +
+                        ` (Get-CimInstance Win32_Process -Filter "Name='${name}'" | Measure-Object).Count`],
+                { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+                ps.stdout.on("data", (d) => { out += String(d); });
+                ps.on("error", () => done("关闭脚本失败"));
+                ps.on("close", () => done(`剩余进程 ${out.trim() || "0"}`));
+                setTimeout(() => { try { ps.kill(); } catch { /* 已退出 */ } done("关闭超时（已尽力）"); }, 12000);
+            }
+            catch { done("关闭异常"); }
+        });
+    }
+
+    /** 注入任务文本：chatSelector 找输入框 → 原生 setter 赋值 → input 事件 → 找发送按钮或回车
+     *  ★ 根治批：选择器三级回退（textarea → [contenteditable] → input[type=text]），
+     *  载体没配 chatSelector 的未知 Electron 应用也有机会注进去；contenteditable 走 textContent 赋值。 */
     const injectScript = (selector, sendSelector, text) => `
       (() => {
-        const sel = ${JSON.stringify(selector)};
-        const ta = document.querySelector(sel || "textarea");
-        if (!ta) return { ok: false, why: "未找到输入框（选择器 " + (sel || "textarea") + "）" };
-        const set = Object.getOwnPropertyDescriptor(ta.constructor.prototype ?? HTMLTextAreaElement.prototype, "value")?.set
-          ?? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
-        set.call(ta, ${JSON.stringify(text)});
-        ta.dispatchEvent(new Event("input", { bubbles: true }));
-        ta.focus();
+        const tryFill = (el) => {
+          if (!el) return false;
+          el.focus();
+          if (el.isContentEditable) {
+            el.textContent = ${JSON.stringify(text)};
+            el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+            return true;
+          }
+          const set = Object.getOwnPropertyDescriptor(el.constructor.prototype ?? HTMLTextAreaElement.prototype, "value")?.set
+            ?? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+          set.call(el, ${JSON.stringify(text)});
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        };
+        const sels = [${JSON.stringify(selector)}, "textarea", '[contenteditable="true"]', "input[type=text]"].filter(Boolean);
+        let ta = null;
+        for (const s of sels) { ta = document.querySelector(s); if (ta) break; }
+        if (!ta) return { ok: false, why: "未找到输入框（尝试过 " + sels.join(" / ") + "）" };
+        if (!tryFill(ta)) return { ok: false, why: "输入框赋值失败" };
         const send = ${JSON.stringify(sendSelector)} ? document.querySelector(${JSON.stringify(sendSelector)}) : null;
         if (send) { send.click(); return { ok: true, how: "点击发送按钮" }; }
         ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
@@ -240,14 +323,30 @@ export function registerCdpExec(app, ctx) {
           : "";
         const r = c ? c.getBoundingClientRect() : null;
         const ae = document.activeElement;
+        // ★ 定焦判据必须是「可编辑元素」：容器内任意元素（提示条/发送钮/历史项）都算 focused 会造成假焦点，
+        //   打字全部落空（2026-10-05 测③ 实证：focused 放行后 Ctrl+A/insertText 无一落面）
+        const ed = ae && ae.closest && ae.closest(cs);
+        const vr = c ? c.querySelector(".view-line, textarea, [contenteditable='true']") : null;
+        const vrr = vr ? vr.getBoundingClientRect() : null;
         return JSON.stringify({
-          panel: !!c, text: txt.slice(0, 80), dialog,
-          scoped: inScope.length > 0, textAny: anywhere.join("\\n").slice(0, 80),
+          // 80 字上限曾把「首行被滚动裁掉」的正常落字误判为未落字（2026-10-05 测② 截帧实证）——放宽到 2000
+          panel: !!c, text: txt.slice(0, 2000), dialog,
+          // 窗口最小化/隐藏：DOM 焦点仍在（hasFocus 可能为 true）但直播无帧、鼠标事件易超时
+          hidden: document.visibilityState !== "visible",
+          scoped: inScope.length > 0, textAny: anywhere.join("\\n").slice(0, 2000),
           trust: trust ? { x: Math.round(trust.getBoundingClientRect().x + trust.getBoundingClientRect().width / 2),
                            y: Math.round(trust.getBoundingClientRect().y + trust.getBoundingClientRect().height / 2) } : null,
           signIn,
-          focused: !!(ae && ae.closest && ae.closest(cs)),
-          box: r && r.width > 0 ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : null
+          focused: !!ed,
+          // ★ 判定对象是 activeElement 本身，ed(closest=容器) 只证明「焦点在容器内」——
+          //   第一版补丁误判 ed（closest 返回的是容器 DIV，role 恒非 textbox）致结构性仍 false（10-06 02:45 实测）
+          editable: !!(ed && (ae.tagName === "TEXTAREA" || ae.tagName === "INPUT" || ae.isContentEditable
+            // ★ 2026-10-06 CDP DOM 真值：VS Code 聊天输入框是 Monaco EditContext 模式，焦点在
+            //   div.native-edit-context（role=textbox、tabindex=0）——非 textarea 也非 contenteditable，
+            //   少了这条判据则结构性永远 false（02:01 重测②′③′ 定焦门误杀实锤）
+            || ae.getAttribute("role") === "textbox")),
+          box: r && r.width > 0 ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : null,
+          editBox: vrr && vrr.width > 0 ? { x: Math.round(vrr.x + vrr.width / 2), y: Math.round(vrr.y + vrr.height / 2) } : null
         });
       })()`;
         try {
@@ -368,26 +467,37 @@ export function registerCdpExec(app, ctx) {
             const dialogHint = ui?.dialog ? `；有对话框未能关闭：${String(ui.dialog).slice(0, 60)}` : "";
             return { ok: false, why: `未找到会话输入面（选择器 ${ov?.chatContainer ?? ".chat-input-container"}${ov?.openChat ? `，openChat 已按 ${pressed} 次仍未出现` : "，且未配置 openChat"}${dialogHint}）` };
         }
+        // 窗口最小化/隐藏：DOM 焦点与打字仍可能成功，但画面直播无帧、鼠标事件易超时——给一次可行动提示
+        if (ui.hidden && !job._hiddenWarned) {
+            job._hiddenWarned = true;
+            pushLine(job, "sys", "[驾驶] 提醒：应用窗口处于最小化/隐藏——画面直播将无帧、鼠标点击易超时；可从任务栏恢复窗口以获得直播画面（不影响打字注入继续执行）");
+        }
         if (ui.signIn)
             return { ok: false, why: "应用要求先登录（登录引导对话框挡住输入）——请完成登录后重新派发" };
-        // ② 定焦点：点输入面中心；点击通道卡住（窗口后台/遮挡）→ 退回 DOM 定焦，别把整次注入判死
-        if (!ui.focused) {
-            if (!ui.box)
+        // ② 定焦点：门 =「可编辑元素持有焦点」。只看 focused（在容器内）会把提示条/按钮的假焦点当成功，
+        //    打字全部落空（2026-10-05 测③ 实证）；点击目标优先 editBox（文本区），容器中心可能落在提示条上
+        if (!ui?.editable) {
+            const tgt = ui?.editBox ?? ui?.box;
+            if (!tgt)
                 return { ok: false, why: "会话输入面不可见（宽高为 0）" };
             try {
-                await cdpClick(job, ui.box.x, ui.box.y);
+                await cdpClick(job, tgt.x, tgt.y);
             }
             catch (e) {
                 pushLine(job, "sys", `[驾驶] 点击输入面失败（${e instanceof Error ? e.message : e}）——改走 DOM 定焦继续`);
-                if (!await domFocus(job, ov))
-                    return { ok: false, why: `点击与 DOM 定焦都失败（${e instanceof Error ? e.message : e}）——请把该应用窗口切到前台后重新派发` };
             }
             await sleep(400);
             ui = await probeUi(job, ov);
         }
-        if (!ui?.focused)
-            return { ok: false, why: "输入面无法获得焦点（可能有模态对话框遮挡）" };
+        if (!ui?.editable) {
+            if (!await domFocus(job, ov))
+                return { ok: false, why: "输入面未获得编辑焦点（点击后 activeElement 非 textarea/contenteditable，且 DOM 定焦不可用）——请把该应用窗口切到前台后重新派发" };
+            ui = await probeUi(job, ov);
+            if (!ui?.editable)
+                return { ok: false, why: "输入面未获得编辑焦点（DOM 定焦后 activeElement 仍非可编辑元素）——请把该应用窗口切到前台后重新派发" };
+        }
         // ③ 清空 → 打字 → 落字校验（不清空会把旧文本拼在前面）
+        const seenBefore = String(ui?.text ?? "").replace(/\s+/g, "");
         await cdpKey(job, { key: "A", code: "KeyA", keyCode: 65, modifiers: 2 });
         await sleep(150);
         await cdpKey(job, { key: "Backspace", code: "Backspace", keyCode: 8 });
@@ -396,13 +506,27 @@ export function registerCdpExec(app, ctx) {
         await sleep(500);
         ui = await probeUi(job, ov);
         const seen = String(ui?.text ?? "").replace(/\s+/g, "");
-        if (!head || !seen.includes(head)) {
-            // 失败信息带「探测范围」，免得下次还得重跑一遍才知道是没打进去还是读错了容器（批3 真因即此）
+        // 多锚点 + 旧文本未变检测（2026-10-05 两测实证的两类假阴性）：
+        //  · head 是首行，长文本在输入框里首行常被滚动裁掉（测② 截帧：框内全文在、head 恒不在可见区）
+        //  · 光标停在尾部 → tail 必可见；「标题：」行带本卡卡名，是唯一锚
+        //  · 文本与打字前逐字相同且标题锚未命中 = 打字根本没生效（测③ 实证：框里还是上一测的残留）
+        const tail = text.trim().replace(/\s+/g, "").slice(-6);
+        const tm = /标题：\s*(.+)/.exec(text);
+        const titleAnchor = tm ? `标题：${tm[1].trim().slice(0, 12)}`.replace(/\s+/g, "") : "";
+        const hitHead = !!head && seen.includes(head);
+        const hitTail = !!tail && seen.includes(tail);
+        const hitTitle = !!titleAnchor && seen.includes(titleAnchor);
+        const unchanged = !!seen && seen === seenBefore;
+        if (!((hitHead || hitTail || hitTitle) && !(unchanged && !hitTitle))) {
+            // 失败信息带「探测范围 + 锚点命中情况」，下次一眼分清：没打进去 / 读错容器 / 校验锚被裁
             const scopeNote = ui?.panel
                 ? (ui.scoped ? `容器内探到 ${JSON.stringify(String(ui.text ?? "").slice(0, 30))}`
                     : `容器内无 ${ov?.chatText ?? ".chat-input-container .view-line"} 匹配、已回退全局探到 ${JSON.stringify(String(ui.textAny ?? "").slice(0, 30))}（选择器需按该应用界面校准）`)
                 : "会话输入面已消失";
-            return { ok: false, why: `打字未落入输入面（${scopeNote}）` };
+            const why = unchanged && !hitTitle
+                ? `打字未改变输入面（文本与打字前逐字相同，仍为 ${JSON.stringify(seen.slice(0, 30))}）`
+                : "打字未落入输入面";
+            return { ok: false, why: `${why}（${scopeNote}；锚点 head=${hitHead} tail=${hitTail} title=${hitTitle} unchanged=${unchanged}）` };
         }
         // ④ 回车发送（send:false 可关）
         if (ov?.send === false)
@@ -454,6 +578,18 @@ export function registerCdpExec(app, ctx) {
                 r = await domInject(job, ov, text);
             }
         }
+        // ★ 根治（2026-10-06）：「未找到输入框」≠ 应用不支持 —— 拉起后 CDP 秒连 ≠ 编辑框已挂载
+        //  （实测 WorkBuddy 刚启动时 DOM 还没有编辑器，一次失败即降档，任务永远注不进）。
+        //   有界等待重试：最多 15s、每 900ms 一次，编辑框挂载即注入；不需要用户配置 readySelector。
+        if (!r.ok && /未找到输入框/.test(r.why || "")) {
+            const startedAt = Date.now();
+            while (Date.now() - startedAt < 15000 && !r.ok) {
+                await sleep(900);
+                r = await domInject(job, ov, text);
+                if (r.ok)
+                    pushLine(job, "sys", `[驾驶] 编辑框就绪前等待了 ${Date.now() - startedAt}ms，重试注入成功`);
+            }
+        }
         pushLine(job, "sys", r.ok
             ? `[驾驶] 任务文本已注入（${r.how}）——若未发出请手动补发`
             : `[驾驶] 注入失败：${r.why}——已降档，请手动粘贴任务文本（D10）`);
@@ -472,8 +608,10 @@ export function registerCdpExec(app, ctx) {
             }
             catch { /* 扫描失败走降档 */ }
         }
-        if (!exe)
-            return fail(job, "未找到该智能体的可执行文件（请确认已安装，或在配置 launch_overrides.exe 中手动指定）");
+        if (!exe) {
+            const scanIds = (await scanAgentsCached()).map((a) => a.id).slice(0, 24).join(", ");
+            return fail(job, `未找到该智能体的可执行文件（agent_key=${p.agent_key}；扫描清单：${scanIds || "扫描为空"}）。确认已安装，或在配置 launch_overrides.exe 中手动指定`);
+        }
         const port = PORT_BASE + ((job.profileId * 7 + (++portCursor)) % 600);
         job.port = port;
         const args = ov?.args ?? [];
@@ -485,23 +623,39 @@ export function registerCdpExec(app, ctx) {
             pushLine(job, "sys", `[驾驶] 复用已有实例的调试口（端口 ${reuse.port}，${targets.length} 个页面）——不再重复拉起`);
         }
         if (!targets) {
-            const launchArgs = [...(p.workspace ? [p.workspace] : []), ...args, `--remote-debugging-port=${port}`, "--no-first-run"];
-            pushLine(job, "sys", `[驾驶] 拉起 ${exe} ${launchArgs.join(" ")}`);
-            try {
-                job.proc = spawn(exe, launchArgs, { cwd: p.workspace || undefined, detached: true, windowsHide: false, stdio: "ignore" });
-                job.pid = job.proc.pid ?? null;
-            }
-            catch (e) {
-                return fail(job, `拉起失败：${e instanceof Error ? e.message : e}`);
-            }
-            job.proc.on("error", (e) => pushLine(job, "err", `[驾驶] 进程错误：${e.message}`));
-            // 等 CDP 端口
             const waitMs = ov?.cdpTimeoutMs ?? CDP_WAIT_DEFAULT_MS;
-            targets = await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs);
+            const launchOnce = async () => {
+                const launchArgs = [...(p.workspace ? [p.workspace] : []), ...args, `--remote-debugging-port=${port}`, "--no-first-run"];
+                pushLine(job, "sys", `[驾驶] 拉起 ${exe} ${launchArgs.join(" ")}`);
+                try {
+                    job.proc = spawn(exe, launchArgs, { cwd: p.workspace || undefined, detached: true, windowsHide: false, stdio: "ignore" });
+                    job.pid = job.proc.pid ?? null;
+                }
+                catch (e) {
+                    fail(job, `拉起失败：${e instanceof Error ? e.message : e}`);
+                    return null;
+                }
+                job.proc.on("error", (e) => pushLine(job, "err", `[驾驶] 进程错误：${e.message}`));
+                // 等 CDP 端口
+                return await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs);
+            };
+            targets = await launchOnce();
             if (!targets) {
                 // ★前置②：先诊断再报错——有同类实例在跑就给可行动指引，不甩「应用可能不支持」这种误导
                 const why = await diagnoseNoCdp(exe, job.pid);
-                return fail(job, why ?? `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
+                if (why && !job._cdpRemediated) {
+                    // ★ 根治（2026-10-06）：单实例应用已有旧实例 → 自动关闭旧实例并带调试口重启（仅此一次）。
+                    //   旧行为把「先完全退出」推回给用户，实测用户被这个死循环卡住（拉起了应用、任务注不进）。
+                    job._cdpRemediated = true;
+                    pushLine(job, "sys", `[驾驶] ${why}——自动接管：关闭旧实例后带调试口重启`);
+                    const closed = await closeExistingInstances(exe);
+                    pushLine(job, "sys", `[驾驶] 旧实例已处理（${closed}），重新拉起`);
+                    targets = await launchOnce();
+                }
+                if (!targets) {
+                    const why2 = await diagnoseNoCdp(exe, job.pid);
+                    return fail(job, why2 ?? `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
+                }
             }
         }
         pushLine(job, "sys", `[驾驶] CDP 已连接（端口 ${job.port}，${targets.length} 个页面）`);
@@ -640,6 +794,15 @@ export function registerCdpExec(app, ctx) {
     };
 
     // 直播 SSE：帧 + 行 + 结束
+    // ★ 根治批（2026-10-06）：驾驶 run 的文本日志此前只在内存里、无任何读取路由 —— 注入链断了无从诊断。
+    app.get("/api/agent-cards/:id/cdp-log", (req, reply) => {
+        const cardId = Number(req.params.id);
+        const job = findJobByCard(jobs, cardId);
+        if (!job)
+            return reply.code(404).send({ ok: false, error: "该卡没有驾驶会话" });
+        return { ok: true, runId: job.runId, status: job.status, lines: (job.lines ?? []).slice(-80) };
+    });
+
     app.get("/api/agent-cards/:id/live", (req, reply) => {
         const cardId = Number(req.params.id);
         const job = findJobByCard(jobs, cardId);

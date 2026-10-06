@@ -980,6 +980,122 @@ export function registerKnowledge(app, ctx) {
         }
     });
 
+    /** ★ 2026-10-06「补全依赖」：任务卡被依赖拦着派不出去时，LLM 读目标 + 未完成依赖，
+     *  给出「可判定满足的前置」(complete) 与「尚缺的前置子任务」(create)。
+     *  前端点「🪄 补全依赖并继续派发」调本端点 → 完成后所有依赖满足 → 主卡即可派发。
+     *  副作用：complete 里的既有依赖卡被置 done；create 出的新前置卡以 done 建立并连 depends。 */
+    app.post("/api/cards/:id/complete-deps", async (req, reply) => {
+        if (RESTRICTED)
+            return restricted(reply, "cardCreate");
+        const id = Number(req.params.id);
+        const main = db.prepare(`SELECT id, title, body, status FROM cards WHERE id=?`).get(id);
+        if (!main)
+            return reply.code(404).send({ ok: false, error: "卡片不存在" });
+        // 主卡未完成的前置依赖（card→card depends，src=主卡，dst=前置；done/archived 视为已满足）
+        const deps = db
+            .prepare(`SELECT l.dst_id d, c.status s, c.title t, c.kind k FROM links l JOIN cards c ON c.id=l.dst_id
+                      WHERE l.src_kind='card' AND l.src_id=? AND l.dst_kind='card' AND l.kind='depends'`)
+            .all(id);
+        const pending = deps.filter(d => !['done', 'archived'].includes(String(d.s)));
+        if (!pending.length)
+            return { ok: true, id, completed: [], created: [], remaining: [], note: "没有未完成的依赖，可直接派发" };
+        let llm;
+        try {
+            ({ llm } = await resolveLlmCfg());
+        }
+        catch (e) {
+            return reply.code(502).send({ ok: false, error: "LLM 配置不可达，无法补全依赖：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        // ★ 收窄：只有「task 类」依赖卡可被 LLM 判定补全（置 done）；智能体/交接/辅助类卡不能靠补全完成，
+        //   它们该由对应动作处置（如给智能体卡派活）。非 task 依赖即使 LLM 列出也一律忽略。
+        const completableIds = new Set(pending.filter(d => String(d.k) === "task").map(d => Number(d.d)));
+        const goal = `${String(main.title || "").trim()}\n${String(main.body || "").trim()}`.trim();
+        const prompt = [
+            "你是任务调度助手。下面是一张待派发的任务卡，以及它当前「未完成」的前置依赖卡。",
+            "请给出补全方案，严格输出 JSON（不要解释、不要 markdown 代码块）：",
+            `{ "complete": [ {"id": 数字, "note": "一句话判定理由"} ], "create": [ {"title": "新前置子任务", "body": "产出物说明"} ] }`,
+            "规则：",
+            "- complete：只从标注了「可补全」的依赖里挑出「此刻可判定为前置已满足」的填 id；不可补全的依赖（智能体/交接/辅助卡）不要填，改在 create 里给出它们对应的前置任务；没有就留空数组 []。",
+            "- create：目标还需要、但目前没有对应卡片的前置步骤，最多 3 条，可验收；没有就留空数组 []。",
+            "",
+            `任务目标：${goal.slice(0, 2000)}`,
+            "未完成依赖：",
+            ...pending.map(d => `- id=${d.d} 「${String(d.t || "").slice(0, 40)}」 状态=${d.s} ${completableIds.has(Number(d.d)) ? "" : "（不可补全：" + d.k + " 类）"}`),
+            "只输出 JSON。",
+        ].join("\n");
+        let plan;
+        try {
+            const { msg } = await callLlm(llm, [{ role: "user", content: prompt }], null, undefined, false);
+            const raw = String(msg?.content ?? "").trim();
+            const m = raw.match(/\{[\s\S]*\}/);
+            plan = m ? JSON.parse(m[0]) : {};
+            if (typeof plan !== "object" || plan === null) plan = {};
+        }
+        catch (e) {
+            return reply.code(502).send({ ok: false, error: "LLM 补全依赖失败：" + (e instanceof Error ? e.message : String(e)) });
+        }
+        const now = () => new Date().toISOString();
+        const evt = (cid, action, from, to, detail) => db
+            .prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`)
+            .run(cid, "human:dashboard", action, from ?? null, to ?? null, detail ?? null);
+        const pendingIds = new Set(pending.map(d => Number(d.d)));
+        const completed = [];
+        for (const item of Array.isArray(plan.complete) ? plan.complete : []) {
+            const cid = Number(item?.id);
+            if (!cid || !pendingIds.has(cid) || !completableIds.has(cid))
+                continue; // ★ 非 task 类依赖卡（智能体/交接/辅助）不靠补全置 done
+            const cur = db.prepare(`SELECT status FROM cards WHERE id=?`).get(cid)?.status;
+            if (!['done', 'archived'].includes(String(cur))) {
+                db.prepare(`UPDATE cards SET status='done', updated_at=? WHERE id=?`).run(now(), cid);
+                evt(cid, "status_changed", cur, "done", "LLM 补全依赖：判定前置已满足 → done（" + String(item?.note || "").slice(0, 80) + "）");
+                completed.push(cid);
+            }
+        }
+        const created = [];
+        for (const item of Array.isArray(plan.create) ? plan.create : []) {
+            const title = String(item?.title ?? "").trim().slice(0, 120);
+            if (!title)
+                continue;
+            // ★ 根治（2026-10-06）：按标题去重 —— 重复点「补全依赖」不再无限建卡：
+            //   已有同名 task 卡（含归档）→ 直接复用，未连线才补连线。
+            let nid;
+            const exist = db.prepare(`SELECT id, status FROM cards WHERE kind='task' AND title=? ORDER BY id LIMIT 1`).get(title);
+            if (exist) {
+                nid = Number(exist.id);
+                if (!['done', 'archived'].includes(String(exist.status))) {
+                    db.prepare(`UPDATE cards SET status='done', updated_at=? WHERE id=?`).run(now(), nid);
+                    evt(nid, "status_changed", exist.status, "done", "LLM 补全依赖：复用既有前置卡 → done");
+                }
+            }
+            else {
+                const ins = db.prepare(`INSERT INTO cards(board,kind,title,body,status,meta) VALUES ('default','task',?,?,'done',?)`)
+                    .run(title, String(item?.body ?? "").trim() || null, JSON.stringify({ completed_by: "complete-deps" }));
+                nid = Number(ins.lastInsertRowid);
+                evt(nid, "create", null, "done", "LLM 补全依赖：新建前置子任务并连线");
+            }
+            const linked = db.prepare(`SELECT 1 x FROM links WHERE src_kind='card' AND src_id=? AND dst_kind='card' AND dst_id=? AND kind='depends'`).get(id, nid);
+            if (!linked)
+                db.prepare(`INSERT OR IGNORE INTO links(vault_root,src_kind,src_id,dst_kind,dst_id,kind) VALUES (NULL,'card',?,'card',?,'depends')`).run(id, nid);
+            created.push(nid);
+        }
+        // 复查仍有多少依赖未完成（排除刚置 done 的 + 刚建的 done）；带 kind 供前端区分「可补全/死线」
+        const remaining = db
+            .prepare(`SELECT l.dst_id d, c.title t, c.kind k FROM links l JOIN cards c ON c.id=l.dst_id
+                      WHERE l.src_kind='card' AND l.src_id=? AND l.dst_kind='card' AND l.kind='depends'
+                        AND c.status NOT IN ('done','archived')`)
+            .all(id)
+            .map(r => ({ id: Number(r.d), title: String(r.t || ""), kind: String(r.k || "task") }));
+        return {
+            ok: true,
+            id,
+            completed,
+            created,
+            remaining,
+            readyToDispatch: remaining.length === 0,
+            llm: { model: llm.model },
+        };
+    });
+
     /** ⑥ 上下文摘要（LLM 有损压缩）：把会话较早消息摘要成一条，保留最近 keepRecent 条原文。
      *  区别于 compact（纯截断无损）——摘要走 LLM 生成，RESTRICTED 下 403（写会话）。 */
     app.post("/api/agent/sessions/:id/summarize", async (req, reply) => {

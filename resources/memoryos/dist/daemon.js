@@ -15,6 +15,8 @@ import { cosine, getEmbedder } from "./embed.js";
 import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
 import { maybeRunRuleReflection } from "./rule-reflection.js"; // ★ 批次⑧：每日规则反思生产线（钩子在 run() 治理链内）
 import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 export const DEFAULT_HYGIENE_CONFIG = {
     archiveEff: 0.1,
@@ -893,6 +895,31 @@ if (mainFile === "daemon.js") {
         };
         runReconcile();
         setInterval(runReconcile, 5 * 60 * 1000); // 每 5 分钟
+        // ★ 2026-10-06：扫描→自动接入自动化。工具连接页扫到的「新智能体」自动接 MemoryOS
+        //   并按规则入口注入记忆规矩，用户无需打开连接页、无需点按钮。
+        //   实现要点：scanAgents() 内部大量 spawnSync（最坏数十秒）→ 绝不能在 daemon 进程内直调，
+        //   否则阻塞事件循环拖慢 taskbridge(30s)/reconcile(5min) 定时器；改为异步 spawn 短命子进程。
+        //   子进程继承 MEMORY_DB/MEMORYOS_SERVER → 写入的库路径与本机生产库一致。
+        //   幂等：已连接且库对齐 / 已有注入段 都会被跳过，重跑无副作用。
+        //   关闭：MEMORYOS_AUTO_CONNECT=0；调频：MEMORYOS_AUTO_CONNECT_INTERVAL_MS（下限 60s）。
+        if (process.env.MEMORYOS_AUTO_CONNECT !== "0") {
+            const acScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "auto-connect.js");
+            const acInterval = Math.max(60_000, Number(process.env.MEMORYOS_AUTO_CONNECT_INTERVAL_MS ?? 10 * 60_000) || 10 * 60_000);
+            const runAutoConnectSweep = () => {
+                try {
+                    const child = spawn(process.execPath, [acScript], { cwd: path.dirname(acScript), env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+                    child.stdout.on("data", (d) => console.log(`[auto-connect] ${String(d).trimEnd()}`));
+                    child.stderr.on("data", (d) => console.error(`[auto-connect][err] ${String(d).trimEnd()}`));
+                    child.on("error", (e) => console.error(`[auto-connect] 子进程启动失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`));
+                }
+                catch (e) {
+                    console.error(`[auto-connect] 调度失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);
+                }
+            };
+            setTimeout(runAutoConnectSweep, 90 * 1000); // 启动后 90s 首轮，避开开机高峰
+            setInterval(runAutoConnectSweep, acInterval);
+            console.log(`[auto-connect] 已启用：每 ${Math.round(acInterval / 60000)} 分钟扫描一轮（启动后 90s 首轮）`);
+        }
         // ★ P2：自进化有界验证环（进化引擎提案 engine/ → 双回归门）；engine 目录由 MEMORYOS_ENGINE_DIR 指定，缺省不启用
         const engineDir = (process.env.MEMORYOS_ENGINE_DIR || "").trim();
         if (engineDir) {
