@@ -78,3 +78,34 @@ AGENTS.md
 # ---- 热更新签名私钥（只存发布机，绝不入库；公钥已内置 services/updater.js）----
 security/update-signing/
 android/MemoryOSMobile/release.keystore
+
+# ---- 10. 构建/部署产物与一次性工作产物（2026-10-11 上传 GitHub 时收口）----
+# 原则：含 >100MB 单文件（GitHub 硬限）或纯产物者一律排除；源码仍跟踪。
+# android 部署产物：phone-kernel 618MB（bundle.tar.gz 104MB / termux APK 34MB / staging 库 95MB）
+android/phone-kernel/
+android/_apk/
+android/_test/
+android/MemoryOSMobile/build/
+android/MemoryOSMobile/gen/
+android/MemoryOSMobile/build-log.txt
+android/*.apk
+# 诊断快照：含整个 Electron 运行时（et/runtime/electron.exe 235MB）
+outputs/diag-*/
+outputs/db-backup-*/
+# 一次性工作产物（UI 切片脚本、压缩批次、验收快照等）
+outputs/condense-*
+outputs/conflict-plan-*
+outputs/daily/
+outputs/fold-impl/
+outputs/p2-cli-test-ws/
+outputs/p4-acceptance/
+outputs/ui-cleanup-A/
+outputs/ui-cleanup-B/
+outputs/ui-quality-polish-*/
+# 内核侧一次性产物与测试截图
+resources/memoryos/outputs/card-manual-test/
+resources/memoryos/outputs/_diag-archive/
+resources/memoryos/outputs/daily/
+# 与项目无关的临时文件
+monkey-unicycle-juggle.html
+.vscode/

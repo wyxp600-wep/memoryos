@@ -1,0 +1,3854 @@
+{
+  "meta": {
+    "at": "2026-10-04T20:46:54.897Z",
+    "dashPort": 8788,
+    "node": "v24.18.1",
+    "chrome": "default"
+  },
+  "checks": [
+    {
+      "name": "键盘可达：Tab 聚焦导航项 + Enter 真实切页",
+      "ok": true,
+      "extra": "focused=tasks page-tasks.active=true"
+    },
+    {
+      "name": "数据行键盘等价路径：聚焦行内主操作 + Enter 打开详情",
+      "ok": true,
+      "extra": "focused=row-open detailModal.show=true"
+    },
+    {
+      "name": "P0-1 主操作件键盘可达（可点但不可聚焦）= 0",
+      "ok": true,
+      "extra": "0 个；例：[]"
+    },
+    {
+      "name": "P0-2 可聚焦但无可访问名 = 0",
+      "ok": true,
+      "extra": "0 个；例：[]"
+    },
+    {
+      "name": "P0-1c 数据行含行内主操作（键盘等价路径）",
+      "ok": true,
+      "extra": "rows=508 withPrimary=508"
+    },
+    {
+      "name": "P1-1 有 landmark（main+nav）",
+      "ok": true,
+      "extra": "main=2 nav=3"
+    },
+    {
+      "name": "P1-1 有标题层级（≥1 个 h1）",
+      "ok": true,
+      "extra": "heading 总数=1 h1=1"
+    },
+    {
+      "name": "P1-2 有 aria-live 播报区",
+      "ok": true,
+      "extra": "aria-live/status/alert/log=6"
+    },
+    {
+      "name": "P1-3 表单控件均有标签",
+      "ok": true,
+      "extra": "0 个；例：[]"
+    },
+    {
+      "name": "P1-4 导航当前项有 aria-current",
+      "ok": true,
+      "extra": "active=1 缺 aria-current=0"
+    },
+    {
+      "name": "P2-2 prefers-reduced-motion 生效",
+      "ok": true,
+      "extra": "模拟 reduce 后仍有动效元素=0 例："
+    },
+    {
+      "name": "CDP 0 未捕获异常",
+      "ok": true,
+      "extra": ""
+    }
+  ],
+  "perRoute": [
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-agent",
+      "route": "(initial)",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-agent",
+      "route": "agent",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "01 ## dispatch-agent 派发卡片 #207"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "02 【直控派发端到端三根因 + 双端口旧代码坑】2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "03 [task][assignee:opencode][s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "04 [task][assignee:claude][sta"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "05 【看板五项 UI 缺陷收口中实证出的三处根因（提交 9"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "06 8 个提升质感的组件交互方案（点击反馈/微交互）｜AI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "07 [2026-10-05 zcode 载体收口] ZCo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "08 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "09 [2026-10-05 批次收口] 任务看板双画布并入"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "10 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "11 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "12 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "13 P4验收 #174 已完成：创建 outputs/p4"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "14 工作风格铁律（用户 2026-10-04 明确吩咐，原"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "15 2026-10-04 用户否定节点画布「双画布并存」方"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "16 【交接文档详版化已提交（2026-10-04，comm"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "17 卡片#164/任务#4606 结论：dashboard"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "18 [task][assignee:dispatch-ag"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "19 7 个去掉「AI 味」的文案技巧（human writ"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "20 【执行器骨架去重完成（2026-10-04，commi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "21 【对抗性审查修复 19 项已提交（2026-10-04"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "22 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "23 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "24 [task][assignee:?][status:p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "25 【canvas-editor.js 对抗性审查结论（2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "26 【P3 CDP 驾驶执行器落地+已提交（2026-10"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "27 该 skill 隐含约定为使用创意且精致的设计方案，明"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "28 Web UI 设计 skill 的触发条件包含特定关键"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "29 【P2 CLI 直控执行器落地+已提交（2026-10"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "30 cdp-ui-walk 技能在驱动 headless "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "31 【P4 交接文档卡闭环落地 + 已提交（2026-10"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-task",
+          "route": "",
+          "text": "32 [task][assignee:dispatch-ag"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "33 【节点画布真实浏览器全流程测试通过（2026-10-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "34 7 种网站布局（整页结构选型）｜AI 提示词清单 适用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "35 【修正 #4588】回查验证与内容分析都应照常做，不属"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "36 【修正 #4577】记忆写入后不做检索验证，直接收尾。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "37 7 种下拉框（Select 类）｜AI 提示词清单 适"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "38 网页高级感 7 个关键词（设计语言层）｜AI 提示词清"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "39 侧边栏高级感 5 个表达手法｜AI 提示词清单 适用："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "40 7 种提示组件（Toast/Alert/Modal/C"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "41 【节点画布 P0 落地 + 全界面中文化 完成（202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "42 高级感 Tab 标签 6 种｜AI 提示词清单（可直接"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "43 AI 产品 6 种布局形态｜AI 提示词清单（可直接复"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "44 app.js 用户可见英文全量中文化清扫已完成（mem"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "45 dashboard index.html（memory"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "46 PC 个人工作台 5 种布局｜AI 提示词清单（可直接"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "47 MemoryOS 记忆修订的静默失败坑（工具使用经验）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "48 立体感卡片动效 6 种｜AI 提示词清单（可直接复制，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "49 移动端 UI 提示词总清单｜控件 7 种 + 加载动效"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "50 移动端 7 大控件 AI 提示词清单（可直接复制，改字"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "51 【看板节点化交互修正：先建卡后选型 + 自定义卡片类型"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "52 【看板节点化评审二轮：用户评审+三开工件 已逐条对代码"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-decision",
+          "route": "",
+          "text": "53 【看板节点化+Agent卡派发 设计报告已出（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "54 【结论】MemoryOS 前端对比度修复必须「亮色+暗"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "55 【结论】MemoryOS 仪表盘「页面合并」改造已从 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "56 Orca agent hooks 依赖环境变量（ORC"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-convention",
+          "route": "",
+          "text": "57 【用户沟通硬约定：只用中文 + 小白也能看懂的语言】用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "58 【P4 看板交互简化批（一个卡片=一个工作台）已提交】"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "59 - **门禁Fail-Closed**：writeGa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "60 - **git中文路径Bug**：`git commi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "61 - **Generation单调递增**：任务新dis"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "62 - **Dispatch句柄兼容**：句柄必须保持纯h"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "63 Orca融合P3落地要点（Design Mode CD"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "64 Orca 融合 P2 落地要点（准终端分屏 + Git"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "65 门禁 exit=13（mcp/p26-lifecycl"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "66 npm test 中 mcp/p26-lifecycl"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "67 Orca 融合 P0+P1 已落地（2026-10-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "68 MemoryOS 批次F1（2026-10-03，提交"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "69 MemoryOS 批次C3/C4（2026-10-03"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "70 存在一批untracked排障脚本需用户确认后处理 r"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "71 AI Vault核心契约包括status索引账本、四态"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "72 建议按A2→C2→B2→B1→D1顺序实施 存在“工作"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "73 每日复盘自动化在代理未监听时会静默502失败 自动化静"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "74 resources\\memoryos\\data\\mem"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "75 [session_id: 6ac0056f817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "76 [session_id: 6ac0056f817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "77 [session_id: 6abfacf4817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "78 The user presented four cat"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "79 [session_id: 6abfacf4817199"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "80 - `git commit -F`命令在包含中文的路径"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "81 - 排障时断言“壳坏了”前必须先排除两项：exe内嵌旧"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "82 - 敏感配置文件`resources/memoryos"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "83 - Memory entry #3370 (parti"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "84 - Modifying AGENTS.md direc"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "85 - For all modifications, fo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "86 - Do not write sensitive cr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "87 - The project has two simil"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "88 - Read memory by &#39;task所"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "89 - After task completion, th"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "90 - Irreversible operations m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "91 - Modifications must not cr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "92 - All AI entries must autom"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "93 - AGENTS.md is a synchroniz"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-rule",
+          "route": "",
+          "text": "94 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-pitfall",
+          "route": "",
+          "text": "95 【2026-10-02 深夜 手机 agent 写不入"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "96 zcode存储状态中session数据库的迁移状态以l"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "97 AI Vault核心契约包括status索引账本、四态"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "98 - **表述方式（2026-10-02 用户原话\"以后"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "99 AI Vault核心契约包括status索引账本、四态"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "row-experience",
+          "route": "",
+          "text": "100 Orca采用ratchet（基线只减不增）技术 建议"
+        }
+      ],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-memory",
+      "route": "memory",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-tasks",
+      "route": "tasks",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-obsidian",
+      "route": "obsidian",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-govern",
+      "route": "govern",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "01 - **门禁Fail-Closed**：writeGa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "02 - **git中文路径Bug**：`git commi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "03 - **Generation单调递增**：任务新dis"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "04 - **Dispatch句柄兼容**：句柄必须保持纯h"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "05 - 最全+最优改动（范围由需求定、深度做满）：需求范围"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "06 - **移动端密钥隔离**：Termux/非 Wind"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "07 - **门禁抖动重试**：`npm test` 中 m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "08 - **工具空转熔断**：调用 MCP 工具（如 me"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "09 - **沙箱EPERM降级**：Windows DSH"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "10 - **db.js 依赖反向**：数据层 db.js "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "11 - **asar 热修失效**：MemoryOS.ex"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "12 - **EMBED_MODE 兜底**：embed.j"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "13 - **CDP 键盘事件**：CDP 测试原生控件激活"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "14 - **MemoryDB 双库**：跨 Agent 记"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "15 - **EADDRINUSE 隔离**：dashboa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "16 - **startCore 幂等**：`core-pr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "17 - **spawnSync 阻塞**：MCP 事件循环"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "18 - **`powercfg /q` 输出含中文标签**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "19 - **含中文路径的工作区禁 `powershell "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "20 ## 五、章节索引（全文在 `MEMORY-DETAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "21 - **系统受保护文件（hosts）**：带 BOM，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "22 - **对话取证**：`conversation_se"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "23 - **计划任务零窗口**：计划任务 → `wscri"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "24 - **端口**：80 常被 IIS(W3SVC) 占"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "25 - **网络**：google 被墙 → 搜索用 **"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "26 - **managed node 22 的 `fs.c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "27 - **safe-delete 垫片**：删除失败时命"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "28 - **PowerShell 工具 stdout 常被"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "29 - **Bash PATH 可能缺 coreutils"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "30 - 未明说时授权 AI 自选（如\"你自己选\"）→ 事后"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "31 - 偏好：**辅助程序收敛成单文件**（反感散落多脚本"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "32 - 角色：跨境 ERP（wimoor-erp）技术负责"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "33 - 全中文；结构化、简洁；结论先行；表格化 + ✅/❌"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "34 - **agents.md 真相源纪律**：写入前必须"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "35 - **多 AI 并行项目第一动作 = 读 `CLAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "36 - 先说清交付物再动手；**不交付半成品**（依赖离线"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "37 ### 错误模式十类（动手前对照；详版见 DETAIL"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "38 - **通用任务协作规则 v3.0**（2026-09"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "39 5. 若 `mcp__memoryos__*` 不可用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "40 4. **WorkBuddy 内核不支持 hooks*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "41 3. 完成重要任务（>30min 修复/技术决策/踩坑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "42 2. 命中须 `memory_cite` 标注来源；确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "43 1. 收到用户**任何消息**（含闲聊/探针/打招呼/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "44 ## ⚠ 最高优先级：开工先检索记忆库（不可跳过 · "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "45 # 用户长期偏好（跨项目 · 索引版） > 细节全文见"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "46 - 已入库任务统一通过 MemoryOS 看板展示，避"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "47 - 若当前 Agent 无 MCP 能力（WorkBu"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "48 - 领任务：先 `task_next`/`task_c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "49 - **禁止**在各自客户端私有任务区建\"只在本工具可"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "50 - 建任何任务，一律通过 MCP task_assig"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "51 ### 任务统一入口（2026-09-14 沉淀，所有"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "52 coding agent 必须持续执行直到 query"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "53 ## Core Truths **Be genuine"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "54 # SOUL.md - Who You Are *Yo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "55 3. **scope 必须双扫**：`memory_s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "56 2. **无豁免**：上述「开工先搜后干」**不受 s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "57 1. **工具是 deferred**：`mcp__m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "58 ## 记忆召回硬约束（2026-09-07 手工写入，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "59 - **待办**：sendInterview/send"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "60 - **llmChat**：加 per-call ti"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "61 - **parseReply 增强**：处理 `(独白"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "62 - **LLM 生成反馈三件套**（用户 9/1 报\""
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "63 - **E2E 验证**：用 Node CDP（`.m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "64 - **三端链路**：`vnext.html` 前端 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "65 ## 十二、StoryLab 工作区（2026-09-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "66 - 提交前先 `git ls-files | grep"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "67 - `git gc` 报 `failed to cle"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "68 - 大仓 `git add -A`（3.5 万文件）约"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "69 - **git 命令禁止接 `| head` / `|"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "70 - **gitignore 含斜杠的规则锚定仓库根**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "71 ### 硬坑（本次代价：.git 从 0 涨到 14G"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "72 5. **登记防复发**：移交区变更同步写回 CLAI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "73 4. **只接手授权范围**：已完成的标完成、未完成的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "74 3. **核查已完成项**：`git log` / `"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "75 1. **读 CLAIM.md**：确认硬分区，知道哪"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "76 ### 接手/接管流程（并行 AI 退出或额度耗尽时，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "77 4. **评审对手计划而非执行它**：执行即正面撞车。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "78 3. **建 git 基线**：无版本控制时这是唯一回"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "79 2. **出分区表 + 占用登记文件**（根目录 `C"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "80 1. **先探测对手痕迹**：`ls -a` 看 `."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "81 ## 十一、多 AI 并行工作区防冲突（2026-08"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "82 - **应对**：①高价值任务前先确认当前模型是否临近"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "83 - **结论**：429 不是\"慢一点就好\"的小问题，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "84 - **证据**：8/29 18:33 用户要求\"建立"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "85 ### 2026-08-30 实测：429 阻断真实任"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "86 ### 2026-08-29 弹窗修正确认（指向 §四"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "87 - 计划任务需设 `ExecutionTimeLimi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "88 - 改为**计划任务每 5 分钟跑一次性检查脚本**："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "89 - 曾用 bat 无限循环守护 + 登录时触发，失败："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "90 ### 2026-08-24 加固（踩坑记录） wor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "91 - **2026-08-30 能力扩展（8/30 落地"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "92 - 测试：`curl -X POST http://1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "93 - 代理挂了 → 最多 5 分钟内被计划任务自动拉起（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "94 - 检查代理：`netstat -an | grep "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "95 - 自动保活：Windows Task Schedul"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "96 - 模型配置：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "97 - **已删除（8/29 清理）**：`check-p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "98 - 自检日志：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "99 - 任务定义备份：`...\\workspace\\tas"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "100 - 看门狗（**2026-08-29 起，VBS 零"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "101 - 代理脚本：`C:\\Users\\WYX\\.work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "102 - 按 `model` 字段自动路由到对应后端 wo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "103 - 修复 `max_tokens` 超出模型上限 →"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "104 - 修复 content part `{\"type\""
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "105 ### 解决方案 本地代理 `mimo-proxy."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "106 - agnes: `500 max_tokens e"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "107 - mimo: `400 Param Incorre"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "108 ### 背景 mimo-v2.5-pro 和 agn"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "109 ## 十、WorkBuddy 自定义模型代理（202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "110 - **当前状态**：已接入，未建自动化任务。等用户"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "111 - **接入邮箱**：`ecjj5272@agent"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "112 ## 九、Agent Mail 邮件通道（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "113 5. **报告落盘 + CLAIM 登记**，结论先"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "114 4. **人工抽验最重磅 P0**：逐字比对行号与内"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "115 ### 实证优先正面范式（2026-08-30 代码"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "116 - **质量标准**：每条记忆需具体到可执行（文件路"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "117 - **合并规则**：语义相似但表述不同的条目 → "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "118 - **根因**：`conversation_sea"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "119 - **连续空转**：8/27 08:08、8/28"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "120 ### 自动化任务自身的可靠性（2026-08-29"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "121 - **教训（2026-08-29）**：仅读 AI"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "122 - **高频错误模式**：共 **十类**（①意图跑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "123 - **分析维度**：用户真实意图 / AI错误类型"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "124 - **全项目扫描（2026-09-09 修正）**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "125 - **技能配置**：选择能增强任务执行能力的技能 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "126 - **专家选择**：选择与任务领域匹配的专家（如L"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "127 - **执行频率**：根据任务性质设置（每日、每周、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "128 - **任务命名**：使用描述性名称，体现任务目的（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "129 ## 八、自动化任务管理与对话反思（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "130 - **环境坑**：受管 Python 无 pyya"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "131 - **已落地 artifacts**：`agent"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "132 - **四维度闭环**：①规则显化 ②流程锁死 ③技"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "133 ### 大项目 AI 约束文档落地（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "134 - **本地技能安装与 UI 刷新（2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "135 - 取证步骤：①按 `os.path.getmtim"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "136 - **本地 jsonl 取证法（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "137 - **conversation_search**："
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "138 - **完整对话在云端**（`edge-sync`）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "139 - **sessions 表**存元数据（id/cw"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "140 ### WorkBuddy 对话存储（2026-08"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "141 - **Ozon API 现状（2026-08-27"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "142 - **图标空盒根因**：`@icon-park/v"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "143 - **导航机制**：`layout/index.v"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "144 - **1688-collector sidecar"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "145 - **栈**：前端 Vue3 + Element "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "146 ## 六、wimoor-erp 项目速查（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "147 - **期望跨会话连续性**（2026-08-27 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "148 - **偏好的产出形态**：自动化任务、知识管理系统"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "149 - **近期最想解决的事**：建立自动化的对话分析和"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "150 - **当前重心**：持续优化AI协作效率，建立知识"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "151 - **已自有**：个人知识/规范手册类系统 → 勿"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "152 - **技术栈**：Vue3 + Spring Bo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "153 - **角色**：跨境 ERP（wimoor-erp"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "154 ## 五、用户背景卡（2026-08-20，持续更新"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "155 - **Codex 弹窗同源**：`Codex Dr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "156 - **活进程回写（hosts 清理秒级复发根因，2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "157 - **兜底做法**：此类修改，产出正确脚本交给用户"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "158 - **沙箱拦截真实写入**：WorkBuddy 沙"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "159 - **BOM 编码坑**：`C:\\Windows\\"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "160 ### 系统受保护文件写入（hosts 等，2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "161 - **装前先清残留**：注册表有卸载项但程序目录只"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "162 - **NSIS 安装器退出码不可信**：163 M"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "163 ### 安装器与退出码（2026-08-29 实战）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "164 - **特权端口（<1024）绑定需管理员**：S3"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "165 ### 端口冲突与特权端口（2026-08-27 实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "166 - **诊断性禁用看门狗必须收尾（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "167 - **VBS `W.Exec` 仍创窗口（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "168 - **排查 5 分钟周期性闪窗的取证法**：50m"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "169 - **沙箱对 `Desktop` 无写权限**：改"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "170 - 已落地：`C:\\Users\\WYX\\.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "171 - VBS 内部起进程：`Set sh = Crea"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "172 - 计划任务动作：`wscript.exe //B "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "173 - **零窗口正解**：VBS + `wscript"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "174 - **`-WindowStyle Hidden` "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "175 ### Windows 计划任务与弹窗根治（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "176 - **教训**：「safe-delete 垫片需 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "177 - **重打包 MemoryOS 桌面版的标准姿势*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "178 - 解法：凡涉及 `fs.cpSync` 的构建/拷"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "179 - 对照实证：系统 `C:\\Program File"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "180 - **managed node 22.22.2 的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "181 - 附带坑：自建临时目录若卡在 trash 失败，会"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "182 - 解法：命令前加 **`CODEBUDDY_SAF"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "183 - 症状：`build-portable.mjs` "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "184 - **删除被重定向到回收站**：本环境把 `fs."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "185 ### WorkBuddy 删除钩子 + node "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "186 - **不可逆删除走\"待删区\"而非回收站 API**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "187 - 无 mysql 客户端 → 受管 Python "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "188 - Git Bash 下 `taskkill` 参数"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "189 - Maven：依赖已在 `~/.m2` 时**只重"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "190 - PowerShell 经 Bash 调用被拦 /"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "191 - **铁律**：凡路径交给 Python/Node"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "192 - **Git Bash `/c/Users/..."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "193 ### Windows 路径铁律（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "194 - **诊断工具**：受管 Python `urll"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "195 - **网速**：国内 ~100-200Mbps；国"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "196 - **搜索**：google 被墙 + 无代理 →"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "197 - **hosts 劫持**：Steam++ + S"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "198 ### 网络环境（2026-08-20） workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "199 - 验证前端**不能停在** build 通过 / "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "200 ### 交互可用性验证（2026-08-22 用户严"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "201 - **环境硬约束**：无 `TeamCreate`"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "202 - **实证闭环**：图标不显色 → 先读源码 + "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "203 - **图标色跟随主题**：禁写死 `!import"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "204 - **Vue scoped 样式不穿透子组件 SV"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "205 - 验证样式下发：curl 主模块抓 `?vue&t"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "206 - 后台 dev server 会被系统回收；用户报"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "207 - 须用宿主进程启动（`dangerouslyDis"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "208 ## 三、前端开发全流程（Vue3 项目） work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "209 - **多 AI 并行先读 CLAIM.md**：见"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "210 - **实验性改动须成对收尾**：见「四、环境与工具"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "211 - **交付即闭环，不许留\"待用户点一下\"就断线**"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "212 - **排查周期性现象先自查自装定时器**：见「一、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "213 - **先建基线再大改**：无 git/无上游基线时"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "214 - **端口/进程操作先报备**：杀进程、改启动脚本"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "215 - **复用既有 skill**：涉及 Ozon A"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "216 - **大系统禁整体重写**：wimoor-erp "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "217 - **不交付半成品**：依赖离线（sidecar/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "218 - **先说清交付物再动手**：任何 build 类"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "219 - **意图方向先确认**：见「一、AI 协作工作流"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "220 - **进化引擎升级（2026-08-23 实战）*"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "221 - **持续改进**：定期回顾错误模式，优化工作流程"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "222 - **知识积累**：将反思结果转化为可复用条目，写"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "223 - ⑩ **未核实即假定专家/连接器/工具存在（自封"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "224 - ⑨ **多 AI 并行未先读协调文件**（202"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "225 - ⑧ **过早宣布\"已根治/已验证\"**（2026"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "226 - ⑦ **验证只验状态码不验内容**（2026-0"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "227 - ⑥ **忽略用户原话里的关键名词**（2026-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "228 - ⑤ **不自查自己埋的坑**（2026-08-2"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "229 - ④ **命名/品牌错误**：品牌名\"星璇\"误写为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "230 - ③ **过度操作**：附带无关重构、主动\"建议\""
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "231 - ② **交付半成品**：build 通过 / c"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "232 - ① **意图跑偏**：用户说\"分析竞品X\"→ 真"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "233 - **高频错误模式**（对话分析验证）： work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "234 - **任务后总结**：每次任务完成后，总结成功点和"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "235 ### 错误反思机制（2026-08-23~24 实"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "236 - **实证优先**：现象异常且反复时，先读文件/抓"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "237 - 改前说明改哪些文件、改什么、为什么；改后说明如何"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "238 - **①分析根因 → ②给出方案（含权衡/涉及文件"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "239 ## 一、AI 协作工作流（强约束，2026-08-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "240 # 用户长期偏好（跨项目） > ## ⚠ 最高优先级"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "241 - 先方案后动手：提供方案须先陈述权衡分析（trad"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "242 ## MemoryOS 同步规则（自动维护，勿手改）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "243 所有输出必须用中文 记住犯得错误并修改，记忆下次不再"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "244 prefix_rule(pattern=[\"C:\\\\"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "245 ## Vibe Be the assistant y"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "246 - You're not the user's vo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "247 - Never send half-baked re"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "248 - When in doubt, ask befor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "249 - Private things stay priv"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "250 --- title: \"SOUL.md Templa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "251 - 中文回复：所有面向用户的输出必须使用中文。（来源"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "252 - 明确区分\"已验证编译\"与\"待用户点测交互\"，不得"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "253 ponytail skill enforces YA"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "254 角色与方法:后端架构师;方法论=先认知再检索、先方案"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "255 结构化表达:四维框架(显式规则/锁定流程/技术兜底/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "256 硬约束:技能/程序单文件;方案先列trade-off"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "257 技术栈:前端为主,熟悉CSS/DOM;精通Vue3/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "258 UI设计偏好:交互元素易点无需滚动;模态内容短减少滚"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "259 记忆沉淀工作流:重要任务完成后AI自动沉淀不用问;①"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "260 沟通风格:docs before code、evid"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "261 执行原则v3——0先砍任务:最大浪费=高效做不必要的"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "262 codex rules允许使用PowerShell "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "263 绑定特权端口需以管理员身份运行程序，对外部行为（邮件"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "264 开工先memory_search检索已有记忆；执行遵"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "265 在subagent模式下，推理预算固定为16000 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "266 turnNumber追踪会话轮次，attempt=1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "267 审查前读CLAIM.md对齐分区并声明只读范围，仅审"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "268 遇到技术问题（如端口冲突排查 W3SVC/IIS 绑"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "269 更新记忆库时须同步维护FTS全文索引且embeddi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "270 MCP服务器采用fastmcp v3顶层导出Fast"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "271 记忆写入长度规范：每条记忆 content 控制在 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "272 finishReason为框架内部枚举（如tool-"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "273 MCP连接采用连接池+lease租约机制，按work"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "274 代码审查 AI 交付物时必须限定范围，只审 AI 近"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "275 AI 代码审查按六类过度工程模式扫描：delete（"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "276 finishReason=tool-calls 表示"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "277 MCP连接默认使用stdio传输协议而非SSE或HT"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "278 审查输出需按文件或模块分组，每条发现必须包含文件路径"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "279 zcode 模型请求重试配置 maxAttempts"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "280 MCP连接采用session级别隔离（mcpIsol"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "281 插件型MCP服务器采用plugin:<namespa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "282 workspaceKey 使用完整 Windows "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "283 ZCode memory模块默认启用但memoryE"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "284 ZCode配置来源优先级：用户级配置（configS"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "285 对话rewind机制会保留从目标消息往前N条上下文并"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "286 Model ID格式含workspace类型前缀（如"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "287 ZCode启动时序：先完成bootstrap.run"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "288 默认工作目录为~/.zcode/workspace/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "289 记忆去重：similarity>0.96执行merg"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "290 前后端分离场景下，若前端卡片数据通过API动态加载成"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "291 测试覆盖缺口：serve_api.py 缺 HTTP"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "292 do_POST 未校验 Content-Type（s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "293 CSS 样式修改应先锁定目标选择器，避免全局样式污染"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "294 现有体系新增缺口：反馈层到记忆层的回写闭环尚未实现，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "295 去重阈值设为 cosine similarity >"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "296 新增 API 扫描端点时，必须同步更新前端渲染逻辑并"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "297 Dashboard 连接真实 API 后，静态资源需"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "298 dist/ 包含 17 个编译产物文件，构建指令输出"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "299 POST /api/archive接口必须支持事务性"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "300 D6 检索过滤：effectiveness ≤ 0."
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "301 D3 去重机制：similarity > 0.96 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "302 serve_api.py的--port默认值必须设为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "303 serve_api.py的CORS仅回显白名单内的O"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "304 8000静态服务由static_server.py替"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "305 修改后端代码后必须重启8120服务才能生效，否则更改"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "306 WorkBuddy AI 记忆入口：~/.workb"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "307 Trae 记忆入口：~/.trae-cn/memor"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "308 智能体规则注入清单不能仅凭目录结构推断，需逐目录探查"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "309 国内访问 huggingface 需注入 EMBED"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "310 openEdit(id, forcedType) 支"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "311 SOURCE_SPECS 中 glob 过宽会扫描出"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "312 代理配置文件注入后需自动生成时间戳备份至~/.cod"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "313 端到端验收需覆盖6项核心场景：dry-run不落库、"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "314 wimoor-erp 项目禁止修改 common/s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "315 wimoor-erp 项目严格禁止引入 Ant De"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "316 所有功能逻辑必须收敛在单文件内，禁止跨文件散落 tr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "317 技术栈固定为Vue3+Element Plus+Vi"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "318 界面设计必须支持响应式布局，适配不同窗口尺寸。 tr"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "319 固定定位元素（如 fixed div）在窗口滚动时不"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "320 UI 交互元素须易于访问和点击，按钮应避免需滚动才能"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "321 IDENTITY.md 在手动 bootstrap "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "322 沟通风格应遵循「温暖、直接、不啰嗦」三原则：该认真时"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "323 修改本文件（SOUL.md）时必须主动告知用户，因为"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "324 每次会话启动时记忆是空的，必须读取并维护这些文件来延"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "325 涉及外部发声时，若不确定则先询问用户再行动。依据：你"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "326 用户赋予的访问权限涉及私密信息（消息、文件、日历等）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "327 遇到任务先自行尝试解决（读文件、查上下文、搜索），确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "328 允许表达观点、偏好和态度，包括不同意或觉得某事有趣/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "329 避免表演性礼貌用语（如\"Great question"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "330 双代理并行深读（Java + 前端各一）后，代理结论"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "331 单次写入不超过3000字符，条目按重要性排序。 wo"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "332 每条记忆需具体到可执行级别（包含文件路径/命令/参数"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "333 环境已变或工具更新的过时条目必须删除，并用新版替代。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "334 语义相似的条目必须合并为一条精炼表述，避免记忆库冗余"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "335 自动化流程第一步固定为本地 jsonl 取证，con"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "336 软删除恢复方法：UPDATE sessions SE"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "337 本地 jsonl 取证法是 conversation"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "338 views/finance 是纯前端孤岛，无对应后端"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "339 跨日会话开工前，必须先确认 Docker 等基础设施"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "340 开工前主动查阅记忆库/历史日志，不要让用户复述数天前"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "341 提供 AI 模型或订阅建议时，必须附带计费口径（积分"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "342 辅助程序/工具脚本优先交付单文件方案，将检测与启动逻"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "343 诊断性临时操作（如禁用计划任务）必须设置自动收尾机制"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "344 沙箱环境对桌面目录无写权限，涉及快捷方式修改或管理员"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "345 PowerShell Out-File 默认 UTF"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "346 PowerShell 直接调 WScript 执行 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "347 回复用户时禁止使用 emoji，需保持纯文本格式以确"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "348 ZCode Explore 子代理严格运行于只读模式"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "349 单条操作与批量操作逻辑完全同构时，应直接复用同一实现"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "350 input/output token比约为95:1且"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "351 zcode 会话元数据中 workspaceRoot"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "352 后端AI模块存在过度构建风险，应用Explore p"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "353 base64内联图片格式(data:image/pn"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "354 单模独占前提已失效，修改代码前必须先确认 WorkB"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "355 双AI并发改同一代码库会导致文件互相覆盖、.m2/N"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "356 条件渲染的UI片段建议用独立变量承载（如diagno"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "357 通过三元链实现多区间条件映射（如分数80+/60+/"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "358 语义化颜色体系应统一映射：success=绿色、wa"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "359 诊断折叠块（diagnose-collapse/to"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "360 筛选按钮的hover和active状态应合并选择器统"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "361 CSS组件样式优先使用语义化CSS变量（如--acc"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "362 crossRepeat 字段检测跨场次复读现象，记录"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "363 单场景默认轮次上限12轮（max_rounds: 1"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "364 发言纪律限制每次≤3句（max_line_lengt"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "365 记忆超10条时需触发压缩合并机制（memory_ca"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "366 初始化函数initHealthScore内部直接调用"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "367 调试阶段可直接运行构建产出的exe文件进行本地测试验"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "368 当原文仅有结构框架而无实际内容时，不应强行生成记忆条"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "369 健康度分数计算：取所有报告的 humanScore "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "370 跨场次重复标记合并：使用 `a || b` 模式优先"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "371 后端 reports 数据中的 scanCount "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "372 tags组件按语义分色：普通tag用--bg-ter"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "373 渐进增强完成区块中，V3质量健康度初始化(initH"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "374 gravity=high场景下必须强制附加'推进核心"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "375 dupian扫描结果需同时聚合执法级命中数与huma"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "376 仪表盘健康度计算采用三段阈值：≥80绿/≥60黄/<"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "377 gravity模式控制场景推进强度：low=参考建议"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "378 侧边栏导航使用overflow-y: auto独立滚"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "379 采用CSS Grid布局（grid-template"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "380 praises默认填充需覆盖'没人留下内心'的元评价"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "381 反哺指令应跳过平淡(type=flat)问题，优先选"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "382 当存在 dupian 时，应同时评估 human_s"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "383 跨轮复读检测只需回溯前3轮（range(max(0,"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "384 相邻轮完全复读(type=\"echo\")保留原逻辑，"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "385 观察级cliché(hit tier=\"观\")仅记账"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "386 扫描命中数需排除观察级记录，使用 scan_coun"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "387 亮点轮判定需同时满足内心层长度 > 10 且 hum"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "388 台词重复检测应使用 cross_repeat 跨轮 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "389 collect_candidates规则：inner"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "390 advice生成策略：取issues第一条转述为下一"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "391 毒舌红线条目用常量集合存储（_AI_CLICHES）"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "392 editorial.py 的 collect_can"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "393 cross_repeat 跨轮复读检测仅在 turn"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "394 平淡轮判定阈值：台词字符数 < 4 视为无效输出；内"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "395 毒舌编辑部采用确定性规则（mock模式）与LLM评审"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "396 ad-hoc指令扩展中的笔记是信息源而非行动指令——"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "397 用户存在错误时必须直接指出，不得为迎合用户而执行错误"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "398 修改前应先制定完整计划，确保一次性修改到位，避免反复"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "399 修改后的文件统一存放至桌面，保持项目目录整洁，避免污"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "400 严格保护敏感信息（如.env、API Key、Tok"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "401 生成和修改代码时需保持严谨，确保逻辑正确、无漏洞。 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "402 严禁直接修改源文件，必须复制文件后在副本上修改，保留"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "403 代码修改完成后必须说明验证方式，确保变更可被检验。 "
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "404 修改代码前需明确告知将要修改哪些文件，不隐瞒改动范围"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "405 修改代码前必须先阅读项目结构，了解整体架构后再动手。"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "406 调试阶段可直接运行构建产出的exe文件进行本地测试验"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "407 允许对内部依赖目录（_internal）按app*前"
+        },
+        {
+          "kind": "dataRow",
+          "tag": "tr",
+          "cls": "",
+          "route": "",
+          "text": "408 构建前清理：先删除目标目录（桌面或临时路径）下同名打"
+        }
+      ],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-rules",
+      "route": "rules",
+      "focusableNoName": []
+    },
+    {
+      "clickableNotFocusable": [],
+      "unlabeledControls": [],
+      "navActiveNoCurrent": 0,
+      "navActiveTotal": 1,
+      "collapsibleNoExpanded": 0,
+      "disclosure": {
+        "present": 0,
+        "focusable": 0,
+        "hasExpanded": 0
+      },
+      "rows": {
+        "total": 508,
+        "withPrimary": 508
+      },
+      "landmarks": {
+        "main": 2,
+        "nav": 3
+      },
+      "headings": {
+        "total": 1,
+        "h1": 1
+      },
+      "ariaLive": 6,
+      "visiblePage": "page-skills",
+      "route": "skills",
+      "focusableNoName": []
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MemoryOS 手机版：瘦客户端壳（WebView 连电脑内核）。无 AndroidX 依赖，aapt2 手工构建。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.memoryos.mobile"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 内核走 http://（局域网无 TLS）：仅本 App 进程允许明文，token 门禁在服务端 -->
+    <application
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:label="@string/app_name"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
