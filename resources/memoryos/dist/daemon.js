@@ -10,7 +10,7 @@
  *   ③ 去重    sim>0.96 合并，存活者=命中多者；跨来源印证 conf+0.1；LIMIT 50/轮
  * 验收：--once --dry-run 输出计划且不落库。
  */
-import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory } from "./db.js";
+import { openDb, listEffRows, setEff, archiveMemory, archiveTrial, markMerged, logDaemon, bumpConfidence, setStatus, readConfig, writeConfig, checkpointWal, backupDb, upsertVector, SECTORS, writeMemory, readMemory, foldInto } from "./db.js";
 import { cosine, getEmbedder } from "./embed.js";
 import { reconcileTasksAndCards, evolutionRegressionGate } from "./reconcile.js";  // ★ P2-6（C-5）三方对账 + P2 进化双回归门
 import { maybeRunRuleReflection } from "./rule-reflection.js"; // ★ 批次⑧：每日规则反思生产线（钩子在 run() 治理链内）
@@ -22,7 +22,7 @@ export const DEFAULT_HYGIENE_CONFIG = {
     archiveEff: 0.1,
     archiveAgeDays: 45,
     dedupeSim: 0.96,
-    dedupeRoundLimit: 50,
+    dedupeRoundLimit: 10,
     qPromote: 0.65,
     trialAgeDays: 30,
     trialPolicy: "lenient",
@@ -289,6 +289,8 @@ export function applyPlan(db, plan, dryRun) {
         }
         // ③ 去重（loser→merged + superseded_by；跨来源 winner conf+0.1）
         for (const d of plan.dedupes) {
+            const loser = readMemory(db, d.loser);
+            if (loser) foldInto(db, d.winner, loser.content, { fromId: d.loser, agent: loser.agent });
             markMerged(db, d.loser, d.winner);
             if (d.crossSource)
                 bumpConfidence(db, d.winner, 0.1);

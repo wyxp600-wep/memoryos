@@ -25,6 +25,7 @@ const ASAR = path.join(ROOT, "resources", "app.asar");
 const SYNC_FILES = [
   "/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js", // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
   "/preload.js", "/welcome.html", "/assets/icon-512.png", "/assets/icon.ico", "/assets/tray.png", // ★ P2-7：asar-only → 落树纳管
+  "/assets/tray.ico", // ★ 2026-10-10：多尺寸托盘图标（托盘根治 T3）
   // ★ 2026-09-21（A 分区跨区修复，P0）：以下壳层文件在 asar 内但不在本清单 → 改动重打包后静默丢失
   //   （与 09-18 发现的 lint 白名单盲区同类）。补齐后所有壳层源码改动均可被 `node pack-asar.js` 带入 asar。
   "/window/main-window.js", "/window/welcome-window.js",
@@ -171,6 +172,13 @@ function main() {
     data: SYNC_FILES.includes(f.p) ? fs.readFileSync(sourceFile(f.p)) : extract(old, f),
     recompute: SYNC_FILES.includes(f.p),
   }));
+  // ★ 2026-10-10：SYNC_FILES 里的新文件（旧 asar 没有）也要带入，否则新增资源静默丢失
+  for (const p of SYNC_FILES) {
+    if (!old.files.find((f) => f.p === p)) {
+      entries.push({ p, data: fs.readFileSync(sourceFile(p)), recompute: true });
+      console.log("新增带入 asar:", p);
+    }
+  }
 
   const out = packAsar(entries, old.header);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -180,7 +188,7 @@ function main() {
   fs.writeFileSync(tmp, out);
   // 说明：rename 覆盖 app.asar 在本机报 EPERM，改用 copy 覆盖（同目录，原子性足够）
   fs.copyFileSync(tmp, ASAR);
-  fs.unlinkSync(tmp);
+  try { fs.unlinkSync(tmp); } catch { /* 沙箱/网络驱动可能报 EPERM，可安全忽略（tmp 在 resources/ 同目录） */ }
   console.log("备份:", bak);
   console.log("新 asar 字节:", out.length, "（旧:", old.buf.length, "）");
 

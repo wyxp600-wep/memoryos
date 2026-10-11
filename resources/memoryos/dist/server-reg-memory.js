@@ -8,7 +8,7 @@
  * 门禁：npm test（smoke-mcp/smoke-agent 走 tools/list）+ npm run lint + npm run snapshot:check 全绿。
  */
 import { z } from "zod";
-import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, gramProbe } from "./db.js";
+import { writeMemory, readMemory, dedupeDecision, getVectorsOnProject, bumpConfidence, logUsage, logDaemon, appendEvent, setStatus, gramProbe, foldInto } from "./db.js";
 import { hybridSearch, semanticDegradation } from "./search.js";
 import { funnel, trend, topMemories, zombies, crossTool, usageHealth, indexHealth, REPORT_NAMES } from "./report.js";
 import { getEmbedder, embedMode } from "./embed.js";
@@ -19,6 +19,15 @@ export function registerMemoryTools(server, ctx) {
     // ★ 2026-10-03 批次C2（截断契约扩面）：命中正文摘要长度上限（截断层③）——原散落的 magic number 220，
     //   提为常量以便"有几条被缩"的量化与调用方提示。
     const SNIPPET_MAX = 220;
+    // P0-token-3：session 注入去重缓存（同 session_id + focus + project + limit 内容哈希未变 → 跳过重复注入）
+    const _contextCache = new Map(); // key = session_id, value = { hash, result }
+    /** 计算 memory_context 注入的内容指纹（FNV-1a，含 top ids + focus + project） */
+    function _contextHash(top, args) {
+        let h = 0x811c9dc5;
+        const s = (args.focus ?? "") + "|" + args.project + "|" + top.map((t) => t.id).join(",");
+        for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+        return (h >>> 0).toString(16);
+    }
     /** ★ 批次C3（P1-10 检索分页）：cursor 绑定键 = query+project 的 FNV-1a 32bit。
      *  不存全量 query（cursor 保持不透明短串）；query 或 scope 一变即 stale（对标 Orca stale-cursor：作废、客户端重发第 1 页）。 */
     function cursorHashOf(query, project) {
@@ -36,18 +45,26 @@ export function registerMemoryTools(server, ctx) {
     function evidenceSnippet(flatContent, query, cap = 120) {
         const terms = (String(query ?? "").match(/[一-鿿]+|[a-zA-Z0-9_]+/g) || []).filter((t) => t.length >= 2);
         const low = flatContent.toLowerCase();
+        // P0-token-1：锚定到 SNIPPET_MAX 之后的第一个命中（前段已在命中行展示，证据块只服务后段）
         let pos = -1;
         for (const t of terms) {
-            const p = low.indexOf(t.toLowerCase());
-            if (p >= 0) {
-                pos = p;
-                break;
-            }
+            const p = low.indexOf(t.toLowerCase(), SNIPPET_MAX);
+            if (p >= 0) { pos = p; break; }
         }
         if (pos < 0)
             return flatContent.slice(0, cap);
         const from = Math.max(0, pos - 40);
         return `${from > 0 ? "…" : ""}${flatContent.slice(from, from + cap)}${from + cap < flatContent.length ? "…" : ""}`;
+    }
+    // P0-token-1：证据块条件化——仅当词命中位置 ≥ SNIPPET_MAX 时才输出（命中在前段则命中行已覆盖，证据块纯冗余）
+    function shouldEmitEvidence(flatContent, query) {
+        const terms = (String(query ?? "").match(/[一-鿿]+|[a-zA-Z0-9_]+/g) || []).filter((t) => t.length >= 2);
+        const low = flatContent.toLowerCase();
+        for (const t of terms) {
+            const p = low.indexOf(t.toLowerCase(), SNIPPET_MAX);
+            if (p >= 0) return true;
+        }
+        return false; // 所有词仅在前段命中，证据块无增量
     }
     /** ★ 批次C4（P1-12）：向量可用性三态 —— memory_vectors JOIN（P1-2.2 拆表）+ embedding_stale（P1-2.4 stale 惩罚）。
      *  ok=有向量且最新 / stale=正文已改向量未重算（语义分可能滞后，daemon embed-backfill 补算）/ missing=无向量（仅词法可召回）。
@@ -196,8 +213,9 @@ export function registerMemoryTools(server, ctx) {
                 // emb=null（离线嵌入降级）→ cosine(vec,null) 会抛，跳过向量去重（精确同文闸已兜底），直接 insert
                 const d2 = emb ? dedupeDecision(getVectorsOnProject(db, args.project), emb, -1) : { action: "insert", targetId: null, sim: -1 };
                 if (d2.action === "merge" && d2.targetId) {
-                    plan = { kind: "merge", targetId: d2.targetId, sim: d2.sim };
-                    bumpConfidence(db, d2.targetId, 0.1);
+                    const folded = foldInto(db, d2.targetId, args.content, { agent: AGENT });
+                    plan = { kind: "merge", targetId: d2.targetId, sim: d2.sim, folded };
+                    if (!folded.skipped) bumpConfidence(db, d2.targetId, 0.1);
                     t = readMemory(db, d2.targetId);
                     applyRevision(d2.targetId); // 合并即由既有条目承接内容 → 修订指向它（勿静默丢弃 supersedes）
                     return;
@@ -483,7 +501,7 @@ export function registerMemoryTools(server, ctx) {
                 ? `\nℹ via/vec：${hits.map((h) => `#${h.id}=${h.via ?? "?"}/${vecStates.get(h.id) ?? "?"}`).join(" ")}`
                 : "";
             const evLines = hits
-                .filter((h) => h.content.replace(/\s+/g, " ").length > SNIPPET_MAX)
+                .filter((h) => shouldEmitEvidence(h.content.replace(/\s+/g, " "), args.query))
                 .map((h) => `\n↳ 证据 #${h.id}: "${evidenceSnippet(h.content.replace(/\s+/g, " "), args.query)}"`);
             const vecLegend = [...vecStates.values()].some((v) => v !== "ok")
                 ? `\n图例：vec=ok 向量可用 / stale 正文已改、向量未重算（语义分可能滞后，daemon embed-backfill 补算）/ missing 无向量（仅词法可召回）。via=semantic/lexical/hybrid 为召回通道。`
@@ -684,18 +702,28 @@ export function registerMemoryTools(server, ctx) {
             const head = top.length
                 ? top.map((t) => `#${t.id} [${t.type}|${t.agent}]${args.focus ? "" : ` cited=${t.cited} hit=${t.hit_count}`} conf=${t.confidence.toFixed(2)}: ${t.content.replace(/\s+/g, " ").slice(0, 120)}`).join("\n")
                 : "（该 scope 暂无相关记忆，可 memory_write 沉淀）";
-            const scopeStr = scopes.map((s) => `- ${s.project} (${s.c})`).join("\n");
+            const scopeStr = scopes.map((s) => `- ${s.project} (${s.c})`).join(" | ");
             const rankNote = args.focus
                 ? `按『${args.focus}』主题相关度排序（语义+词法混合检索）`
                 : "按引用/曝光排序（全库曝光榜）";
             const degOut = args.focus && top?._degradation
                 ? `\n⚠ 语义路本次降级为纯词法（嵌入失败：${top._degradation}）——注入可能不够贴题。`
                 : "";
-            return (`【MemoryContext 注入 · agent=${AGENT} · scope=${args.project}】\n` +
+            const result = (`【MemoryContext 注入 · agent=${AGENT} · scope=${args.project}】\n` +
                 `相关记忆 Top${Math.min(top.length, args.limit)}（${rankNote}）：\n` +
                 fenceUntrusted("MEMORY", head, "memory_context") + degOut +
                 `\n\n可用 project（active 条数）：\n${scopeStr}\n\n` +
                 `用法：先看上面的记忆是否含相关结论；再针对当前任务用 memory_search 精确检索；执行完沉淀用 memory_write。`);
+            // P0-token-3：session 去重——同 session+内容哈希未变时返回轻量提示，跳过完整输出
+            if (args.session_id) {
+                const hash = _contextHash(top, args);
+                const cached = _contextCache.get(args.session_id);
+                if (cached?.hash === hash) {
+                    return `【MemoryContext · agent=${AGENT} · scope=${args.project}】内容未变，沿用上次注入（session=${args.session_id}）。`;
+                }
+                _contextCache.set(args.session_id, { hash });
+            }
+            return result;
         },
     });
     server.addTool({

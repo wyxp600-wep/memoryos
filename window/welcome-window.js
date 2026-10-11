@@ -15,6 +15,7 @@ function createWelcomeWindow(opts) {
       preload: h.preloadPath || path.join(__dirname, "..", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   welcomeWin.loadFile(path.join(__dirname, "..", "welcome.html"));

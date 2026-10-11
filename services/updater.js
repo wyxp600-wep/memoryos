@@ -97,6 +97,8 @@ function assertTrustedOrigin(updateUrl) {
  * 重启失败时版本号保持旧值，下一轮检查会走「文件已一致但版本未落」分支再次尝试重启（自愈）。
  */
 function makeUpdater(deps) {
+  let _hotupdating = false;
+
   const { readConfig, readReleaseSettings, readVersion, getKernel, dataDir, restartCore, log } = deps;
 
   /** 更新内核 version.json 为 latest（仅应在内核重启成功后调用） */
@@ -158,7 +160,7 @@ function makeUpdater(deps) {
         log("热更新：文件已一致，版本号未落（上轮重启未完成），仅补重启");
         return { status: "applied", current, latest, applied: 0, restartPending: true };
       }
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-hotup-"));
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-hotup-"));
       const downloaded = [];
       for (const f of todo) {
         const buf = await fetchBuffer(new URL(f.rel, new URL("new/", base).toString()).toString());
@@ -209,9 +211,11 @@ function makeUpdater(deps) {
         throw copyErr;
       }
       fs.rmSync(tmp, { recursive: true, force: true });
+      tmp = null;
       log(`热更新完成：${plan.length} 个文件覆盖，旧版备份 → ${bakRoot}（内核重启成功后落版本号）`);
       return { status: "applied", current, latest, applied: plan.length, restartPending: true };
     } catch (e) {
+      if (tmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 清理失败不影响结果 */ } }
       log("热更新执行失败:", String(e.message || e));
       return { status: "error", current, error: String(e.message || e) };
     }
@@ -219,8 +223,8 @@ function makeUpdater(deps) {
 
   /** 自动热更新（后台静默）：发现新版→应用→重启内核→重启成功才落版本号 */
   async function runAutoHotUpdate() {
-    if (global.__hotupdating) return;
-    global.__hotupdating = true;
+    if (_hotupdating) return;
+    _hotupdating = true;
     try {
       const r = await applyKernelUpdate();
       if (r.status === "applied") {
@@ -231,7 +235,7 @@ function makeUpdater(deps) {
         log(`自动热更新失败：${r.error}`);
       }
     } finally {
-      global.__hotupdating = false;
+      _hotupdating = false;
     }
   }
 

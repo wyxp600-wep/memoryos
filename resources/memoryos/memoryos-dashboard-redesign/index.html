@@ -2175,6 +2175,11 @@ table.data-table tbody tr:hover td { color: var(--text-primary); }
   border-radius: 3px;
 }
 
+/* 全部记忆表：置信列进度条与数字同轴居中、时间列不折行 */
+#allTable td:nth-child(7) { white-space: nowrap; }
+#allTable td:nth-child(7) .mono { display: inline-block; vertical-align: middle; }
+#allTable td:nth-child(9) { white-space: nowrap; }
+
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -4347,6 +4352,71 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
 @media (hover: hover) {
   .btn-primary:not(:disabled):hover, .btn-danger:not(:disabled):hover { transform: translateY(-1px) !important; }
 }
+
+/* 图标微动效：只动 SVG transform/color，不改变命中区、布局或业务交互 */
+:root { --ease-icon: cubic-bezier(.16,1,.3,1); --dur-icon: 180ms; }
+.global-nav-scroll .nav-item svg, .theme-toggle svg, .nav-icon-btn svg,
+.search-box svg, .btn-primary svg, .btn-ghost svg, .btn-danger svg,
+.row-action-btn svg, .notes-zoom button svg, .context-menu-item svg, .command-item svg,
+.task-map-actions button svg, .agent-sidebar-quick-item svg {
+  transform-origin: center;
+  transition: transform var(--dur-icon) var(--ease-icon), color var(--dur-icon) var(--ease-icon) !important;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .global-nav-scroll .nav-item:hover svg { transform: translateY(-1px) scale(1.06) !important; }
+  .theme-toggle:hover svg { transform: rotate(8deg) scale(1.05) !important; }
+  .nav-icon-btn:hover svg { transform: translateY(-1px) scale(1.08) !important; }
+  .search-box:focus-within svg { transform: scale(1.06) !important; }
+  .btn-primary:hover svg { transform: translateX(1px) !important; }
+  .btn-ghost:not(.nav-icon-btn):hover svg, .btn-danger:hover svg { transform: translateY(-1px) scale(1.04) !important; }
+  .row-action-btn:hover svg, .notes-zoom button:hover svg { transform: scale(1.08) !important; }
+  .context-menu-item:hover svg { transform: translateX(1px) !important; }
+  .command-item:hover svg, .agent-sidebar-quick-item:hover svg { transform: scale(1.06) !important; }
+  .task-map-actions button:hover svg { transform: translateY(-1px) scale(1.05) !important; }
+}
+.global-nav-scroll .nav-item:focus-visible svg, .theme-toggle:focus-visible svg,
+.nav-icon-btn:focus-visible svg, .btn-primary:focus-visible svg, .btn-ghost:focus-visible svg,
+.btn-danger:focus-visible svg, .row-action-btn:focus-visible svg {
+  transform: scale(1.05) !important;
+}
+button:not(:disabled):active svg { transform: scale(.92) !important; transition-duration: var(--dur-fast) !important; }
+@media (prefers-reduced-motion: reduce) {
+  .global-nav-scroll .nav-item svg, .theme-toggle svg, .nav-icon-btn svg, .search-box svg,
+  .btn-primary svg, .btn-ghost svg, .btn-danger svg, .row-action-btn svg,
+  .notes-zoom button svg, .context-menu-item svg, .command-item svg,
+  .task-map-actions button svg, .agent-sidebar-quick-item svg,
+  .global-nav-scroll .nav-item:is(:hover,:focus-visible,:active) svg,
+  .theme-toggle:is(:hover,:focus-visible,:active) svg, .nav-icon-btn:is(:hover,:focus-visible,:active) svg,
+  .search-box:focus-within svg, .btn-primary:is(:hover,:focus-visible,:active) svg,
+  .btn-ghost:is(:hover,:focus-visible,:active) svg, .btn-danger:is(:hover,:focus-visible,:active) svg,
+  .row-action-btn:is(:hover,:focus-visible,:active) svg, .notes-zoom button:is(:hover,:focus-visible,:active) svg,
+  .context-menu-item:is(:hover,:focus-visible,:active) svg, .command-item:is(:hover,:focus-visible,:active) svg,
+  .task-map-actions button:is(:hover,:focus-visible,:active) svg,
+  .agent-sidebar-quick-item:is(:hover,:focus-visible,:active) svg,
+  button:not(:disabled):active svg { transform: none !important; }
+}
+html[data-reduce-motion="true"] .global-nav-scroll .nav-item svg,
+html[data-reduce-motion="true"] .theme-toggle svg, html[data-reduce-motion="true"] .nav-icon-btn svg,
+html[data-reduce-motion="true"] .search-box svg, html[data-reduce-motion="true"] .btn-primary svg,
+html[data-reduce-motion="true"] .btn-ghost svg, html[data-reduce-motion="true"] .btn-danger svg,
+html[data-reduce-motion="true"] .row-action-btn svg, html[data-reduce-motion="true"] .notes-zoom button svg,
+html[data-reduce-motion="true"] .context-menu-item svg, html[data-reduce-motion="true"] .command-item svg,
+html[data-reduce-motion="true"] .task-map-actions button svg,
+html[data-reduce-motion="true"] .agent-sidebar-quick-item svg,
+html[data-reduce-motion="true"] .global-nav-scroll .nav-item:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .theme-toggle:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .nav-icon-btn:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .search-box:focus-within svg,
+html[data-reduce-motion="true"] .btn-primary:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .btn-ghost:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .btn-danger:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .row-action-btn:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .notes-zoom button:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .context-menu-item:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .command-item:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .task-map-actions button:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] .agent-sidebar-quick-item:is(:hover,:focus-visible,:active) svg,
+html[data-reduce-motion="true"] button:not(:disabled):active svg { transform: none !important; }
 </style>
 </head>
 <body>
@@ -4495,13 +4565,13 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
               <tr>
                 <th style="width:36px"><input type="checkbox" id="selectAllCb" aria-label="全选本页记忆" style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent-cyan)"></th>
                 <th style="width:40px" data-sort="id">#</th>
-                <th>内容</th>
+                <th style="height: 100px" data-sort="记忆内容">记忆内容</th>
                 <th style="width:100px" data-sort="type">类型</th>
                 <th style="width:100px" data-sort="status">状态</th>
                 <th style="width:120px" data-sort="agent">来源工具</th>
                 <th style="width:90px" data-sort="eff">有效置信</th>
                 <th style="width:70px" data-sort="hits">引用</th>
-                <th style="width:150px" data-sort="created_at">创建时间</th>
+                <th style="width:170px" data-sort="created_at">创建时间</th>
                 <th style="width:80px">操作</th>
               </tr>
             </thead>

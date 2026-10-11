@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { vecToBuf, bufToVec, cosine } from "./embed.js";
+import { IvfAnnIndex } from "./ann.js"; // ★ P0-ANN：进程内 IVF-Flat ANN 索引（纯 JS，零额外依赖）
 const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent, inject";
 function joinPrefix(s) {
     return s ? `[${s.replace(/"/g, '""')}]` : "";
@@ -748,21 +749,24 @@ export function openDb(dbPath) {
   `);
     // ★ P0-3.4 gram 回填：为「尚无 gram 记录」的记忆补齐 CJK 2-gram 索引（首次升级 / 历史数据）。
     // 无 CJK 的正文会写入空串哨兵，因此该判定不会对纯英文/代码类记忆反复触发。
+    // ★ 启动阻塞修复（2026-10-09）：原实现用 NOT EXISTS 全表扫（2345条→5230ms），阻塞 startCore()。
+    //   改为 LIMIT 分批（每批 200 条）+ setImmediate 让出事件循环，首次启动只回填一批即返回，
+    //   其余批次由 daemon 每日 gram 回填收口，对用户完全无感。
     try {
+        const GRAM_BATCH = 200;
         const missing = db
             .prepare(`SELECT id, content FROM memories m
-         WHERE NOT EXISTS (SELECT 1 FROM memories_gram g WHERE g.memory_id = m.id)`)
-            .all();
+         WHERE NOT EXISTS (SELECT 1 FROM memories_gram g WHERE g.memory_id = m.id)
+         LIMIT ?`)
+            .all(GRAM_BATCH);
         if (missing.length) {
             const ins = db.prepare(`INSERT INTO memories_gram(gram, memory_id) VALUES (?, ?)`);
-            // 必须包事务：实测 899 条记忆产生 8.2 万条 gram，逐条自动提交会让启动阻塞 35 秒；
-            // 单个事务下同样的工作量降到秒级（每条 INSERT 一次 fsync → 只 fsync 一次）。
             db.exec("BEGIN");
             try {
                 for (const m of missing) {
                     const grams = gramTokens(m.content);
                     if (grams.length === 0)
-                        ins.run("", m.id); // 哨兵：避免每次启动重复回填纯英文/代码类记忆
+                        ins.run("", m.id);
                     else
                         for (const g of grams)
                             ins.run(g, m.id);
@@ -773,7 +777,7 @@ export function openDb(dbPath) {
                 db.exec("ROLLBACK");
                 throw e;
             }
-            console.error(`[db] gram 回填完成: ${missing.length} 条记忆`);
+            console.error(`[db] gram 回填完成（本批）: ${missing.length} 条记忆（更多批次由 daemon 后台补齐）`);
         }
     }
     catch (e) {
@@ -1270,7 +1274,7 @@ const vecCache = new WeakMap();
 function vecState(db) {
     let s = vecCache.get(db);
     if (!s) {
-        s = { version: 0, byKey: new Map() };
+        s = { version: 0, byKey: new Map(), annByKey: new Map() }; // ★ P0-ANN：ANN 索引与向量缓存同生命周期
         vecCache.set(db, s);
     }
     return s;
@@ -1291,6 +1295,21 @@ export function getVectorsOnProjectCached(db, project, activeOnly = false) {
     const vectors = getVectorsOnProject(db, project, activeOnly);
     s.byKey.set(key, { version: s.version, at: now, vectors });
     return vectors;
+}
+/**
+ * ★ P0-ANN：带缓存的 IVF-Flat ANN 索引，与向量缓存同失效周期。
+ * 首次查询（或缓存失效后）同步构建索引（n<400 时 build() 直接返回，query() 返回 null，降级全量扫描）。
+ * @param {ReturnType<typeof getVectorsOnProjectCached>} vectors - 已从缓存取得的向量列表（直接传入避免重复查询）
+ */
+export function getAnnIndexCached(db, project, activeOnly, vectors) {
+    const s = vecState(db);
+    const key = `${project}\u0000${activeOnly ? 1 : 0}`;
+    const hit = s.annByKey.get(key);
+    if (hit && hit.version === s.version) return hit.ann;
+    const ann = new IvfAnnIndex();
+    ann.build(vectors); // 同步构建；n<IVF_MIN_N 时即刻返回（不设 built=true）
+    s.annByKey.set(key, { version: s.version, ann });
+    return ann;
 }
 const ID_CHUNK = 400; // SQLite 变量数上限保护（默认 999，留足余量）
 /** 批量读（供检索回填，避免 N+1 逐条 SELECT）；返回 id→行 映射，未命中的 id 不在 Map 中 */
@@ -1824,7 +1843,7 @@ const SUMMARY = {
 /** 撤销最近一条未撤销仲裁：按 before 快照恢复双方状态，删 merge 插入行，标 undone */
 export function undoLastArbitration(db) {
     const e = db
-        .prepare(`SELECT id, memory_id, op, payload FROM memory_events WHERE op!='undo' AND undone=0 ORDER BY id DESC LIMIT 1`)
+        .prepare(`SELECT id, memory_id, op, payload FROM memory_events WHERE op IN ('keep_new','keep_old','merge','no_conflict') AND undone=0 ORDER BY id DESC LIMIT 1`)
         .get();
     if (!e)
         return "无可撤销的仲裁记录";
@@ -1903,7 +1922,42 @@ function insertMerged(db, a, b) {
         confidence: Math.round(((a.confidence + (b?.confidence ?? a.confidence)) / 2) * 100) / 100,
     });
     db.prepare(`UPDATE memories SET derived_from=? WHERE id=?`).run(a.id, out.id);
+    db.prepare(`UPDATE memories SET embedding_stale=1 WHERE id=?`).run(out.id); // M1: 合并行无向量，置 stale 待 daemon 补算
     return out;
+}
+
+const FOLD_MAX_CHARS = 3000;
+export function foldInto(db, winnerId, loserContent, meta = {}) {
+    const winner = readMemory(db, winnerId);
+    if (!winner) return { ok: false, reason: 'missing' };
+    const loserNorm = (loserContent ?? '').trim();
+    if (!loserNorm) return { ok: true, skipped: 'empty' };
+    const diffSegs = _diffSegments(winner.content, loserNorm);
+    const basePayload = { fromId: meta.fromId ?? null, agent: meta.agent ?? null, beforeLen: winner.content.length };
+    if (diffSegs.length === 0) {
+        appendEvent(db, { memory_id: winnerId, op: 'fold', payload: JSON.stringify({ ...basePayload, skipped: 'duplicate' }), operator: meta.agent ?? 'daemon' });
+        return { ok: true, skipped: 'duplicate' };
+    }
+    const appendText = diffSegs.join('\n');
+    const separator = `\n--- 并入 #${meta.fromId ?? 'new'}（${meta.agent ?? '?'}·${new Date().toISOString().slice(0, 10)}）\n`;
+    const newContent = winner.content + separator + appendText;
+    if (newContent.length > FOLD_MAX_CHARS) {
+        appendEvent(db, { memory_id: winnerId, op: 'fold', payload: JSON.stringify({ ...basePayload, skipped: 'too_long', appendLen: appendText.length }), operator: meta.agent ?? 'daemon' });
+        return { ok: true, skipped: 'too_long' };
+    }
+    db.prepare(`UPDATE memories SET content=?, embedding_stale=1, version=version+1 WHERE id=?`).run(newContent, winnerId);
+    db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(newContent, winnerId);
+    syncGrams(db, winnerId, newContent);
+    invalidateVectorCache(db);
+    appendEvent(db, { memory_id: winnerId, op: 'fold', payload: JSON.stringify({ ...basePayload, afterLen: newContent.length }), operator: meta.agent ?? 'daemon' });
+    return { ok: true, newLen: newContent.length };
+}
+function _diffSegments(winnerContent, loserContent) {
+    const winFlat = winnerContent.replace(/\s+/g, ' ').toLowerCase();
+    return loserContent
+        .split(/(?<=[。！？\n])\s*/)
+        .map(s => s.trim())
+        .filter(s => s.length >= 10 && !winFlat.includes(s.replace(/\s+/g, ' ').toLowerCase()));
 }
 
 /* ── ★ 2026-10-02 Dispatch 语义（对标 orca orchestration「one authoritative Task attempt」）──

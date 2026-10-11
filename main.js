@@ -16,6 +16,11 @@ const { app, dialog, ipcMain, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
+// Windows 11 托盘图标注册：setAppUserModelId 必须在 app.ready 之前调用
+// ★ 2026-10-10 诊断：自定义 AUMID 无开始菜单快捷方式背书时，Win11 会吞掉托盘注册与通知（getBounds 恒 0 实证）。
+//   暂时撤掉做 A/B 验证；若图标恢复，改走「快捷方式+AUMID」正解或保持默认。
+// if (process.platform === "win32") app.setAppUserModelId("com.memoryos.desktop");
+
 const { findFreePort } = require("./services/port");
 const token = require("./security/token");
 const { makeUpdater } = require("./services/updater");
@@ -81,7 +86,15 @@ let port = 0;
 let TOKEN = "";
 
 function log(...a) {
-  console.log(`[MemoryOS-Desktop] ${new Date().toLocaleString("zh-CN")}`, ...a);
+  const line = `[MemoryOS-Desktop] ${new Date().toLocaleString("zh-CN")} ` +
+    a.map((x) => (x instanceof Error ? (x.stack || x.message) : (typeof x === "string" ? x : JSON.stringify(x)))).join(" ");
+  console.log(line);
+  // P0-4：日志落盘（%APPDATA%\MemoryOS\logs\desktop.log），黑屏/托盘异常时可回查启动时序
+  try {
+    const dir = path.join(dataDir(), "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, "desktop.log"), line + "\n", "utf8");
+  } catch { /* 日志落盘失败不影响主流程 */ }
 }
 
 async function restartMcp() {
@@ -157,9 +170,38 @@ async function finalizeStartup(cfg) {
   // readVersion 供 updater 用
   TOKEN = token.ensureToken();
   log(`访问令牌就绪（${TOKEN.slice(0, 6)}…，见 data/token）`);
+  log(`运行时版本: electron=${process.versions.electron} chrome=${process.versions.chrome}`);
   if (!readConfig()) {
     fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2), "utf8");
     log("已写入配置:", cfg.llmUrl ? `LLM=${cfg.llmUrl}` : "LLM 提炼：未配置（跳过）");
+  }
+  // ★ 托盘提前：先建托盘/窗口让 Windows 及时注册图标，再 await startCore()。
+  //   原来的顺序（startCore → createMainWindow → createTray）在 gram 回填等启动耗时超过约 3s 时，
+  //   Windows 11 会把来不及注册的托盘图标静默丢弃，导致托盘图标始终不出现。
+  win.prepareMainWindow({ port, TOKEN, shell, isQuitting: () => quitting });
+  win.createMainWindow();
+  const trayOpts = {
+    shell, port, TOKEN, log, trayIconPath: ensureTrayIconPath(),
+    onShowMain: () => win.showMain(),
+    onUpdateCheck: () => runUpdateCheck(),
+    onRestartCore: () => { core.restartCore().catch((e) => log("重启内核失败", e.message || String(e))); },
+    onRestartMcp: () => { restartMcp().catch((e) => log("重启 MCP 失败", (e && (e.message || String(e))) || "unknown")); },
+    onQuit: () => { quitting = true; app.quit(); },
+  };
+  // P0-4 托盘兜底：创建失败不再静默吞掉，记录日志并延迟重试一次
+  try {
+    traySvc.createTray(trayOpts);
+    log("托盘图标已注册");
+  } catch (e) {
+    log("托盘创建失败，5 秒后重试一次:", e instanceof Error ? e.message : String(e));
+    setTimeout(() => {
+      try {
+        traySvc.createTray(trayOpts);
+        log("托盘重试创建成功");
+      } catch (e2) {
+        log("托盘重试仍失败:", e2 instanceof Error ? e2.message : String(e2));
+      }
+    }, 5000);
   }
   try {
     await core.startCore();
@@ -168,16 +210,8 @@ async function finalizeStartup(cfg) {
     app.quit();
     return;
   }
-  win.prepareMainWindow({ port, TOKEN, shell, isQuitting: () => quitting });
-  win.createMainWindow();
-  traySvc.createTray({
-    shell, port, TOKEN, trayIconPath: ensureTrayIconPath(),
-    onShowMain: () => win.showMain(),
-    onUpdateCheck: () => runUpdateCheck(),
-    onRestartCore: () => { try { core.restartCore(); } catch (e) { log("重启内核失败", e.message || String(e)); } },
-    onRestartMcp: () => { restartMcp().catch((e) => log("重启 MCP 失败", (e && (e.message || String(e))) || "unknown")); }, // ★ P0⑥：异步函数补 rejection 兜底（函数内已 catch+弹框，此处防未处理拒绝）
-    onQuit: () => { quitting = true; app.quit(); },
-  });
+  log("内核启动完成，通知主窗口加载页面");
+  win.notifyCoreReady();
   sched.scheduleAutoIngest();
   updater.auto();
 }

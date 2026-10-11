@@ -1,4 +1,4 @@
-import { getVectorsOnProjectCached, lexSearch, readMemoriesByIds, withTx, readConfig } from "./db.js";
+import { getVectorsOnProjectCached, getAnnIndexCached, lexSearch, readMemoriesByIds, withTx, readConfig } from "./db.js";
 import { cosine } from "./embed.js";
 import { SECTORS } from "./db.js";
 const RRF_K = 60;
@@ -127,9 +127,17 @@ export async function hybridSearch(db, embedder, p) {
             // （1024 维 float32 ≈ 4KB/条 → 516 条≈2MB/次，万条级≈40MB/次），而两次写入之间该数据不变。
             // 缓存以 db 实例为键（WeakMap），写入/状态流转后由 invalidateVectorCache 失效，另有 60s TTL 兜底。
             const existing = getVectorsOnProjectCached(db, p.project, true); // 仅 active：非 active 候选后续必被过滤，提前收窄候选池
+            // ★ P0-ANN：用 IVF-Flat ANN 索引把候选集从 n 压缩到 ~(nProbe/k)×n（约 6-10x 加速）。
+            // ANN 索引与向量缓存同生命周期，缓存失效时自动重建（首次查询有一次性构建延迟）。
+            // n < IVF_MIN_N(400) 时 ann.query() 返回 null，无缝降级到全量 existing。
+            const _annIdx = getAnnIndexCached(db, p.project, true, existing);
+            const _annCands = _annIdx.query(qv); // null = 未建（n 太少），降级全量
+            const _semBase = _annCands ?? existing; // ANN 候选 or 全量向量
+            _stats.annUsed = _annCands !== null;   // 供 /api/search 回执可观测
+            _stats.annCands = _annCands?.length ?? existing.length;
             // cosine 粗筛（保留向量，供正交化重排；阈值 0.4 与原 vecSearch 一致）
             // ★ P1-2.4：对 stale（正文已改、向量未重算）的记忆按 STALE_PENALTY 降权后再排序。
-            const pool = existing
+            const pool = _semBase
                 .map((e) => ({ id: e.id, vec: e.vec, sim: cosine(qv, e.vec) * (e.stale ? STALE_PENALTY : 1) }))
                 .filter((x) => x.sim > 0.4)
                 .sort((a, b) => b.sim - a.sim);
