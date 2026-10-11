@@ -81,14 +81,10 @@ android/MemoryOSMobile/release.keystore
 
 # ---- 10. 构建/部署产物与一次性工作产物（2026-10-11 上传 GitHub 时收口）----
 # 原则：含 >100MB 单文件（GitHub 硬限）或纯产物者一律排除；源码仍跟踪。
-# android 部署产物：phone-kernel 618MB（bundle.tar.gz 104MB / termux APK 34MB / staging 库 95MB）
-android/phone-kernel/
-android/_apk/
-android/_test/
-android/MemoryOSMobile/build/
-android/MemoryOSMobile/gen/
-android/MemoryOSMobile/build-log.txt
-android/*.apk
+# 手机版（未完成版本，2026-10-11 用户指示撤出仓库；文件保留在磁盘）
+android/
+# 托盘原生模块（未完成版本，2026-10-11 用户指示撤出仓库；文件保留在磁盘）
+window/tray-native/
 # 诊断快照：含整个 Electron 运行时（et/runtime/electron.exe 235MB）
 outputs/diag-*/
 outputs/db-backup-*/
