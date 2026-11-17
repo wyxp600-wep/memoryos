@@ -1,155 +1,139 @@
-# MemoryOS
+<p align="center">
+  <img src="assets/icon-512.png" alt="MemoryOS 图标" width="88" height="88">
+</p>
 
-Windows 下载包与安装说明：[0.1.4 发行说明](RELEASE-20261117.md)。源码和下载包均在当前私有仓库内发布。
+<h1 align="center">MemoryOS 个人版</h1>
 
-本机共享记忆库 + 多 Agent 协同工作台。SQLite（FTS5 + 向量）落盘，**MCP 工具面**供 AI 读写，**Electron 桌面壳** + **8787 看板**提供人机界面。
+<p align="center"><strong>让不同 AI 助手，共用你电脑里的长期记忆。</strong></p>
 
-> 本文件是仓库唯一入口。文件归属分区见 [CLAIM.md](CLAIM.md)；多 AI 协作细则见 [docs/通用任务协作规则-v3.0.md](docs/通用任务协作规则-v3.0.md)。
+<p align="center">保存项目约定、找回历史经验、连接知识与任务，让下一次协作接得上上一次。</p>
 
----
-
-## 一、两层形态
-
-| 形态 | 入口 | 说明 |
-|---|---|---|
-| 桌面版 | `MemoryOS.exe`（仓库根） | Electron 壳，双击即启动，托盘常驻 |
-| 便携版 | `resources/memoryos/launcher.cjs` | 单文件 SEA 入口，拉起 dashboard 并用浏览器打开 |
-
-两者共用同一内核与同一份数据（`%APPDATA%/MemoryOS/`）。
+<p align="center">
+  <a href="https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.4">下载 Windows 个人版</a> ·
+  <a href="#开始使用">开始使用</a> ·
+  <a href="#它能帮你做什么">功能介绍</a> ·
+  <a href="RELEASE-20261117.md">发行说明</a>
+</p>
 
 ---
 
-## 二、架构
+## 为什么需要 MemoryOS？
 
-| 层 | 位置 | 职责 |
-|---|---|---|
-| **壳层** | 根目录：`main.js`、`window/`、`services/`、`security/`、`app/` | 窗口与托盘、端口分配、访问令牌、进程自愈、热更新、IPC |
-| **内核** | `resources/memoryos/dist/` | MCP 服务、HTTP 看板、治理守护、LLM agent、采集、Obsidian/技能同步 |
-| **前端** | `resources/memoryos/memoryos-dashboard-redesign/` | `index.html` + `app.js`，**可直接改并热生效**；侧栏「新手教程」（`#guide`，深链 `#guide/cN`）是 10 章手把手引导页，进度存 `localStorage['memoryos-guide-progress']` |
-| **运行时** | `resources/memoryos/runtime/node.exe` | 内置 Node（随包分发，不依赖系统 Node） |
-| **模型** | `resources/memoryos/models/` | BGE-M3 ONNX，本地嵌入 |
+你可能已经在几个 AI 工具之间来回切换：今天用 Codex 写代码，明天让 Claude Code 排查问题，再换另一个助手整理资料。
 
-### 进程模型
+但项目背景、以前踩过的坑、已经确定的方案，往往留在各自的聊天记录里。换个工具或开个新对话，又得重新解释。
 
-壳层拉起两个内核进程并做自愈（[services/core-process.js](services/core-process.js)）：
+**MemoryOS 把这些值得保留的信息，整理成一份可以跨工具检索的本地记忆库。** 接入后，AI 助手可以在工作前查找项目上下文，把新的结论写回同一个地方；你也能在桌面界面里查看、编辑和管理它们。
 
-| 进程 | 作用 |
+它适合长期使用 AI 的个人开发者、独立创作者，以及需要同时管理多个项目和多个 AI 助手的人。
+
+## 它能帮你做什么？
+
+| 你想解决的问题 | MemoryOS 提供的能力 |
 |---|---|
-| `dist/dashboard.js` | HTTP 看板 **8787**；同时提供 `/v1/embeddings` 共享嵌入端点 |
-| `dist/daemon.js` | 治理任务（去重、补嵌），经 dashboard 复用同一份嵌入模型 |
+| 每次开新对话，都要重复解释项目 | 按项目保存背景、规则、决策和经验，让接入的助手检索已有上下文 |
+| 换了 AI 工具，之前的经验用不上 | 通过 MCP 连接不同客户端，共享同一份记忆库 |
+| 记得处理过某个问题，却找不到原记录 | 结合关键词与本地语义检索，用问题描述找回相关记忆，并查看内容和来源 |
+| 有用的结论散落在会话、规则文件和笔记里 | 从支持的本地来源采集资料，控制采集开关、频率和排除路径 |
+| 几个助手一起做事，进度和责任不清楚 | 用计划、任务池和任务看板跟踪指派、认领、依赖关系与完成情况 |
+| 记忆越来越多，需要自己检查和整理 | 在记忆中心按项目和类型查看、编辑、归档；在笔记工作台管理知识与关系 |
+| 想保留自己的知识积累，减少单个工具的绑定 | 数据保存在本机，支持备份与恢复，并提供 Obsidian 笔记导入、导出和同步入口 |
 
-**端口**：默认 8787，被占用则顺延扫描 `8787-8806`（[services/port.js](services/port.js)）。
+### 一个实际使用场景
 
-### 鉴权
+你正在开发一个长期维护的项目：
 
-令牌落 `%APPDATA%/MemoryOS/data/token`。支持四通道，任一命中即放行：
+1. 在 MemoryOS 中保留“数据库迁移前先做完整备份”这样的项目约定，以及之前解决问题的结论。
+2. 让已接入的 AI 助手先检索这些信息，再提出修改方案。
+3. 工作结束后，把经过验证的新结论和依据写回记忆库，更新相关任务。
+4. 下次换另一个已接入的助手，继续从这份记忆库查找背景。
 
-- `?token=<令牌>` —— 浏览器首次访问，随即 **302 剥离 URL** 并种 HttpOnly cookie
-- `x-memory-token` 头 —— 脚本/API 调用
-- 同源 cookie —— 前端 `app.js` 全部走这条
-- `Authorization: Bearer` —— `/v1/embeddings` OpenAI 兼容端点
+可以对接入的助手这样说：
 
-另有两道防线：Host 白名单（限 loopback，防 DNS rebinding）、令牌缺失时 fail-closed。响应头带 CSP + nosniff + no-referrer。
+> “先查一下这个项目已有的约定和相关排错记录，再给我修改建议。完成后，把验证过的结论和依据存回 MemoryOS。”
 
-> ⚠ **令牌有两份，别读错**（曾导致 CDP 走查脚本 100% 失败）
-> - `%APPDATA%/MemoryOS/data/token` —— **Electron 壳的真源**（[security/token.js](security/token.js) 生成并注入内核）
-> - `resources/memoryos/data/token` —— 仅**独立跑内核**时自举生成（`launcher.cjs` / `restart-core.js`）
->
-> 两者内容不同、互不通用。脚本要用令牌请按 `MEMORY_TOKEN` env → `%APPDATA%` 真源 → 仓库内自举 的顺序解析（`outputs/*-ui-walk.mjs` 已按此实现）。
+**记忆的使用取决于客户端是否正确接入，以及助手是否实际调用工具。** MemoryOS 提供共享记忆和检索能力；它不会自动让任意一个未接入的聊天产品拥有全部历史。
 
----
+## 从 AI 工具，到你自己的记忆库
 
-## 三、MCP 工具面
-
-**权威清单以运行时为准**（勿手抄，会漂移）：
-
-```powershell
-cd resources/memoryos
-node dist/server.js --list-tools      # 打印实际注册清单后退出（不启动 stdio transport）
+```text
+  Codex / Claude Code / Cursor / Qoder / Trae / OpenCode …
+                           │
+                     MCP 读写与检索
+                           │
+                 ┌─────────▼─────────┐
+                 │     MemoryOS      │
+                 │  项目记忆 · 经验   │
+                 │  知识笔记 · 任务   │
+                 └─────────┬─────────┘
+                           │
+                本地存储 · 本地语义检索
+                           │
+                  你自己的 Windows 电脑
 ```
 
-当前 **26 个常驻工具**；另 3 个执行面工具按 env 开关（默认关闭）：
+软件内置多种客户端的发现与配置适配，包括 Codex、Claude Code、Claude 桌面版、Cursor、VS Code、Qoder、Trae CN、OpenCode、WorkBuddy 等。接入时以界面中的检测结果和操作提示为准；不同客户端版本可能需要调整配置或重新加载 MCP 连接。
 
-| 分组 | 数量 | 工具 |
-|---|---|---|
-| **记忆** | 11 | `memory_write` 写入（含去重/冲突预检）、`memory_search` 混合检索、`memory_ask` 检索后作答、`memory_projects` 列项目、`memory_context` 开工前注入高价值上下文、`memory_read` 读全文、`memory_feedback` 标错、`memory_cite` 引用计数、`memory_credential` 短生命周期凭据、`memory_report` 周报、`memory_health` 使用侧健康度 |
-| **Obsidian** | 3 | `obsidian_import` 增量导入、`obsidian_export` 导出 Markdown、`obsidian_write_note` 写单条笔记（同步入库） |
-| **任务协同** | 12 | `task_gate` 验收门、`task_assign` 指派、`task_delegate` A2A 委派、`task_claim` 认领、`task_heartbeat` 续租、`task_release` 释放、`task_block` 受阻、`task_reopen` 重开、`task_done` 完成、`task_verify` 第三方验收、`task_supersede` 去重归档、`task_next` 依赖拓扑算可做集 |
-| **执行面** | 3 | `file_read` / `file_write` / `exec_run` —— **默认关闭**，需 `MEMORYOS_EXEC_ON=1` 显式开启；`MEMORYOS_EXEC_OFF=1` 可强制熔断 |
+## 开始使用
 
----
+### 1. 下载个人版
 
-## 四、常用命令
+当前版本为 **0.1.4 预览版**，支持 **Windows 10 / 11 x64**。
 
-### 内核（`cd resources/memoryos`）
-
-| 命令 | 作用 |
+| 下载方式 | 适合你，如果…… |
 |---|---|
-| `npm test` | 聚合冒烟（`dist/smoke-all.js`，**自动发现** 24 项 `smoke-*.js`；缺环境项记 SKIP 不记 FAIL） |
-| `npm run lint` | 语法检查（`dist/lint-syntax.js` **自动枚举** `dist/*.js` 逐一 `node --check` —— 新文件不需入列即受覆盖；2026-09-22 由白名单式改为全覆盖） |
-| `npm run lint:sql` | SQL 占位符/实参数量体检（含自测） |
-| `npm run lint:silent` | 静默 catch 体检（含自测） |
-| `npm run snapshot:check` | 路由快照逐项比对 |
-| `npm run audit` | **执行面**审计探针（临时库真跑，验证 exec_audit 落行） |
-| `npm audit --registry=https://registry.npmjs.org` | **依赖**漏洞扫描。须显式指定官方 registry —— npmmirror 未实现安全公告端点，直接 `npm audit` 会报 `NOT_IMPLEMENTED` |
-| `npm run ui:walk` | **手动**：Agent 页 CDP 真实浏览器点击巡检（需 Chrome + dashboard 在跑 + 可用 LLM） |
-| `npm run ui:walk:settings` | **手动**：设置页 LLM 配置走查（自起内核于 8792，用临时 data 目录） |
-| `npm run ui:walk:a11y` | **手动**：看板可访问性（a11y）DOM 级体检 —— 19 个路由全扫，检查键盘可达 / 可访问名 / landmark / aria-live / 表单标签 / reduced-motion；基线落 `outputs/a11y-baseline-<日期>.json` |
-| `npm start` | 单独起 dashboard |
+| [下载安装程序](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.4/MemoryOS-Personal-0.1.4-windows-x64-setup.exe) | 希望使用安装向导，安装到当前用户目录并创建快捷方式 |
+| [下载便携 ZIP](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.4/MemoryOS-Personal-0.1.4-windows-x64.zip) | 希望自己选择目录，解压后直接运行 |
+| [查看全部发行文件与校验值](https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.4) | 需要核对下载完整性或查看版本说明 |
 
-> **依赖锁定**：`package-lock.json`（lockfileVersion 3）由 `node_modules/.package-lock.json` 提升生成，与已装树逐项一致。
-> 重装依赖请用 `npm ci`（严格按 lockfile 还原），**不要用 `npm install`**（会重新解析版本范围、引入漂移）。
->
-> **注意**：前端用的 ECharts 是**随仓库分发的 vendored 文件** `memoryos-dashboard-redesign/echarts.min.js`（由 `/echarts.min.js` 静态路由下发），
-> **不是** npm 依赖——`echarts` 曾作为幽灵依赖存在于 package.json（无任何代码引用），已于 2026-09-21 移除。**请勿再加回**。
+下载包约 **748 MB**，已包含桌面运行环境、Node 和 BGE-M3 本地检索模型，普通使用无需先安装 Node 或 Python。安装向导需要 .NET Framework 4.6.2+；部分桌面维护操作需要 PowerShell 7。
 
-### 壳层（仓库根）
+> 安装程序尚未做商业代码签名，Windows 可能提示未知发布者。请从本仓库的 Releases 下载，并按需核对 SHA-256。
 
-| 命令 | 作用 |
-|---|---|
-| `node --test "tests/**/*.test.js"` | **外壳层单元测试**（零依赖，用 Node 内置 `node:test`，无需根 package.json；`node --test tests/**/*.test.js` 亦可） |
-| `node pack-asar.js` | 重打包 `resources/app.asar`（改壳层源码后**必须**执行） |
-| `node pack-asar.js --check` | 校验 asar 与工作树副本是否一致 |
-| `node pack-asar.js --extract-only` | 把 asar-only 条目补到工作树 |
+### 2. 启动并连接 AI 助手
 
-> 外壳层测试覆盖 [tests/shell.test.js](tests/shell.test.js)：`services/core-process.js`（内核自愈：指数退避/封顶/计数隔离/健康窗/额度用尽/清定时器）、
-> `services/scheduler.js`（调度锁防重入/陈旧锁接管/子进程超时）、`services/port.js`（端口探测与顺延）、`services/updater.js`（sha256 已知向量）。
-> 另有 7 个模块（`security/ipc`、`security/token`、`app/lifecycle`、`window/*`）**硬依赖 `electron`，无法脱离 Electron 单测**——改这些请走 `npm run ui:walk` 之类的实机走查。
+完整安装或解压后，双击 `MemoryOS.exe`。如果旧版本正在运行，请先退出旧版本。
 
-> **打包注意**：`app.asar` 只纳入 `pack-asar.js` 的 `SYNC_FILES` 白名单里的文件。新增壳层文件务必同步加进该清单，否则改动重打包后会**静默丢失**。重打包前需先退出 MemoryOS（asar 被运行中的进程占用）。
+进入软件的智能体连接页面，查看已发现的客户端，按提示配置 MemoryOS 的 MCP 连接。然后在对应客户端重新加载连接，确认能够调用 MemoryOS 的记忆工具。
 
----
+可以先让助手执行一次简单验证：“检索 MemoryOS 里当前项目的相关记忆。”空记忆库返回无结果是正常情况，随后再保存第一条有用的项目结论。
 
-## 五、回滚策略
+### 3. 逐步积累自己的记忆
 
-| 对象 | 方式 |
-|---|---|
-| 代码 | git 提交 / tag（`baseline-20260914-pre-fullopt`、`p0-exec-face`、`p1-done-20260915`、`p2-done-20260916`、`t8-done-20260916`） |
-| 数据库 | daemon 的 `VACUUM INTO` 自包含快照 —— **严禁直接复制 `.db` 文件** |
-| 壳层二进制 | git 里的 `resources/app.asar` 历史版本 |
-| 临时归档 | `archive/<日期>-<主题>/`（按原相对路径保存，可原路还原） |
+- 先保存少量有用的项目规则、已验证的排错经验和重要决策。
+- 按需打开本地来源采集，选择需要保留的内容，排除不希望采集的目录。
+- 根据需要配置自己的 AI 服务，用于问答、内容提炼和智能体协作。
+- 在记忆中心检查内容，在设置中管理备份、采集和桌面行为。
 
----
+只使用本地记忆存储与检索时，不必把数据库放到远程服务上。问答、自动提炼等功能需要按实际配置连接相应模型服务。
 
-## 六、工作区约定
+## 数据放在哪里？
 
-- **分区归属**：多 AI / 多会话并行时，改文件前先读 [CLAIM.md](CLAIM.md)，确认目标文件在本会话分区内；越界需先报备并登记。
-- **短提交**：每次改动立即 commit，信息含「为什么」；不把多主题堆进一个提交。
-- **验收门禁只认脚本**：自述「已通过」必须能被 `npm test` / `lint` / `lint:sql` / `lint:silent` / `snapshot:check` 复现。
-- **pre-commit 门禁（CI 本地化）**：仓库有 `.githooks/pre-commit`，在每次 commit 前自动重跑 `npm test` + `npm run lint` + `tests/shell.test.js`，全 FAIL 才阻塞、SKIP 放行。启用（仓库级，每台克隆机器执行一次）：`git config core.hooksPath .githooks`；绕过：`git commit --no-verify`。
-- **仓库卫生**：不新增 `*.bak-*` 命名（已由 git 取代）；临时脚本用完归档到 `archive/`，不要留在根目录。
-- **密钥**：`.env`、API Key、Token、签名私钥一律不入库。签名私钥存仓库外 `~/Desktop/_memoryos-signing-keys/`（可用 `MEMORYOS_SIGN_KEY_DIR` 覆盖）。
+个人版的数据保存在：
 
----
+```text
+%APPDATA%\MemoryOS\
+```
 
-## 七、深入文档
+- 记忆数据库和本地语义检索模型在本机运行。
+- 安装目录与用户数据目录分开，安装到新目录不会把旧记忆打进程序包。
+- 启用远程 AI 服务时，发给该模型的内容会发送到你配置的服务；请根据自己的资料敏感程度选择模型和采集范围。
+- 发行包不包含发布者的个人记忆、账号密码、API Key 或访问令牌。
 
-| 主题 | 文件 |
-|---|---|
-| Agent 使用（CLI / 看板） | [docs/agent-使用说明.md](docs/agent-使用说明.md) |
-| 多 AI 协作规则 | [docs/通用任务协作规则-v3.0.md](docs/通用任务协作规则-v3.0.md) |
-| 分区与文件归属 | [CLAIM.md](CLAIM.md) |
-| 架构与性能分析 | [MemoryOS-架构与性能分析.md](MemoryOS-架构与性能分析.md) |
-| 全维度优化分析 | [MemoryOS-全维度优化分析-20260914.md](MemoryOS-全维度优化分析-20260914.md) |
-| 项目记忆与约定 | [PROJECT_MEMORY.md](PROJECT_MEMORY.md) |
-| 依赖漏洞可利用性评估 | [outputs/依赖漏洞可利用性评估-20260922.md](outputs/依赖漏洞可利用性评估-20260922.md) |
+需要迁移、备份或恢复时，请使用软件提供的入口。卸载或清理程序目录前，先确认数据目录和备份位置。
+
+## 当前版本说明
+
+这次公开发行的是 **个人版**，不包含企业版。
+
+0.1.4 已完成个人内核、桌面壳、实际本地模型和安装文件完整性检查，保留当前版本的皮肤、启动动画和程序图标。它仍是预览版：部分检查告警尚未消除，外部 AI 调用及其他物理电脑未做完整验收。
+
+具体结果见 [验证记录](RELEASE-VALIDATION.md)，安装与维护细节见 [发行说明](RELEASE-20261117.md)。
+
+## 源码与反馈
+
+- **查看或参与开发**：[开发说明](docs/DEVELOPMENT.md)
+- **报告问题或提出建议**：[GitHub Issues](https://github.com/wyxp600-wep/memoryos/issues)
+- **下载已打包的软件**：[GitHub Releases](https://github.com/wyxp600-wep/memoryos/releases)
+
+报告问题时，请附上软件版本、复现步骤和必要的脱敏日志；请勿上传自己的记忆数据库、令牌或 API Key。
