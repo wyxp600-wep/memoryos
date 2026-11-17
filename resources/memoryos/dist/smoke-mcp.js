@@ -1,3 +1,4 @@
+import { bodyFixture } from "./memory-body-fixture.js";
 /**
  * MemoryOS v0.1 MCP 协议级冒烟（stdio JSON-RPC）
  * 走完: initialize -> notifications/initialized -> tools/list
@@ -6,11 +7,12 @@
  * 用法：node dist/smoke-mcp.js
  */
 import { spawn } from "node:child_process";
-import { DatabaseSync } from "node:sqlite"; // P2-6o：直接读终态判定早退路径的归档不变量
+import { StorageConnection as DatabaseSync } from './storage.js'; // P2-6o：直接读终态判定早退路径的归档不变量
 import path from "node:path";
 import fs from "node:fs";
 const DB_PATH = path.join(process.cwd(), "data", "memory-mcp-smoke.db");
-for (const p of [DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm"]) {
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+for (const p of [DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm", DB_PATH.replace(/\.db$/,'.tasks.db'), DB_PATH.replace(/\.db$/,'.runtime.db')]) {
     try {
         fs.rmSync(p, { force: true });
     }
@@ -29,6 +31,7 @@ const responses = {};
 let lastId = 0;
 const pending = new Map();
 function send(method, params) {
+    if (method === "tools/call" && params?.name === "memory_write") params = { ...params, arguments: { ...params.arguments, content: bodyFixture(params.arguments.content) } };
     const id = ++lastId;
     return new Promise((resolve) => {
         pending.set(id, { resolve, name: method });
@@ -78,10 +81,12 @@ try {
     // ★ P0 修复（F16）：原断言 tools.length === 17 且白名单漏 task_supersede（与自身标题「task×4」也矛盾），
     //   且 `&&` 短路使「只改计数」仍然 FAIL。改为：显式期望清单 + 分别报告缺项，避免计数与名单互相掩盖。
     const EXPECT_TOOLS = [
-        "memory_write", "memory_search", "memory_read", "memory_context", "memory_projects",
-        "memory_cite", "memory_feedback", "memory_report", "memory_health", "memory_ask",
+        "memory_write", "memory_search", "memory_read", "memory_context", "memory_work",
+        "memory_cite", "memory_feedback", "memory_ask", "memory_admin", "memory_credential",
+        "memory_evidence", "method_query", "method_apply", "tool_guide",
         "task_assign", "task_claim", "task_done", "task_next", "task_supersede",
-        "obsidian_import", "obsidian_export", "obsidian_write_note",
+        "task_gate", "task_delegate", "task_heartbeat", "task_release", "task_admin",
+        "obsidian",
     ];
     const missing = EXPECT_TOOLS.filter((n) => !tools.some((t) => t.name === n));
     check(
@@ -196,7 +201,7 @@ try {
     check("C3.stale cursor 回第 1 页", c34pgStale.includes("cursor 与当前 query/scope 不匹配") && c34pgStale.includes("第 1 页"), "");
     const c34pgF = (await c34Call({ limit: 2, type: "experience", cursor: c34c1 })).result?.content?.[0]?.text ?? "";
     check("C3.过滤激活时 cursor 被忽略（回执显式告知）", c34pgF.includes("cursor 被忽略"), "");
-    check("C4.命中带 via/vec 元信息（尾部区块）", c34pg1.includes("via/vec：") && /#\d+=(lexical|semantic|hybrid)\//.test(c34pg1), JSON.stringify((c34pg1.match(/via\/vec：[^\n]*/g) || []).slice(0, 1)));
+    check("C4.命中带 via/vec 元信息（尾部区块）", c34pg1.includes("via/vec：") && /#\d+=(lexical|semantic|hybrid|keyword-assisted)\//.test(c34pg1), JSON.stringify((c34pg1.match(/via\/vec：[^\n]*/g) || []).slice(0, 1)));
     const c34All = c34Pages.join("\n");
     check("C4.超长正文带「证据」窗口（任一页）", c34All.includes("↳ 证据 #") && /证据 #[^\n]*C3PROBE/.test(c34All), JSON.stringify((c34All.match(/↳ 证据 #[^\n]*/g) || []).slice(0, 1)));
     // task 交接：assign → claim → done（MVP 协同闭环，真实 MCP 链路）
@@ -289,13 +294,13 @@ try {
         arguments: { memory_id: 1, session_id: "S-mcp", task_hint: "smoke" },
     }));
     const ctext = c.result?.content?.[0]?.text ?? "";
-    check("tools/call memory_cite 返回", ctext.includes("已 cite 记忆 #1"), JSON.stringify(ctext.slice(0, 60)));
+    check("tools/call memory_cite 返回", ctext.includes("已记录记忆 #1") && ctext.includes("置信度保持不变"), JSON.stringify(ctext.slice(0, 60)));
     const r = (await send("tools/call", {
-        name: "memory_report",
-        arguments: { report: "funnel", project: "ecommerce" },
+        name: "memory_admin",
+        arguments: { action: "report", report: "funnel", project: "ecommerce" },
     }));
     const rtext = r.result?.content?.[0]?.text ?? "";
-    check("tools/call memory_report funnel 含 raw_cited 与 inferred_cited 两行", rtext.includes("raw_cited") && rtext.includes("inferred_cited"), JSON.stringify(rtext.slice(0, 80)));
+    check("tools/call memory_admin(action=report) funnel 含 raw_cited 与 inferred_cited 两行", rtext.includes("raw_cited") && rtext.includes("inferred_cited"), JSON.stringify(rtext.slice(0, 80)));
     // memory_feedback：纠错闭环（soft-reject，不进检索）
     const fb = (await send("tools/call", {
         name: "memory_feedback",
@@ -338,11 +343,11 @@ try {
     const tdnOkt = tdnOk.result?.content?.[0]?.text ?? "";
     check("P2-6e.持有效租约可完成（fencing 不误杀）", tdnOkt.includes("已完成"), JSON.stringify(tdnOkt.slice(0, 60)));
     const trp = (await send("tools/call", {
-        name: "task_reopen",
-        arguments: { memory_id: Number(tid2), reason: "冒烟：验证重开路径" },
+        name: "task_admin",
+        arguments: { action: "reopen", memory_id: Number(tid2), reason: "冒烟：验证重开路径" },
     }));
     const trpt = trp.result?.content?.[0]?.text ?? "";
-    check("P2-6f.task_reopen 终态重开（done → in_progress）", trpt.includes("已重开"), JSON.stringify(trpt.slice(0, 60)));
+    check("P2-6f.task_admin(action=reopen) 终态重开（done → in_progress）", trpt.includes("已重开"), JSON.stringify(trpt.slice(0, 60)));
     const trl = (await send("tools/call", {
         name: "task_release",
         arguments: { memory_id: Number(tid2), reason: "冒烟：释放认领" },
@@ -362,11 +367,11 @@ try {
     const tcl4t = tcl4.result?.content?.[0]?.text ?? "";
     check("P2-6i.释放后可重新认领（pending → in_progress）", tcl4t.includes("已认领"), JSON.stringify(tcl4t.slice(0, 60)));
     const tblk = (await send("tools/call", {
-        name: "task_block",
-        arguments: { memory_id: Number(tid2), reason: "冒烟：验证受阻态" },
+        name: "task_admin",
+        arguments: { action: "block", memory_id: Number(tid2), reason: "冒烟：验证受阻态" },
     }));
     const tblkt = tblk.result?.content?.[0]?.text ?? "";
-    check("P2-6j.task_block 标记受阻（in_progress → blocked）", tblkt.includes("已标记受阻"), JSON.stringify(tblkt.slice(0, 60)));
+    check("P2-6j.task_admin(action=block) 标记受阻（in_progress → blocked）", tblkt.includes("已标记受阻"), JSON.stringify(tblkt.slice(0, 60)));
     const thb2 = (await send("tools/call", {
         name: "task_heartbeat",
         arguments: { memory_id: Number(tid2), as: "codex" },
@@ -429,13 +434,30 @@ try {
         mw5t.includes("已合并") && !!oldRow && oldRow.status === "archived" && Number(oldRow.superseded_by) === Number(mid4) && supEv > 0,
         `merged=${mw5t.includes("已合并")} status=${oldRow?.status} superseded_by=${oldRow?.superseded_by}(期望 ${mid4}) events=${supEv}`,
     );
-    // memory_health：使用侧健康（P2 效果监控）
+    // 写入正常知识记录以建立中文 gram 索引，然后归档；替代记录仍必须被排除。
+    let qualityColdId;
+    {
+        const { openDb, writeMemory } = await import('./db.js');
+        const d = openDb(DB_PATH);
+        const legacy = d.prepare('SELECT content FROM memories WHERE id=?').get(mid1);
+        const added = writeMemory(d, { content: legacy.content + ' 独立归档样本', type: 'experience', agent: 'smoke', agent_fpath: null, project: 'global' });
+        qualityColdId = added.id;
+        d.prepare("UPDATE memories SET status='archived' WHERE id=?").run(added.id);
+        d.close();
+    }
+    const coldHit = (await send("tools/call", {
+        name: "memory_search",
+        arguments: { query: "乐观修订基线", project: "global", limit: 10 },
+    })).result?.content?.[0]?.text ?? "";
+    check("冷层a.归档条经 memory_search 冷层召回（排后 + 📦[归档区] 标注）", coldHit.includes("📦[归档区]") && coldHit.includes(`#${qualityColdId} [`) && !coldHit.includes(`#${mid1} [`), JSON.stringify(coldHit.slice(0, 140)));
+    check("冷层b.回执汇总「来自归档区」（显式告知来源）", coldHit.includes("来自归档区"), JSON.stringify((coldHit.match(/ℹ 其中[^\n]*/) || [])[0] ?? ""));
+    // memory_admin(action=health)：使用侧健康（P2 效果监控）
     const h = (await send("tools/call", {
-        name: "memory_health",
-        arguments: { days: 30 },
+        name: "memory_admin",
+        arguments: { action: "health", days: 30 },
     }));
     const htext = h.result?.content?.[0]?.text ?? "";
-    check("tools/call memory_health 返回触发率/写读比", htext.includes("检索触发率") && htext.includes("写读比"), JSON.stringify(htext.slice(0, 50)));
+    check("tools/call memory_admin(action=health) 返回触发率/写读比", htext.includes("检索触发率") && htext.includes("写读比"), JSON.stringify(htext.slice(0, 50)));
 
     // ★ 融合架构增量：A1 身份认证（短生命周期凭据）+ P3 确定性门控 + 协议层 A2A 委派
     const EXPECT_TOOLS_V2 = ["memory_credential", "task_gate", "task_delegate"];

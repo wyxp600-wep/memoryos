@@ -1,0 +1,102 @@
+{
+  "original": {
+    "skin": "original",
+    "background": "#f4f6f8",
+    "text": "#182230",
+    "ink": "#182230",
+    "accent": "#086f76",
+    "name": "原始主题",
+    "art": "",
+    "scheme": "light"
+  },
+  "industrial": {
+    "skin": "industrial",
+    "background": "#252a22",
+    "text": "#efead5",
+    "ink": "#efead5",
+    "accent": "#f79545",
+    "name": "工业控制台",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m22 41 14-14h257v158H22Z\" fill=\"#252a22\" stroke=\"#efead5\" stroke-width=\"2\"></path><path d=\"M34 42h248\" stroke=\"#efead5\" opacity=\".25\"></path><rect x=\"36\" y=\"52\" width=\"121\" height=\"108\" rx=\"2\" fill=\"#f79545\"></rect><circle cx=\"96\" cy=\"105\" r=\"39\" stroke=\"#252a22\" stroke-width=\"7\"></circle><path d=\"M96 66v9m-39 30h9m69 0h-9m-57-28 6 6m49-6-6 6\" stroke=\"#252a22\" stroke-width=\"2\"></path><g class=\"masthead-loop art-dial\"><path d=\"m96 105 25-23\" stroke=\"#252a22\" stroke-width=\"5\" stroke-linecap=\"round\"></path><circle cx=\"96\" cy=\"105\" r=\"7\" fill=\"#252a22\"></circle></g><path d=\"M179 64h79M179 88h79M179 112h79\" stroke=\"#efead5\" stroke-width=\"2\" opacity=\".45\"></path><g class=\"masthead-loop art-scan\"><path d=\"M179 80h57\" stroke=\"#f79545\" stroke-width=\"5\"></path></g><rect x=\"181\" y=\"137\" width=\"53\" height=\"18\" fill=\"#efead5\" opacity=\".12\"></rect><g class=\"masthead-loop art-light\"><circle cx=\"265\" cy=\"146\" r=\"7\" fill=\"#f79545\"></circle></g><path d=\"m34 173 7-7m3 7 7-7m3 7 7-7m3 7 7-7M245 172h33\" stroke=\"#efead5\" stroke-width=\"2\"></path></svg>",
+    "scheme": "dark"
+  },
+  "studio": {
+    "skin": "studio",
+    "background": "#e6ddf3",
+    "text": "#4e2347",
+    "ink": "#f4d36c",
+    "accent": "#71365d",
+    "name": "色块工作室",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M29 182h274\" stroke=\"#f4d36c\" stroke-width=\"1.5\" opacity=\".6\"></path><path d=\"M40 180V82a47 47 0 0 1 94 0v98Z\" fill=\"#bf6d93\"></path><path d=\"M59 180V86a28 28 0 0 1 56 0v94\" stroke=\"#f4d36c\" stroke-width=\"2\"></path><path d=\"M137 180v-31h42v-31h42v-31h42v93Z\" fill=\"#efc85d\"></path><g class=\"masthead-loop art-sway\"><path d=\"M218 28v15\" stroke=\"#f4d36c\" stroke-width=\"2\"></path><circle cx=\"218\" cy=\"76\" r=\"34\" fill=\"#f4d36c\"></circle><path d=\"M190 76h56\" stroke=\"#4e2347\" stroke-width=\"2\"></path><circle cx=\"218\" cy=\"76\" r=\"12\" fill=\"#bf6d93\"></circle></g><g class=\"masthead-loop art-float\"><path d=\"m269 46 15-10 15 10-15 10Z\" fill=\"#bf6d93\"></path></g><circle cx=\"164\" cy=\"72\" r=\"8\" stroke=\"#bf6d93\" stroke-width=\"2\"></circle></svg>",
+    "scheme": "light"
+  },
+  "obsidian": {
+    "skin": "obsidian",
+    "background": "#171c1a",
+    "text": "#edf1df",
+    "ink": "#edf1df",
+    "accent": "#c8e579",
+    "name": "黑曜图谱",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><ellipse cx=\"165\" cy=\"108\" rx=\"115\" ry=\"65\" stroke=\"#c8e579\" opacity=\".55\"></ellipse><ellipse cx=\"165\" cy=\"108\" rx=\"115\" ry=\"65\" stroke=\"#c8e579\" opacity=\".55\" transform=\"rotate(60 165 108)\"></ellipse><ellipse cx=\"165\" cy=\"108\" rx=\"115\" ry=\"65\" stroke=\"#c8e579\" opacity=\".55\" transform=\"rotate(-60 165 108)\"></ellipse><g class=\"masthead-loop art-rotate\"><circle cx=\"165\" cy=\"108\" r=\"99\" stroke=\"#c8e579\" opacity=\".2\" stroke-dasharray=\"2 9\"></circle><circle cx=\"264\" cy=\"108\" r=\"7\" fill=\"#edf1df\"></circle><circle cx=\"66\" cy=\"108\" r=\"4\" fill=\"#c8e579\"></circle></g><path d=\"m165 76 29 17v32l-29 17-29-17V93Z\" fill=\"#c8e579\"></path><path d=\"m136 93 29 17 29-17m-29 17v32\" stroke=\"#212821\" stroke-width=\"2\"></path><g class=\"masthead-loop art-counterrotate\"><path d=\"m79 40 5 10-5 10-5-10Zm165 109 5 10-5 10-5-10Z\" fill=\"#c8e579\"></path></g></svg>",
+    "scheme": "dark"
+  },
+  "sky": {
+    "skin": "sky",
+    "background": "#f1f6fc",
+    "text": "#1e3151",
+    "ink": "#204fb9",
+    "accent": "#2459dd",
+    "name": "晴空协作",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"182\" cy=\"108\" r=\"85\" fill=\"#baceff\"></circle><path d=\"M44 169h238\" stroke=\"#2459dd\" opacity=\".25\"></path><g transform=\"translate(24 5) rotate(7 156 100)\"><path d=\"M105 32h107l20 20v119H105Z\" fill=\"#c8d9ff\" stroke=\"#2459dd\" stroke-width=\"1.5\"></path></g><g class=\"masthead-loop art-page\"><path d=\"M65 35h125l28 28v113H65Z\" fill=\"#f9fcff\" stroke=\"#2459dd\" stroke-width=\"2\"></path><path d=\"M190 35v29h28M88 85h102M88 106h78M88 127h68\" stroke=\"#2459dd\" stroke-width=\"3\"></path><circle cx=\"191\" cy=\"148\" r=\"24\" fill=\"#2459dd\"></circle><path d=\"m178 148 9 9 17-19\" stroke=\"#f9fcff\" stroke-width=\"3\"></path></g><g class=\"masthead-loop art-float art-float-late\"><path d=\"m242 54 52-13-30 36-4-17Z\" fill=\"#f9fcff\" stroke=\"#2459dd\" stroke-width=\"1.5\"></path><path d=\"m260 60 34-19\" stroke=\"#2459dd\" stroke-width=\"1.5\"></path></g><path d=\"M30 59h19m-10-9v19\" stroke=\"#2459dd\" stroke-width=\"1.5\"></path></svg>",
+    "scheme": "light"
+  },
+  "modules": {
+    "skin": "modules",
+    "background": "#f3f2eb",
+    "text": "#252622",
+    "ink": "#252622",
+    "accent": "#ad381e",
+    "name": "模块空间",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M31 36h268v146H31Z\" stroke=\"#252622\" stroke-width=\"1.5\"></path><path d=\"M31 106h268M151 36v146\" stroke=\"#252622\" opacity=\".3\"></path><path d=\"M40 45h102v52H40Z\" fill=\"#252622\"></path><path d=\"M40 115h46v58H40Zm56 0h46v58H96Z\" fill=\"#252622\"></path><g class=\"masthead-loop art-module\"><path d=\"M164 48h122v58H164Z\" fill=\"#e95835\" stroke=\"#252622\" stroke-width=\"1.5\"></path><path d=\"M174 58h30v5h-30m0 12h56\" stroke=\"#f3f2eb\" stroke-width=\"2\"></path></g><path d=\"M164 120h122v53H164Z\" fill=\"#252622\"></path><path d=\"m201 145 13 11 31-24\" stroke=\"#f3f2eb\" stroke-width=\"5\"></path><g class=\"masthead-loop art-light\"><rect x=\"269\" y=\"19\" width=\"14\" height=\"14\" fill=\"#e95835\"></rect></g><path d=\"M14 44v27m-6-13h12M301 156h15\" stroke=\"#252622\" stroke-width=\"1.5\"></path></svg>",
+    "scheme": "light"
+  },
+  "liquid": {
+    "skin": "liquid",
+    "background": "#161617",
+    "text": "#efeee5",
+    "ink": "#e8e8df",
+    "accent": "#d1d3ca",
+    "name": "液态档案",
+    "art": "<svg viewBox=\"0 0 320 200\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><defs><linearGradient id=\"skin-silver\"><stop stop-color=\"#5d6060\"></stop><stop offset=\".28\" stop-color=\"#f5f3e9\"></stop><stop offset=\".48\" stop-color=\"#838787\"></stop><stop offset=\".69\" stop-color=\"#efeee5\"></stop><stop offset=\"1\" stop-color=\"#444847\"></stop></linearGradient></defs><path d=\"M90 130C5 20 250-28 256 89c4 87-189 132-172 21C99 6 302 142 197 171 104 199 57 25 157 38c125 15-18 154-67 92Z\" stroke=\"url(#skin-silver)\" stroke-width=\"21\"></path></svg>",
+    "scheme": "dark"
+  },
+  "radio": {
+    "skin": "radio",
+    "background": "#6026db",
+    "text": "#38145c",
+    "ink": "#fff18b",
+    "accent": "#6026db",
+    "name": "波普广播",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M28 187h245l17 10H40Z\" fill=\"#381280\" opacity=\".65\"></path><rect x=\"26\" y=\"29\" width=\"268\" height=\"157\" rx=\"18\" fill=\"#48209c\" stroke=\"#fff18b\" stroke-width=\"2\"></rect><path d=\"M43 48h166M43 172h231\" stroke=\"#fff18b\" opacity=\".2\"></path><g class=\"radio-vinyl\"><circle cx=\"137\" cy=\"105\" r=\"83\" fill=\"#fff18b\"></circle><circle cx=\"137\" cy=\"105\" r=\"74\" fill=\"#381280\"></circle><g stroke=\"#a58ade\" stroke-width=\"1\"><circle cx=\"137\" cy=\"105\" r=\"66\"></circle><circle cx=\"137\" cy=\"105\" r=\"58\"></circle><circle cx=\"137\" cy=\"105\" r=\"50\"></circle><circle cx=\"137\" cy=\"105\" r=\"42\"></circle></g><path d=\"M78 67a70 70 0 0 1 27-24m59 125a70 70 0 0 0 33-31\" stroke=\"#fff18b\" stroke-width=\"4\" stroke-linecap=\"round\"></path><circle cx=\"137\" cy=\"105\" r=\"31\" fill=\"#ff9d84\"></circle><path d=\"m124 103 19-19 9 24-19 19Z\" fill=\"#fff18b\"></path><circle cx=\"137\" cy=\"105\" r=\"5\" fill=\"#381280\"></circle></g><g class=\"radio-arm\"><circle cx=\"274\" cy=\"46\" r=\"12\" fill=\"#ff9d84\" stroke=\"#fff18b\" stroke-width=\"2\"></circle><path d=\"m274 46-17 75-40 24\" stroke=\"#fff7d7\" stroke-width=\"7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"></path><path d=\"m215 137 12 18-18 11-12-18Z\" fill=\"#ff9d84\" stroke=\"#381280\" stroke-width=\"2\"></path></g><circle cx=\"249\" cy=\"162\" r=\"4\" fill=\"#fff18b\"></circle><path d=\"M32 177h8m2 0h8m2 0h8\" stroke=\"#fff18b\" stroke-width=\"2\"></path><g class=\"radio-note\" fill=\"#ff9d84\"><path d=\"M26 14v18h3V19l14-3v-5Z\"></path><ellipse cx=\"22\" cy=\"33\" rx=\"7\" ry=\"4\" transform=\"rotate(-22 22 33)\"></ellipse></g><g class=\"radio-note radio-note-late\" stroke=\"#fff18b\" stroke-width=\"2.5\"><path d=\"M301 116v-19l12 4v15\"></path><ellipse cx=\"297\" cy=\"118\" rx=\"5\" ry=\"3\"></ellipse><ellipse cx=\"309\" cy=\"118\" rx=\"5\" ry=\"3\"></ellipse></g></svg>",
+    "scheme": "light"
+  },
+  "city": {
+    "skin": "city",
+    "background": "#bff3de",
+    "text": "#18464b",
+    "ink": "#18464b",
+    "accent": "#b82e26",
+    "name": "折叠之城",
+    "art": "<svg viewBox=\"0 0 330 210\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M23 186h274\" stroke=\"#18464b\" opacity=\".25\"></path><polygon points=\"140.16,121.5 275.44,176.68 184.24,213.88 48.959999999999994,158.7\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"48.959999999999994,167.7 184.24,222.88 184.24,213.88 48.959999999999994,158.7\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"275.44,185.68 184.24,222.88 184.24,213.88 275.44,176.68\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"140.92,36.06999999999999 172.84,49.09 140.92,62.110000000000014 109,49.09\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"109,149.09 140.92,162.11 140.92,62.110000000000014 109,49.09\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"172.84,149.09 140.92,162.11 140.92,62.110000000000014 172.84,49.09\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"172.08,40.06 208.56,54.94 179.68,66.72 143.2,51.84\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"143.2,187.84 179.68,202.72 179.68,66.72 143.2,51.84\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"208.56,190.94 179.68,202.72 179.68,66.72 208.56,54.94\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"149.28,40.06 224.52,70.75 212.36,75.71000000000001 137.12,45.02000000000001\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"137.12,54.02000000000001 212.36,84.71000000000001 212.36,75.71000000000001 137.12,45.02000000000001\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"224.52,79.75 212.36,84.71000000000001 212.36,75.71000000000001 224.52,70.75\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,137.92000000000002 201.72,143.81 190.32,148.46 175.88,142.57\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,146.57 190.32,152.46 190.32,148.46 175.88,142.57\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,147.81 190.32,152.46 190.32,148.46 201.72,143.81\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,135.02 201.72,140.91 190.32,145.56 175.88,139.67\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,143.67 190.32,149.56 190.32,145.56 175.88,139.67\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,144.91 190.32,149.56 190.32,145.56 201.72,140.91\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,132.12 201.72,138.01 190.32,142.66 175.88,136.77\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,140.77 190.32,146.66 190.32,142.66 175.88,136.77\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,142.01 190.32,146.66 190.32,142.66 201.72,138.01\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,129.22 201.72,135.11 190.32,139.76 175.88,133.87\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,137.87 190.32,143.76 190.32,139.76 175.88,133.87\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,139.11 190.32,143.76 190.32,139.76 201.72,135.11\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,126.32 201.72,132.21 190.32,136.86 175.88,130.97\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,134.97 190.32,140.86 190.32,136.86 175.88,130.97\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,136.21 190.32,140.86 190.32,136.86 201.72,132.21\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,123.41999999999999 201.72,129.31 190.32,133.96 175.88,128.07\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,132.07 190.32,137.96 190.32,133.96 175.88,128.07\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,133.31 190.32,137.96 190.32,133.96 201.72,129.31\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,120.52000000000001 201.72,126.41 190.32,131.06 175.88,125.16999999999999\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,129.17 190.32,135.06 190.32,131.06 175.88,125.16999999999999\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,130.41 190.32,135.06 190.32,131.06 201.72,126.41\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,117.62 201.72,123.50999999999999 190.32,128.16 175.88,122.27000000000001\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,126.27000000000001 190.32,132.16 190.32,128.16 175.88,122.27000000000001\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,127.50999999999999 190.32,132.16 190.32,128.16 201.72,123.50999999999999\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,114.72 201.72,120.61000000000001 190.32,125.25999999999999 175.88,119.37\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,123.37 190.32,129.26 190.32,125.25999999999999 175.88,119.37\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,124.61000000000001 190.32,129.26 190.32,125.25999999999999 201.72,120.61000000000001\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,111.82 201.72,117.71000000000001 190.32,122.36000000000001 175.88,116.47\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,120.47 190.32,126.36000000000001 190.32,122.36000000000001 175.88,116.47\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,121.71000000000001 190.32,126.36000000000001 190.32,122.36000000000001 201.72,117.71000000000001\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,108.91999999999999 201.72,114.81 190.32,119.46000000000001 175.88,113.57\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,117.57 190.32,123.46000000000001 190.32,119.46000000000001 175.88,113.57\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,118.81 190.32,123.46000000000001 190.32,119.46000000000001 201.72,114.81\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"187.28,106.02000000000001 201.72,111.91 190.32,116.56 175.88,110.66999999999999\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"175.88,114.66999999999999 190.32,120.56 190.32,116.56 175.88,110.66999999999999\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"201.72,115.91 190.32,120.56 190.32,116.56 201.72,111.91\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"115.84,131.88 131.8,138.39 131.8,134.39 115.84,127.88\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"115.84,116.88 131.8,123.38999999999999 131.8,119.38999999999999 115.84,112.88\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"115.84,101.88 131.8,108.38999999999999 131.8,104.38999999999999 115.84,97.88\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"115.84,86.88 131.8,93.38999999999999 131.8,89.38999999999999 115.84,82.88\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"115.84,71.88 131.8,78.38999999999999 131.8,74.38999999999999 115.84,67.88\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><g class=\"masthead-loop art-elevator\"><polygon points=\"145.48,105.00999999999999 160.68,111.21000000000001 156.12,113.07 140.92,106.87\" fill=\"#f5f0d8\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"140.92,122.87 156.12,129.07 156.12,113.07 140.92,106.87\" fill=\"#df493e\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon><polygon points=\"160.68,127.21000000000001 156.12,129.07 156.12,113.07 160.68,111.21000000000001\" fill=\"#18464b\" stroke=\"#18464b\" stroke-width=\"1.2\"></polygon></g><g class=\"masthead-loop art-float\"><path d=\"M242 36h49m-34-8h50\" stroke=\"#18464b\" stroke-width=\"1.4\" opacity=\".4\"></path></g></svg>",
+    "scheme": "light"
+  },
+  "original-dark": {
+    "skin": "original",
+    "background": "#0f141a",
+    "text": "#e7edf4",
+    "ink": "#182230",
+    "accent": "#086f76",
+    "name": "原始主题",
+    "art": "",
+    "scheme": "dark"
+  }
+}

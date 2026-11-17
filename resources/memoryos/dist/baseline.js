@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb, pendingConflicts } from "./db.js";
+import { recordsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
 import { funnel, zombies } from "./report.js";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MEMORY_ROOT = process.env.MEMORY_ROOT ?? "c:/Users/WYX/.trae-cn/memory";
@@ -76,8 +77,8 @@ function gatherAllMetrics(db) {
     const f = funnel(db, {});
     const z = zombies(db, { days: 30 });
     const pc = pendingConflicts(db);
-    const totalMem = db.prepare("SELECT COUNT(*) c FROM memories").get().c;
-    const activeMem = db.prepare("SELECT COUNT(*) c FROM memories WHERE status='active'").get().c;
+    const totalMem = db.prepare(`SELECT COUNT(*) c FROM ${recordsFrom(db)}`).get().c;
+    const activeMem = db.prepare(`SELECT COUNT(*) c FROM ${recordsFrom(db)} WHERE status='active'`).get().c;
     const eventCounts = db.prepare("SELECT event, COUNT(*) c FROM memory_usage GROUP BY event").all();
     const eventMap = {};
     for (const e of eventCounts)

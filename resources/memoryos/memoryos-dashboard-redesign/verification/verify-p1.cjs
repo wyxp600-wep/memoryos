@@ -1,0 +1,86 @@
+const fs=require('node:fs');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const {pathToFileURL}=require('node:url');
+const {createRequire}=require('node:module');
+const {DatabaseSync}=require('node:sqlite');
+const root=path.resolve(__dirname,'..');
+const requireKernel=require;
+const fastify=requireKernel('fastify');
+const {chromium}=require('playwright');
+const checks=[];const pageErrors=[];let ruleSyncs=0;
+async function check(name,fn){try{await fn();checks.push({name,pass:true});console.log('通过：'+name);}catch(e){checks.push({name,pass:false,error:e.message});console.error('失败：'+name+'：'+e.message);}}
+async function main(){
+const {registerMemoryBatch}=await import(pathToFileURL(path.resolve(root,'../dist/dashboard-memory-batch.mjs')));
+const {registerStatic}=await import(pathToFileURL(path.resolve(root,'../dist/dashboard-reg-static.js')));
+const db=new DatabaseSync(':memory:');
+db.exec(`CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,type TEXT,status TEXT,version INTEGER,agent TEXT,project TEXT,sector TEXT,created_at TEXT,hit_count INTEGER,confidence REAL);CREATE TABLE daemon_log(id INTEGER PRIMARY KEY,task TEXT,op TEXT,memory_id INTEGER,operator TEXT,detail TEXT);`);
+function seed(){db.exec('DELETE FROM memories');const q=db.prepare('INSERT INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)');q.run(1,'字体加载与离线回退策略','experience','active',1,'codex','memoryos','semantic','2026-10-16',3,.8);q.run(2,'批量操作要支持撤销','pitfall','active',1,'claude','memoryos','procedural','2026-10-16',2,.9);q.run(3,'布局与动效规范','decision','archived',1,'codex','memoryos','semantic','2026-10-16',1,.85);}
+seed();
+const server=fastify({logger:false});const ctx={db,RESTRICTED:false,UI_DIR:root,_staticCache:new Map()};
+registerStatic(server,ctx);registerMemoryBatch(server,ctx,{syncRules:()=>{ruleSyncs++;}});
+server.get('/api/*', fixtureResponse);
+const post=(url,payload)=>server.inject({method:'POST',url,payload});
+await check('批量归档实际写入并递增版本',async()=>{const r=await post('/api/memory/batch-status',{ids:[1,2],status:'archived'});assert.equal(r.statusCode,200);const j=r.json();assert.equal(j.changed,2);assert.match(j.undoId,/^[a-f0-9]{48}$/);assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'archived');assert.equal(db.prepare('SELECT version FROM memories WHERE id=1').get().version,2);global.undo=j.undoId;});
+await check('撤销恢复原状态，保留审计和版本单调递增',async()=>{const r=await post('/api/memory/batch-undo',{undoId:global.undo});assert.equal(r.statusCode,200);assert.equal(r.json().restored,2);assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'active');assert.equal(db.prepare('SELECT version FROM memories WHERE id=1').get().version,3);assert.equal(db.prepare("SELECT count(*) n FROM daemon_log WHERE op='undo'").get().n,2);});
+await check('撤销句柄只能使用一次',async()=>assert.equal((await post('/api/memory/batch-undo',{undoId:global.undo})).statusCode,410));
+await check('软删除保留记录，能恢复混合原状态',async()=>{seed();const j=(await post('/api/memory/batch-status',{ids:[1,3],status:'rejected'})).json();assert.equal(db.prepare('SELECT count(*) n FROM memories').get().n,3);await post('/api/memory/batch-undo',{undoId:j.undoId});assert.equal(db.prepare('SELECT status FROM memories WHERE id=3').get().status,'archived');});
+await check('并发编辑阻止整批撤销，不覆盖其他 Agent 的数据',async()=>{seed();const j=(await post('/api/memory/batch-status',{ids:[1,2],status:'rejected'})).json();db.prepare('UPDATE memories SET content=? WHERE id=2').run('其他 Agent 更新');assert.equal((await post('/api/memory/batch-undo',{undoId:j.undoId})).statusCode,409);assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'rejected');assert.equal(db.prepare('SELECT content FROM memories WHERE id=2').get().content,'其他 Agent 更新');});
+await check('缺失 ID 导致原子失败，已存在记忆不受影响',async()=>{seed();assert.equal((await post('/api/memory/batch-status',{ids:[1,999],status:'archived'})).statusCode,409);assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'active');});
+await check('拒绝重复 ID、超限、非法状态与注入输入',async()=>{for(const body of [{ids:[1,1],status:'archived'},{ids:[],status:'archived'},{ids:['1'],status:'archived'},{ids:[1],status:'invalid'},{ids:Array.from({length:501},(_,i)=>i+1),status:'active'}])assert.equal((await post('/api/memory/batch-status',body)).statusCode,400);assert.equal((await post('/api/memory/batch-undo',{undoId:'../token'})).statusCode,400);});
+await check('无变化不签发撤销操作',async()=>{seed();const r=(await post('/api/memory/batch-status',{ids:[1],status:'active'})).json();assert.equal(r.changed,0);assert.equal(r.undoId,null);});
+await check('受限模式拦截批量写入及撤销',async()=>{ctx.RESTRICTED=true;assert.equal((await post('/api/memory/batch-status',{ids:[1],status:'rejected'})).statusCode,403);assert.equal((await post('/api/memory/batch-undo',{undoId:'a'.repeat(48)})).statusCode,403);ctx.RESTRICTED=false;});
+await check('撤销 10 秒后过期，不再改变数据',async()=>{seed();const j=(await post('/api/memory/batch-status',{ids:[1],status:'archived'})).json();const now=Date.now;Date.now=()=>now()+10001;try{assert.equal((await post('/api/memory/batch-undo',{undoId:j.undoId})).statusCode,410);}finally{Date.now=now;}assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'archived');});
+await check('规则批量操作与撤销均触发规则同步',async()=>{seed();db.exec("UPDATE memories SET type='rule' WHERE id=1");const before=ruleSyncs;const j=(await post('/api/memory/batch-status',{ids:[1],status:'archived'})).json();await post('/api/memory/batch-undo',{undoId:j.undoId});assert.equal(ruleSyncs-before,2);});
+await check('四种字体真实后端路由 200、MIME、ETag/304',async()=>{for(const f of ['inter-400','inter-600','jetbrains-mono-400','jetbrains-mono-600']){const r=await server.inject('/fonts/'+f+'.woff2');assert.equal(r.statusCode,200);assert.match(r.headers['content-type'],/font\/woff2/);assert(r.rawPayload.length>20000);assert.equal((await server.inject({url:'/fonts/'+f+'.woff2',headers:{'if-none-match':r.headers.etag}})).statusCode,304);}});
+await check('字体白名单拒绝未注册资源',async()=>assert.equal((await server.inject('/fonts/secrets.env')).statusCode,404));
+// 通过真实注册路由提供 UI；其余接口只提供隔离的测试数据，不代理生产数据库。
+async function fixtureResponse(req){
+const p=req.url.split('?')[0];const rows=db.prepare('SELECT *,hit_count AS hits,confidence AS eff FROM memories').all();
+if(p==='/api/all')return {rows,total:rows.length};
+if(p==='/api/summary')return {total:rows.length,statusRows:[{status:'active',n:2},{status:'archived',n:1}],typeRows:[],agentRows:[],projectRows:[],restricted:{enabled:false},todayWrites:0};
+if(['/api/top','/api/zombies','/api/trend','/api/cross-tool','/api/audit','/api/tools','/api/rules'].includes(p))return [];
+if(p==='/api/usage-health')return {today:{search:0,write:0,returned:0,cited:0},days30:{search:0,write:0,returned:0,cited:0}};
+if(p==='/api/prospective/due')return {ok:true,due:[]};
+if(p==='/api/write-health')return {lastWrite:null,daysSince:null,writes30d:0};
+return {ok:true,rows:[],cards:[],links:[],list:[],runs:[],sessions:[],sources:[],approvals:[],pending:[],tools:[],types:[],projects:[],skills:[],roots:[],items:[],notes:[],vaults:[],events:[],stats:{},enabled:false};
+}
+seed();await server.listen({host:'127.0.0.1',port:0});const url='http://127.0.0.1:'+server.server.address().port;
+const browser=await chromium.launch({headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(5000);page.on('pageerror',e=>{pageErrors.push(e.message);console.error('浏览器异常：'+e.message);});page.on('console',m=>{if(m.type()==='error')console.error('页面日志：'+m.text());});
+await page.goto(url+'/#memory');await page.waitForTimeout(1500);
+await check('首屏与导航初始化成功',async()=>{assert.equal(await page.locator('#page-memory.active').count(),1);assert.equal(await page.locator('#allTableBody tr[data-id]').count(),3);});
+await check('顶栏水平布局与屏幕阅读器标题隐藏',async()=>{assert.equal(await page.locator('.app-layout').evaluate(e=>getComputedStyle(e).flexDirection),'column');assert.equal(await page.locator('.global-nav').evaluate(e=>getComputedStyle(e).display),'flex');const title=await page.locator('#a11yPageH1').boundingBox();assert(title.width<=1);});
+await check('导航收拢到系统，点击与旧路由直达均有效',async()=>{assert.equal(await page.locator('.global-nav-scroll > a.nav-item').count(),4);await page.locator('#systemNav > summary').click();await page.locator('#systemNav [data-route=rules]').click();assert.equal(await page.locator('#page-rules.active').count(),1);assert.equal(await page.locator('#systemNav').getAttribute('open'),null);await page.locator('[data-route=memory]').first().click();});
+await check('系统分组可用键盘展开并按 Escape 关闭',async()=>{await page.locator('#systemNav>summary').focus();await page.keyboard.press('Enter');assert.equal(await page.locator('#systemNav').evaluate(e=>e.open),true);await page.keyboard.press('Escape');assert.equal(await page.locator('#systemNav').evaluate(e=>e.open),false);});
+await check('筛选默认折叠，打开/选择/计数/重置可用',async()=>{assert.equal(await page.locator('#memoryFilters').getAttribute('open'),null);await page.locator('#memoryFilters > summary').click();await page.locator('#statusFilter [data-status=archived]').click();await page.waitForTimeout(150);assert.equal(await page.locator('#allTableBody tr[data-id]').count(),1);assert.equal((await page.locator('#memoryFilterCount').innerText()).trim(),'(1)');await page.locator('#memoryFiltersReset').click();await page.waitForTimeout(200);assert.equal(await page.locator('#allTableBody tr[data-id]').count(),3);await page.keyboard.press('Escape');assert.equal(await page.locator('#memoryFilters').getAttribute('open'),null);});
+await check('列表搜索与过滤/分页数据源一致',async()=>{await page.locator('#memoryQuickSearch').fill('撤销');await page.waitForTimeout(250);assert.equal(await page.locator('#allTableBody tr[data-id]').count(),1);await page.locator('#memoryQuickSearch').fill('');await page.waitForTimeout(250);});
+await check('浏览器批量归档与撤销端到端',async()=>{await page.locator('#allTableBody .row-checkbox').first().check();await page.locator('#batchArchiveBtn').click();const undo=page.locator('.toast-entry button').filter({hasText:'撤销'});await undo.waitFor();assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'archived');await undo.click();await page.waitForTimeout(300);assert.equal(db.prepare('SELECT status FROM memories WHERE id=1').get().status,'active');});
+await check('Sprite 引用全部存在，无旧全树扫描',async()=>{const unresolved=await page.evaluate(()=>[...document.querySelectorAll('use[href^="#"]')].filter(x=>!document.getElementById(x.getAttribute('href').slice(1))).length);assert.equal(unresolved,0);assert(!fs.readFileSync(path.join(root,'app.js'),'utf8').includes('sweepPictographs'));});
+await check('任务地图动态 SVG 容器保留为空，不注入图标',async()=>assert.equal(await page.locator('#taskMapEdges use').count(),0));
+await check('字体完成加载，CSS 不存在未闭合标签串',async()=>{await page.evaluate(()=>document.fonts.ready);assert(await page.evaluate(()=>document.fonts.check('14px Inter')));const h=fs.readFileSync(path.join(root,'index.html'),'utf8');for(const s of h.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g))assert(!s[1].includes('</'));});
+await check('通知容器不遮挡发送输入区',async()=>{const t=await page.locator('#toast').boundingBox();assert(t.y<150);});
+await page.screenshot({path:path.join(root,'verification/memory-light.png'),fullPage:true});
+await page.locator('[data-route=agent]').first().click();await page.waitForTimeout(400);
+await check('智能体消息区域和输入区可见，执行过程默认折叠',async()=>{assert(await page.locator('#agentInput').isVisible());assert.equal(await page.locator('#agentRunLive').evaluate(e=>e.tagName),'DETAILS');assert.equal(await page.locator('#agentRunLive').getAttribute('open'),null);});
+await check('建议提示仅填充输入框，不自动发送',async()=>{let writes=0;const observer=req=>{if(req.method()==='POST'&&req.url().includes('/agent/'))writes++;};page.on('request',observer);await page.locator('.agent-suggestion').first().click();assert.equal(await page.locator('#agentInput').inputValue(),'检索当前项目的关键约定');assert.equal(writes,0);await page.locator('#agentInput').fill('');page.off('request',observer);});
+await check('会话搜索图标尺寸正常，更多面板默认隐藏',async()=>{const icon=await page.locator('.agent-sidebar-search svg').boundingBox();assert(icon.width<=24&&icon.height<=24);assert.equal(await page.locator('#agentMorePanel').isVisible(),false);});
+await page.locator('#agentInput').blur();await page.locator('.toast-dismiss').evaluateAll(elements=>elements.forEach(x=>x.click()));await page.waitForTimeout(220);await page.screenshot({path:path.join(root,'verification/agent-light.png'),fullPage:true});
+await page.evaluate(()=>document.documentElement.dataset.theme='dark');await page.waitForTimeout(350);await page.screenshot({path:path.join(root,'verification/agent-dark.png'),fullPage:true});
+await check('深浅主题的颜色别名一致',async()=>{for(const t of ['light','dark']){const color=await page.evaluate(t=>{document.documentElement.dataset.theme=t;const s=getComputedStyle(document.documentElement);return [s.getPropertyValue('--accent-cyan').trim(),s.getPropertyValue('--c-primary').trim()];},t);assert.equal(color[0],color[1]);}});
+await page.emulateMedia({reducedMotion:'reduce'});
+await check('减少动效偏好生效',async()=>assert.equal(await page.locator('.page.active').evaluate(e=>getComputedStyle(e).animationName),'none'));
+await page.setViewportSize({width:768,height:1024});await page.screenshot({path:path.join(root,'verification/agent-tablet.png'),fullPage:true});
+await check('平板输入框完整位于视口内',async()=>{const b=await page.locator('#agentInput').boundingBox();assert(b.x>=0&&b.x+b.width<=769);});
+const notifications=await browser.newPage();await notifications.setContent('<div id="toast"></div>');
+await notifications.addScriptTag({content:"const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);"+fs.readFileSync(path.join(__dirname,'p1-ui-runtime.txt'),'utf8')+";window.__notify=toast;"});
+await check('通知并发按 FIFO 排队，三条上限且文本不执行 HTML',async()=>{await notifications.evaluate(()=>{for(const text of ['第一条','第二条','第三条','<img src=x onerror=alert(1)>'])window.__notify(text,20000);});assert.equal(await notifications.locator('.toast-entry').count(),3);await notifications.locator('.toast-dismiss').first().click();await notifications.waitForTimeout(220);assert.deepEqual(await notifications.locator('.toast-message').allTextContents(),['第二条','第三条','<img src=x onerror=alert(1)>']);assert.equal(await notifications.locator('img').count(),0);});
+await check('撤销通知立即显示，不受普通通知队列阻挡',async()=>{await notifications.evaluate(()=>window.__notify('可撤销操作',1000,'success',{action:async()=>{},expiresAt:Date.now()+1000}));assert.equal(await notifications.locator('.toast-entry button').filter({hasText:'撤销'}).count(),1);await notifications.waitForTimeout(1250);assert.equal(await notifications.locator('.toast-entry button').filter({hasText:'撤销'}).count(),0);});
+await notifications.close();
+await check('浏览器无未捕获异常',async()=>assert.deepEqual(pageErrors,[]));
+await browser.close();await server.close();db.close();
+fs.writeFileSync(path.join(root,'verification/results.json'),JSON.stringify({checks,pageErrors,fixtureOnly:true,productionWrites:0},null,2));
+console.log(JSON.stringify({passed:checks.filter(x=>x.pass).length,failed:checks.filter(x=>!x.pass).length,pageErrors}));
+if(checks.some(x=>!x.pass))process.exitCode=1;
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});

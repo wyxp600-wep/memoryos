@@ -1,0 +1,25 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {openDb,writeMemory} from './db.js';
+import {hybridSearch} from './search.js';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'memory-search-quality-'));
+const db=openDb(path.join(dir,'memory.db'));
+const put=(content,extra={})=>writeMemory(db,{content,type:'experience',agent:'human:fixture',agent_fpath:null,project:'search-fixture',source:'human',status:'active',pinned:1,...extra}).id;
+const expected=[];
+for(let i=0;i<215;i++)put('上传链路 unrelatedA '+i);
+for(let i=0;i<215;i++)put('读取链路 unrelatedB '+i);
+expected.push({name:'交集在单词候选第200名之后',query:'上传链路 读取链路',id:put('前缀'.repeat(80)+'读取链路，正文保留，上传链路'),limit:10});
+for(let i=0;i<55;i++)put('过滤候选标记 general '+i);
+expected.push({name:'类型过滤应先于候选上限',query:'过滤候选标记',id:put('前缀'.repeat(80)+'过滤候选标记 精确错误', {type:'pitfall'}),type:'pitfall',limit:5});
+const old=put('旧记忆精确组件 DAEMON_Z71', {created_at:'2020-01-01T00:00:00.000Z',pinned:0});
+expected.push({name:'精确证据不能因热度衰减而消失',query:'DAEMON_Z71',id:old,limit:5});
+const embedder={embedTexts:async()=>{throw new Error('fixture: semantic disabled');}};
+const rows=[];
+for(const q of expected){const out=await hybridSearch(db,embedder,{...q,project:'search-fixture',simFloor:.76,relRatio:.5});rows.push({...q,found:out.some(r=>r.id===q.id),actual:out.map(r=>r.id),stats:out._searchStats});}
+const secret=put('安全隔离标记', {sensitivity:'secret'}),expired=put('安全隔离标记', {valid_until:'2020-01-01T00:00:00Z'}),other=put('安全隔离标记',{project:'another-project'}),visible=put('安全隔离标记');
+const privacy=await hybridSearch(db,embedder,{query:'安全隔离标记',project:'search-fixture',limit:10,simFloor:.76});
+const result={rows,recallAt10:rows.filter(r=>r.found).length/rows.length,privacy:{visible,actual:privacy.map(r=>r.id),secret,expired,other,pass:privacy.some(r=>r.id===visible)&&![secret,expired,other].some(id=>privacy.some(r=>r.id===id))}};
+console.log(JSON.stringify(result,null,2));
+if(process.argv[2])fs.writeFileSync(process.argv[2],JSON.stringify(result,null,2));
+db.close();fs.rmSync(dir,{recursive:true,force:true});

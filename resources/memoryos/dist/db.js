@@ -1,15 +1,25 @@
+import { installTaskIdentity } from './task-identity.js';
 /**
  * MemoryOS v0.1 → v0.2 — db 层（node:sqlite，零原生依赖）
  * SQLite(WAL) + FTS5 trigram + AFTER INSERT 触发器 + scope 隔离。
  * v0.2 增：status/confidence/hit_count/last_hit_at/embedding(BLOB) + 去重/冲突预检。
  * 引擎约束（实证）：node:sqlite 禁 load_extension → 向量用 BLOB 存 + JS 余弦，见 V5.1 R2 实现说明。
  */
+import { installKeywordIndex } from "./memory-keywords.js";
+import { installMemoryMetadata, refreshMemoryMetadata, setMemoryTerms } from './memory-metadata.js';
+import { installPassageIndex } from './memory-passages.js';
+import { ALL_PROJECTS } from "./memory-fields.js";
+export { ALL_PROJECTS };
+import { installCheckpointStore } from "./task-checkpoints.js";
+import { installMemoryBodyGuard } from "./memory-body.js";
 import { DatabaseSync } from "node:sqlite";
+import { resumeStorage, finishStorage, backupStorage } from './storage.js';
 import fs from "node:fs";
 import path from "node:path";
 import { vecToBuf, bufToVec, cosine } from "./embed.js";
 import { IvfAnnIndex } from "./ann.js"; // ★ P0-ANN：进程内 IVF-Flat ANN 索引（纯 JS，零额外依赖）
-const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent, inject";
+import { classifyRelation } from "./proposition.js"; // ★ 收尾 P2：命题关系判定（纯函数，零依赖）
+const BASE_COLUMNS = "id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, form, salience, decay_lambda, last_seen_at, valid_from, valid_until, trigger_cond, trigger_kind, trigger_action, valence, arousal, source_ref, sensitivity, pinned, version, fencing_token, epoch, idempotency_key, causal_parent, inject, source";
 function joinPrefix(s) {
     return s ? `[${s.replace(/"/g, '""')}]` : "";
 }
@@ -36,6 +46,10 @@ CREATE TABLE IF NOT EXISTS memories (
   sensitivity   TEXT NOT NULL DEFAULT 'normal',
   -- ★ 批次⑦X2（2026-09-23）：规则强制注入开关 —— 1=除 8 条内置门禁外还注入本条（规则页可切换，变更后自动同步注入段）
   inject  INTEGER NOT NULL DEFAULT 0,
+  -- ★ 2026-10-14（③ 记忆来源标签）：来源三名 —— human=人直接写（看板/人工编辑）、agent=AI 工具写入、ingest=外部采集（文件/笔记导入）。
+  --   与 agent 正交：agent 记「哪个工具写的」，source 记「谁担保」。规则反思候选只取 human ∪ pinned
+  --   （见 rule-reflection.js）—— 即「外部内容不得自动升格为所有 agent 的常驻指令」的判据列。
+  source  TEXT    NOT NULL DEFAULT 'agent',
   created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
@@ -58,6 +72,16 @@ CREATE TRIGGER IF NOT EXISTS trg_memories_au AFTER UPDATE OF content, project ON
 END;
 CREATE TRIGGER IF NOT EXISTS trg_memories_ad AFTER DELETE ON memories BEGIN
   DELETE FROM memories_fts WHERE rowid = old.id;
+END;
+-- ★ #700062：删除记忆必须级联清理 bigram 索引，否则 memories_gram 只增不减。
+--   为什么是物理表触发器而不是改 storage.js::records_delete：
+--   ① temp.memories 是兼容视图，其 INSTEAD OF DELETE 只清 knowledge_records/task_records，
+--      历史上全仓没有任何 DELETE FROM memories_gram（2026-11-07 实测积压 274 行 / 15 个 id 孤儿）；
+--   ② 物理表 AFTER DELETE 触发器还能覆盖「绕过视图直接 DELETE knowledge_records」的路径，
+--      视图触发器做不到。代价是触发器与删除口分居两文件，故在此写明双源关系。
+--   本语句中的 memories 标识符会被 storage.js::rewriteDDL 改写为 knowledge_records（拆库后）。
+CREATE TRIGGER IF NOT EXISTS trg_memories_gram_ad AFTER DELETE ON memories BEGIN
+  DELETE FROM memories_gram WHERE memory_id = old.id;
 END;
 
 -- ★ v0.3 治理：daemon/人工归档/仲裁的审计留痕
@@ -101,6 +125,53 @@ CREATE INDEX IF NOT EXISTS idx_usage_session ON memory_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_usage_memory  ON memory_usage(memory_id);
 CREATE INDEX IF NOT EXISTS idx_usage_event   ON memory_usage(event);
 
+-- ★ 2026-11-14（第4项）：任务事件/埋点归属任务库。
+--   历史数据留在 main.memory_events / runtime_store.memory_usage 不动；新写入双写到这里。
+--   目标：任务相关数据只依赖任务库，任务库单独备份即可读取完整历史（旧表仍可作为回退）。
+--   由 storage.js 的 TASK_TABLES 路由到 task_store，不占主库/运行时库。
+CREATE TABLE IF NOT EXISTS task_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  memory_id   INTEGER,
+  op          TEXT    NOT NULL,
+  payload     TEXT,
+  operator    TEXT    NOT NULL DEFAULT 'human:arbitrate',
+  undone      INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_events_mem ON task_events(memory_id);
+CREATE INDEX IF NOT EXISTS idx_task_events_op  ON task_events(memory_id, op);
+
+CREATE TABLE IF NOT EXISTS task_usage (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  memory_id     INTEGER NOT NULL,
+  event         TEXT    NOT NULL,
+  reader_agent  TEXT,
+  writer_agent  TEXT,
+  project       TEXT    NOT NULL DEFAULT 'global',
+  session_id    TEXT,
+  task_hint     TEXT,
+  created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_usage_mem ON task_usage(memory_id);
+CREATE INDEX IF NOT EXISTS idx_task_usage_event ON task_usage(event);
+
+-- ★ 2026-11-05（第6步①）：memory_write 被拒审计。
+--   仅记录「谁 / 何时 / 哪几类问题 / 正文摘要（≤80 字、已脱敏）/ 原始字数」，
+--   **不存全文、不存敏感内容**——目的是让「被门禁拒掉的写入」可回查，而不是二次留存原文。
+CREATE TABLE IF NOT EXISTS memory_write_rejections (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent         TEXT    NOT NULL,
+  agent_fpath   TEXT,
+  project       TEXT,
+  type          TEXT,
+  session_id    TEXT,
+  reason        TEXT    NOT NULL,              -- 字段级原因（多条以 " | " 连接）
+  content_digest TEXT,                         -- 正文摘要（脱敏后 ≤80 字）
+  content_len   INTEGER NOT NULL DEFAULT 0,    -- 原始正文字数
+  created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_write_rejections_created ON memory_write_rejections(created_at);
+
 -- ★ v0.3 治理规则配置（M-记忆卫生）：KEY→JSON。缺省走代码内默认，本表存在即覆盖
 CREATE TABLE IF NOT EXISTS config (
   key        TEXT PRIMARY KEY,
@@ -141,7 +212,10 @@ CREATE INDEX IF NOT EXISTS idx_memories_status_project ON memories(status, proje
 -- 迁移见 openDb 内的 migrateVectorsSplit（事务内、幂等、以 config 标记防重复）。
 CREATE TABLE IF NOT EXISTS memory_vectors (
   memory_id INTEGER PRIMARY KEY,
-  embedding BLOB    NOT NULL
+  embedding BLOB    NOT NULL,
+  -- ★ 2026-10-15：向量带出处（架构改进第一档①）——防跨模型向量混比导致的静默失真
+  embed_model TEXT  NOT NULL DEFAULT 'unknown',
+  dim         INTEGER NOT NULL DEFAULT 0
 );
 
 -- ★ P0-3.4 CJK 2-gram 倒排索引（修复中文检索全表扫）
@@ -158,6 +232,17 @@ CREATE TABLE IF NOT EXISTS memories_gram (
   memory_id INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gram_lookup ON memories_gram(gram, memory_id);
+-- ★ 2026-10-15 启动性能修复：补 memory_id 单列索引。
+--   根因（EXPLAIN QUERY PLAN 实证）：openDb 的 gram 回填候选判定
+--   「WHERE NOT EXISTS (SELECT 1 FROM memories_gram g WHERE g.memory_id = m.id) LIMIT 200」
+--   只有 (gram, memory_id) 联合索引时子查询退化为 SCAN g 全表扫——2554 条记忆
+--   每条全表扫 214k 行 gram ≈ 5.5~7.9s，把每次启动（dashboard 与 daemon 各一次）
+--   的 openDb 整个堵死。补本索引后子查询走索引点查，同查询 7917ms → 6ms。
+CREATE INDEX IF NOT EXISTS idx_gram_memory ON memories_gram(memory_id);
+
+-- ★ A1/A2（2026-11-06）：任务检索索引（task_store.task_fts / task_store.task_gram）不在本 SCHEMA 创建。
+--   原因：新库首启时 storage 尚未拆分且未覆写 db.exec，本段 DDL 会落到主库，与 finishStorage 的
+--   moveTable 撞名。改由 storage.js::installCompatibility 在任务库显式建（IF NOT EXISTS，幂等）。
 
 -- ★ v0.4 记忆类别（10 sector）+ 统一链接图 + 卡片看板
 -- 设计依据：OpenMemory HMD 认知分层（sector + λ 衰减 + 权重）、A2A Task 模型、
@@ -331,6 +416,12 @@ INSERT OR IGNORE INTO card_types(type_key,label,builtin,can_dispatch_out,can_dis
   ('agent','智能体',1,0,1,0,0),
   ('handoff','交接文档',1,0,0,1,0),
   ('doc','文档',1,0,0,0,0),
+  -- ★ 2026-10-06 修复（L-09 致命）：右键菜单 5 个「📎挂相关项目/用户记忆/规则定义/
+  --   Skill 技能/历史错误」走 POST /api/cards {kind:'aux'}，但本表**从未注册 aux**
+  --   → dashboard-reg-cards.js:648-650 以「未知卡片类型：aux」400 拒绝 → 5 类辅助卡全部无法创建，
+  --   卫星卡体系实为空壳。aux 此前被注释标为「禁前缀」而未落种子，这里补上正式注册。
+  --   注：aux 卡仍**不能**作 depends 前置（后端 :1044-1052 白名单只含 task/handoff），
+  --   它只作为宿主卡的附属说明卡存在。
   ('aux','辅助卡',1,0,0,0,0);
 
 -- 智能体档案：纯配置实体（无位置无状态）——Agent 卡 = cards.kind='agent' 投影卡 + meta.profile_id 指向此表
@@ -396,6 +487,19 @@ CREATE TABLE IF NOT EXISTS memory_usage_archive (
 );
 CREATE INDEX IF NOT EXISTS idx_usage_archive_ts ON memory_usage_archive(created_at);
 
+-- ★ 2026-11-07：memory_events 任务事件 180 天保质期归档目标表（只归档不删除，payload 逐字保留）。
+--   与 card_events_archive 同口径，但多保留 undone（仲裁撤销标记），避免反灌后语义丢失。
+CREATE TABLE IF NOT EXISTS memory_events_archive (
+  id          INTEGER PRIMARY KEY,
+  memory_id   INTEGER,
+  op          TEXT    NOT NULL,
+  payload     TEXT,
+  operator    TEXT    NOT NULL,
+  undone      INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mem_events_archive_ts ON memory_events_archive(created_at);
+
 -- ★ P0 执行面：工具调用审计（append-only）。任何执行类工具的每次调用都留痕，
 --   审批结论（auto / preauth / gate-allowed / gate-denied / off）在此可查 —— B1 的审计证据链。
 --   纪律：args_digest / detail 由调用方截断后写入，**绝不写入凭据或大文本全文**（大输出走 artifact 文件）。
@@ -412,6 +516,28 @@ CREATE TABLE IF NOT EXISTS exec_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_exec_audit_agent_ts ON exec_audit(agent, created_at);
 CREATE INDEX IF NOT EXISTS idx_exec_audit_tool_ts  ON exec_audit(tool, created_at);
+
+-- ★ 2026-10-14（方案 B · 服务端挂起审批）：exec_run 高风险命令的待批队列。
+--   为什么另建表而不复用 exec_audit：audit 是 append-only 流水；本表需要**可变状态**（pending →
+--   approved/denied/expired/executed）承载「谁在什么时候批了这一条」与执行结果摘要。
+--   语义：AI 发起高风险命令 → 落 pending 并挂起等待 → 人在看板点同意才执行；无人处理则到期自动作废
+--   （按拒绝处理，绝不"默认放行"）。审批闸关闭时（env）本表不产生行。
+--   结构为纯新增：由本 SCHEMA 的 CREATE IF NOT EXISTS 覆盖（老库每次 openDb 自动建表，无需加列迁移）。
+CREATE TABLE IF NOT EXISTS exec_approvals (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent        TEXT    NOT NULL,                    -- 发起方（哪个 agent 要用这条命令）
+  cmd          TEXT    NOT NULL,                    -- 命令全文（数组空格连接；展示给审批人）
+  cwd          TEXT,                                -- 工作目录（审批人判断影响范围用）
+  reason       TEXT,                                -- 判为高风险的人话原因
+  status       TEXT    NOT NULL DEFAULT 'pending',   -- pending/approved/denied/expired/executed
+  result       TEXT,                                -- 执行后摘要（exit/耗时/输出字节）
+  session_id   TEXT,
+  requested_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at   TEXT    NOT NULL,                    -- 逾期时刻；到来即作废（按拒绝处理）
+  decided_at   TEXT,
+  decided_by   TEXT                                 -- 例：human:dashboard / system:timeout
+);
+CREATE INDEX IF NOT EXISTS idx_exec_appr_status ON exec_approvals(status, id);
 
 /* ── ★ P2-5（E-1 / MACP 资源锁）：跨 agent 互斥资源占用 ─────────────────────
  * 目的：让「同一份资源同一时刻只有一个写者」由**数据库**保证，而非靠 agent 自觉。
@@ -509,6 +635,26 @@ CREATE TABLE IF NOT EXISTS request_receipts (
   result     TEXT    NOT NULL,                  -- 首次执行的原始回执（重放原样返回）
   created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+-- ★ P0-A（2026-10-13）：任务级记忆效果关联——哪条记忆被注入后任务成功/失败
+CREATE TABLE IF NOT EXISTS memory_task_outcomes (
+  memory_id    INTEGER NOT NULL,
+  task_card_id INTEGER NOT NULL,
+  outcome      TEXT NOT NULL,           -- 'success' | 'failed' | 'unverified'
+  session_id   TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mto_memory ON memory_task_outcomes(memory_id);
+CREATE INDEX IF NOT EXISTS idx_mto_task   ON memory_task_outcomes(task_card_id);
+
+-- ★ P0-C（2026-10-13）：检索评测集（query → 期望命中 memory_id 列表）
+CREATE TABLE IF NOT EXISTS eval_queries (
+  id           INTEGER PRIMARY KEY,
+  query        TEXT NOT NULL,
+  expected_ids TEXT NOT NULL,            -- JSON 数组，期望命中的 memory_id 列表
+  project      TEXT DEFAULT 'global',
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `;
 /** 读配置（KEY 不存在返回默认值，JSON 解析失败也返回默认值） */
 export function readConfig(db, key, def) {
@@ -523,6 +669,46 @@ export function readConfig(db, key, def) {
     catch {
         return def;
     }
+}
+/**
+ * ★ 2026-11-05（第6步①）：被拒写入审计。
+ * 只落摘要不落全文：正文先压成单行、脱敏常见凭据片段，再截到 80 字。
+ * 写审计失败不抛错（审计是旁路，不能反过来让「拒绝回执」本身崩掉）。
+ */
+const AUDIT_SECRET_RE = /(sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|password|passwd|secret|credential)\s*[=:：]\s*\S+)/gi;
+export function auditDigest(content, max = 80) {
+    const s = String(content ?? "").replace(/\s+/g, " ").trim().replace(AUDIT_SECRET_RE, "***");
+    return s.length > max ? s.slice(0, max) + "…" : s;
+}
+export function recordWriteReject(db, { agent, agent_fpath, project, type, session_id, reasons, content }) {
+    try {
+        const why = Array.isArray(reasons) ? reasons.join(" | ") : String(reasons ?? "");
+        db.prepare(`INSERT INTO memory_write_rejections(agent,agent_fpath,project,type,session_id,reason,content_digest,content_len) VALUES(?,?,?,?,?,?,?,?)`)
+            .run(String(agent ?? "unknown"), agent_fpath ?? null, project ?? null, type ?? null, session_id ?? null, why, auditDigest(content), String(content ?? "").length);
+    }
+    catch (e) {
+        try {
+            console.error(`[memory_write] 拒绝审计落库失败（不阻断拒绝回执）：${e instanceof Error ? e.message : String(e)}`);
+        }
+        catch { }
+    }
+}
+/**
+ * ★ 第二批·编号彻底分离：编号引用解析 —— `M-1234` / `T-1234` / `#1234` / `1234` 一律解析为数字。
+ * 为什么要能解析三种写法：历史正文、事件流、网页深链里全是裸号（共用序列时代产物），
+ * 而新展示会带 M-/T- 前缀。解析器同时认两种，老引用零断链。
+ * 返回值：正整数或 null（null = 格式非法，由调用方给出可读拒绝文案）。
+ */
+export function parseRecordRef(value) {
+    if (typeof value === "number")
+        return Number.isSafeInteger(value) && value > 0 ? value : null;
+    if (typeof value !== "string")
+        return null;
+    const m = value.trim().match(/^(?:[MmTt]-|#)?\s*(\d+)$/);
+    if (!m)
+        return null;
+    const n = Number(m[1]);
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 /** 写配置（UPSERT，覆盖旧值并刷新 updated_at） */
 export function writeConfig(db, key, value) {
@@ -626,18 +812,26 @@ export function queryStats() {
 export function openDb(dbPath) {
     const db = new DatabaseSync(dbPath);
     installQueryTiming(db); // ★ P1-5：先装采样，后续所有 prepare 都被覆盖
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA busy_timeout = 5000");
+    // ★ 2026-11-01 首启加速：打开期放宽忙等待，打开完成后回落常态值。
+    //   实测（desktop.log 2026/11/1 13:36:32→13:36:56）：daemon 启动即跑治理，
+    //   单事务持写锁约 16s；dashboard 的 resumeStorage 遇锁只等 5s → "database is locked"
+    //   崩溃 → 自愈重启两轮（3s+6s）→ 首启白等 24s。启动期给足 20s 覆盖一轮治理，
+    //   正常读写仍用 5s，不把长等待带给运行期。
+    const OPEN_BUSY_MS = 20000;
+    db.exec(`PRAGMA busy_timeout = ${OPEN_BUSY_MS}`);
+    db.exec("PRAGMA journal_mode = DELETE");
+    db.exec(`PRAGMA busy_timeout = ${OPEN_BUSY_MS}`);
     // ★ P1-1.2 PRAGMA 调优（不改语义，只调性能；均为跨版本安全的选项）
     //   synchronous=NORMAL：WAL 下兼顾安全与吞吐 —— 默认 FULL 每次提交都 fsync，
     //     而 WAL 模式下 NORMAL 只在 checkpoint 时 fsync，崩溃最多丢失最后一个事务（可接受）。
     //   cache_size=-64000：64MB 页缓存（负值表示 KB），减少直接读 I/O。
     //   mmap_size=256MB：内存映射读，避免 read() 系统调用。
     //   temp_store=MEMORY：排序/临时表走内存（gram 回填、报表聚合等受益）。
-    db.exec("PRAGMA synchronous = NORMAL");
+    db.exec("PRAGMA synchronous = FULL");
     db.exec("PRAGMA cache_size = -64000");
     db.exec("PRAGMA mmap_size = 268435456");
     db.exec("PRAGMA temp_store = MEMORY");
+    resumeStorage(db, dbPath); // temp_store 改变会销毁 TEMP 对象，必须先设置再安装兼容视图。
     db.exec(SCHEMA);
     // 迁移：旧库缺 v0.2 列则补
     const cols = db.prepare(`PRAGMA table_info(memories)`).all().map((c) => c.name);
@@ -680,6 +874,8 @@ export function openDb(dbPath) {
         ["causal_parent", "INTEGER"],
         // ★ 批次⑦X2（2026-09-23）：规则强制注入开关（gate 模式下 inject=1 的 active 规则进注入段）
         ["inject", "INTEGER NOT NULL DEFAULT 0"],
+        // ★ 2026-10-14（③）：记忆来源标签（human/agent/ingest）。存量库默认 'agent'，随后由 migrateMemorySource 回填。
+        ["source", "TEXT NOT NULL DEFAULT 'agent'"],
     ];
     for (const [name, def] of add) {
         if (!cols.includes(name))
@@ -704,6 +900,12 @@ export function openDb(dbPath) {
         // ★ 2026-09-20：卡片主题（归档中心按主题分组用）。NULL=未分类；解析优先级见
         //   dashboard-reg-cards.js 的 topicOfCardRow（topic 列 > meta.topic > 标题 [topic:xxx] > 未分类）。
         ["topic", "TEXT"],
+        // ★ B3（2026-10-18 · P2）：门控连续失败计数 —— 与 failure_count（failed 态业务失败）分立：
+        //   gate 失败卡回 ready（fail-closed 可重试），原熔断判据 status='failed' 永远看不到它，
+        //   缺陷任务被反复领取而熔断失明（问题 #6）。扩展判据：ready 且本列≥2 → blocked。
+        //   清零点：成功收口（done/accept）或人工介入流转（human:  actor）——**agent 重领不清零**
+        //   （否则每次重试都经 claim 清零，计数永远到不了 2，熔断器永不可达，见报告 §3-B3 偏离说明）。
+        ["gate_fail_count", "INTEGER NOT NULL DEFAULT 0"],
     ];
     if (cardCols.length) {
         for (const [name, def] of addCards) {
@@ -724,6 +926,15 @@ export function openDb(dbPath) {
     if (linkCols.length && !linkCols.includes("vault_root")) {
         db.exec(`ALTER TABLE links ADD COLUMN vault_root TEXT`);
     }
+    // ★ 2026-10-15：老库 memory_vectors 表补 embed_model / dim 两列（向量出处，防跨模型混比静默失真）。
+    //   SCHEMA 的 CREATE IF NOT EXISTS 只对新库生效；老库须 ALTER 补列，缺省值使已有行立即可读。
+    const vecCols = db.prepare(`PRAGMA table_info(memory_vectors)`).all().map((c) => c.name);
+    if (vecCols.length) {
+        if (!vecCols.includes("embed_model"))
+            db.exec(`ALTER TABLE memory_vectors ADD COLUMN embed_model TEXT NOT NULL DEFAULT 'unknown'`);
+        if (!vecCols.includes("dim"))
+            db.exec(`ALTER TABLE memory_vectors ADD COLUMN dim INTEGER NOT NULL DEFAULT 0`);
+    }
     // ★ P2：老库 idx_links_uniq 缺 alias 列 → 重建（否则 [[b]] 与 [[b|别名]] 被误去重）。索引是可重建派生结构，幂等。
     const uniqDef = db.prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_links_uniq'`).get();
     if (uniqDef && !/alias/i.test(uniqDef.sql)) {
@@ -739,12 +950,26 @@ export function openDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned);
     CREATE INDEX IF NOT EXISTS idx_memories_last_seen ON memories(last_seen_at);
     CREATE INDEX IF NOT EXISTS idx_memories_stale  ON memories(embedding_stale);
-    CREATE INDEX IF NOT EXISTS idx_daemon_log_ts   ON daemon_log(created_at);
+    -- ★ 2026-11-06 日志瘦身 ④：不再建 idx_daemon_log_ts（实测占 57.2 MB）。
+    --   保留策略改为按 id 单调删除（见 daemon.js housekeep ⑥b），无需 created_at 索引；
+    --   读取路径全部 ORDER BY id DESC，亦不依赖它。存量索引由迁移脚本 DROP。
   `);
-    // fts 补齐
+    // ★ 架构重构 1c（2026-10-14）：跨进程缓存失效「向量代数」计数行 + 触发器。
+    //   **必须在此处（全部 ALTER 加列之后）调用** —— 触发器 OF 列表引用 sector/salience/
+    //   decay_lambda/pinned/valid_until/embedding_stale/version，老库上这些列是 ALTER 后才有的，
+    //   先建会 `no such column` 直接把 openDb 打崩。幂等（INSERT OR IGNORE + CREATE TRIGGER IF NOT EXISTS）。
+    ensureVecGen(db);
+    // fts 补齐（★ A1：主库只补知识；任务索引在 task_store.task_fts，由 storage.js 的 ftsBackfillTasks 负责）
+    // 新库首启时 storage 尚未拆分（knowledge_records 还不存在），回落物理表 memories。
+    // ★ A1 修正（2026-11-06）：拆库后 db.prepare 会把 sqlite_master 改写为 storage_schema（三库合并视图），
+    //   若这里再写 `main.sqlite_master` 会被改写成不存在的 `main.storage_schema` → hasTable 恒 false
+    //   → recTable 回落 `memories`（兼容视图，含任务）→ 任务行被回填回主库 FTS（实测重启后 216 行复活）。
+    //   故直接查 storage_schema；未拆库时它不存在 → false → 回落 memories 的正常路径。
+    const hasTable = (name) => { try { return !!db.prepare(`SELECT 1 FROM storage_schema WHERE type='table' AND name=?`).get(name); } catch { return false; } };
+    const recTable = hasTable('knowledge_records') ? 'main.knowledge_records' : 'memories';
     db.exec(`
     INSERT INTO memories_fts(rowid, content, project)
-    SELECT id, content, project FROM memories m
+    SELECT id, content, project FROM ${recTable} m
     WHERE NOT EXISTS (SELECT 1 FROM memories_fts f WHERE f.rowid = m.id);
   `);
     // ★ P0-3.4 gram 回填：为「尚无 gram 记录」的记忆补齐 CJK 2-gram 索引（首次升级 / 历史数据）。
@@ -754,13 +979,16 @@ export function openDb(dbPath) {
     //   其余批次由 daemon 每日 gram 回填收口，对用户完全无感。
     try {
         const GRAM_BATCH = 200;
-        const missing = db
-            .prepare(`SELECT id, content FROM memories m
-         WHERE NOT EXISTS (SELECT 1 FROM memories_gram g WHERE g.memory_id = m.id)
+        // ★ A2：知识与任务各自回填到自己的库（此前统一写 main.memories_gram，任务正文的 bigram 也留在主库）
+        const fillBatch = (srcTable, gramTable) => {
+            const missing = db
+                .prepare(`SELECT id, content FROM ${srcTable} m
+         WHERE NOT EXISTS (SELECT 1 FROM ${gramTable} g WHERE g.memory_id = m.id)
          LIMIT ?`)
-            .all(GRAM_BATCH);
-        if (missing.length) {
-            const ins = db.prepare(`INSERT INTO memories_gram(gram, memory_id) VALUES (?, ?)`);
+                .all(GRAM_BATCH);
+            if (!missing.length)
+                return 0;
+            const ins = db.prepare(`INSERT INTO ${gramTable}(gram, memory_id) VALUES (?, ?)`);
             db.exec("BEGIN");
             try {
                 for (const m of missing) {
@@ -777,20 +1005,40 @@ export function openDb(dbPath) {
                 db.exec("ROLLBACK");
                 throw e;
             }
-            console.error(`[db] gram 回填完成（本批）: ${missing.length} 条记忆（更多批次由 daemon 后台补齐）`);
-        }
+            return missing.length;
+        };
+        const kDone = fillBatch(recTable, 'memories_gram');
+        const tDone = hasTable('task_records') && hasTable('task_gram')
+            ? fillBatch('task_store.task_records', 'task_store.task_gram')
+            : 0;
+        if (kDone || tDone)
+            console.error(`[db] gram 回填完成（本批）: 知识 ${kDone} 条 / 任务 ${tDone} 条（更多批次由 daemon 后台补齐）`);
     }
     catch (e) {
         console.error(`[db] gram 回填失败: ${e instanceof Error ? e.message : String(e)}`);
     }
     // ★ P1-2.2 向量表迁移（幂等、单事务、以 config 标记防重复）
     migrateVectorsSplit(db);
+    // ★ 2026-10-15 向量出处回填（embed_model/dim 列迁移 + 存量 dim 回填，幂等、config 标记防重复）
+    try {
+        migrateVectorProvenance(db);
+    }
+    catch (e) {
+        console.error(`[db] 向量出处迁移失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
     // ★ v0.4 记忆类别迁移（幂等；按旧 type 回填 sector + λ）
     try {
         migrateSectors(db);
     }
     catch (e) {
         console.error(`[db] 记忆类别迁移失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    // ★ 2026-10-14（③ 记忆来源标签）：来源回填（幂等；人工/采集识别，其余保持默认 'agent'）
+    try {
+        migrateMemorySource(db);
+    }
+    catch (e) {
+        console.error(`[db] 记忆来源迁移失败: ${e instanceof Error ? e.message : String(e)}`);
     }
     // ★ P0-5.1 启动自检：打印「实际库路径 + 记忆条数 + project 数」。
     // 本项目曾并存三处 memory.db（手动版 / 桌面内嵌版 / %APPDATA% 版），
@@ -801,12 +1049,48 @@ export function openDb(dbPath) {
         const total = one(`SELECT COUNT(*) AS c FROM memories`);
         const active = one(`SELECT COUNT(*) AS c FROM memories WHERE status='active'`);
         const projects = one(`SELECT COUNT(DISTINCT project) AS c FROM memories`);
-        const grams = one(`SELECT COUNT(*) AS c FROM memories_gram`);
-        console.error(`[db] ${dbPath} | memories=${total} active=${active} projects=${projects} grams=${grams}`);
+        const grams = Number(one(`SELECT COUNT(*) AS c FROM memories_gram`))
+            + (hasTable('task_gram') ? Number(one(`SELECT COUNT(*) AS c FROM task_store.task_gram`)) : 0);
+        const taskFts = hasTable('task_fts') ? one(`SELECT COUNT(*) AS c FROM task_store.task_fts`) : 0;
+        console.error(`[db] ${dbPath} | memories=${total} active=${active} projects=${projects} grams=${grams} task_fts=${taskFts}`);
     }
     catch (e) {
         console.error(`[db] ${dbPath} | 自检失败: ${e instanceof Error ? e.message : String(e)}`);
     }
+    installKeywordIndex(db);
+    installCheckpointStore(db);
+    // ★ 2026-11-03（第一批③）：新建库同样安装六字段格式兜底触发器。
+    //   原实现「库里已有 memory_body_v* 触发器才安装」→ 新库完全没有触发器，只剩 MCP 层一层把关
+    //   （任意旧连接/脚本/采集通道直写即可绕过六字段格式）。
+    //   表名不硬编码：storage 拆库后 `memories` 是兼容视图，知识记录物理落在 knowledge_records；
+    //   有该表就用它，否则用 memories（旧库/未拆库）。安装本身幂等（SAVEPOINT + 先删后建）；
+    //   失败只告警，不阻断启动（MCP 层校验仍在）。
+    //   唯一豁免：环境变量 MEMORYOS_BODY_GUARD=0（仅用于「灌入规则生效前的历史散文夹具/批量导入」，
+    //   生产不要设置；门禁本身由 smoke-memory-body / smoke-sixfields 在默认值下专测）。
+    if (process.env.MEMORYOS_BODY_GUARD !== "0") {
+        let bodyGuardTable = "memories";
+        try {
+            if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_records'").get())
+                bodyGuardTable = "knowledge_records";
+        }
+        catch (e) {
+            console.error(`[db] 六字段兜底触发器表名判定失败，回落 memories：${e instanceof Error ? e.message : String(e)}`);
+        }
+        try {
+            installMemoryBodyGuard(db, bodyGuardTable);
+            console.error(`[db] 六字段格式兜底触发器已安装（表 ${bodyGuardTable}）`);
+        }
+        catch (e) {
+            console.error(`[db] 六字段格式兜底触发器安装失败（不阻断启动，MCP 层校验仍在）：${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    finishStorage(db, dbPath);
+    installMemoryMetadata(db);
+    installPassageIndex(db);
+    installTaskIdentity(db, writeMemory);
+    // ★ 启动期结束：忙等待回落常态 5s，避免运行期写竞争被 20s 长等待拖慢。
+    db.exec("PRAGMA busy_timeout = 5000");
     return db;
 }
 /**
@@ -846,23 +1130,76 @@ export function walSizeBytes(dbPath) {
     }
 }
 /* ---------- ★ P1-2.2 向量读写封装（vector 已独立成表，所有路径必须经此访问） ---------- */
-/** 写入/替换某条记忆的向量（幂等 upsert）。vec=null 时删除该行。 */
-export function upsertVector(db, memoryId, vec) {
+/**
+ * 写入/替换某条记忆的向量（幂等 upsert）。vec=null 时删除该行。
+ *
+ * ★ 2026-10-15 向量带出处（架构改进第一档①）：
+ *   · 新增可选 opts { model, dim }：model 记当时 EMBED_MODE 对应的真实模型名（local→EMBED_MODEL，api→EMBED_MODEL，fake→'fake'），
+ *     缺省 'unknown'；dim 缺省按 vec.length 推导。
+ *   · **fake 模式 fail-closed**：若调用方未显式传 model（即 opts.model===undefined）且当前 EMBED_MODE 解析为
+ *     'fake'，本函数抛出错误，而非静默写入假向量污染语义空间——这是「静默失败」根治点之一
+ *     （此前 fake 是缺省值且写入通道从不校验，见 #4451「EMBED_MODE 兜底」规则）。
+ *   · 读侧（readVector / getVectorsOnProject 等）应配合检查 embed_model，同库内混用不同模型向量时按 stale 同等降权
+ *     （search.js 已约定）。
+ */
+export function upsertVector(db, memoryId, vec, opts = {}) {
+    // ★ A3（2026-11-06）：任务向量归任务库。写侧必须显式选物理表 ——
+    //   读侧的 memory_vectors 是跨库 UNION 的 TEMP VIEW，视图不能承接 ON CONFLICT upsert。
+    // ★ 2026-11-07：写记录时透传 type，避免新建任务在分流触发器内被误判成主库记录。
+    const table = vectorTable(db, memoryId, opts.recordType);
+    // 首启尚未拆分向量库时只有一个物理表，不能访问 task_store.memory_vectors。
+    const split = hasSplitVectorStore(db);
+    const otherTable = !split ? null : table === 'task_store.memory_vectors' ? 'main.memory_vectors' : 'task_store.memory_vectors';
     if (!vec) {
-        db.prepare(`DELETE FROM memory_vectors WHERE memory_id = ?`).run(memoryId);
+        db.prepare(`DELETE FROM ${table} WHERE memory_id = ?`).run(memoryId);
+        if (otherTable) db.prepare(`DELETE FROM ${otherTable} WHERE memory_id = ?`).run(memoryId);
+        bumpVecGenOnSplit(db, table);
         return;
     }
-    db.prepare(`INSERT INTO memory_vectors(memory_id, embedding) VALUES (?, ?)
-     ON CONFLICT(memory_id) DO UPDATE SET embedding = excluded.embedding`).run(memoryId, vecToBuf(vec));
+    // 惰性读取当前 EMBED_MODE（不 import embed.js，避免 db.js 反向依赖 ML 层——沿用既有铁律）：
+    // 只读 process.env，embed.js 的 resolveMode() 与此口径一致（同为「缺省 fake」），此处仅用于 fail-closed 判据。
+    const mode = process.env.EMBED_MODE ?? "fake";
+    const fakeMode = mode === "fake";
+    if (fakeMode && opts.model === undefined) {
+        throw new Error(
+            `[upsertVector] EMBED_MODE=fake 但调用方未显式声明 model 出处——拒绝静默写入假向量污染语义空间（见 #4451）。` +
+            ` 请：① 生产环境显式设 EMBED_MODE=local/api 后重试；或 ② 管线自测场景显式传 opts.model='fake' 以声明这是测试向量。`
+        );
+    }
+    const model = opts.model ?? "unknown";
+    const dim = opts.dim ?? vec.length;
+    // ★ 2026-11-07：跨库 TEMP VIEW 会 UNION 两边同 id 的向量；写入物理表前先清掉另一路的重复行，
+    //   否则 getVectorsOnProject 会同时返回主库/任务库两条记录，语义检索出现重复候选。
+    if (otherTable) db.prepare(`DELETE FROM ${otherTable} WHERE memory_id = ?`).run(memoryId);
+    db.prepare(`INSERT INTO ${table}(memory_id, embedding, embed_model, dim) VALUES (?, ?, ?, ?)
+     ON CONFLICT(memory_id) DO UPDATE SET embedding = excluded.embedding, embed_model = excluded.embed_model, dim = excluded.dim`
+    ).run(memoryId, vecToBuf(vec), model, dim);
+    bumpVecGenOnSplit(db, table);
 }
 /** 读取单条记忆的向量；不存在返回 null。 */
 export function readVector(db, memoryId) {
     const r = db.prepare(`SELECT embedding FROM memory_vectors WHERE memory_id = ?`).get(memoryId);
     return r ? bufToVec(r.embedding) : null;
 }
+/**
+ * ★ 2026-10-15 读取单条记忆的向量出处（embed_model / dim）；不存在返回 null。
+ * 供检索侧判断「跨模型向量」降权（同库内不同模型/维度的向量不可直接 cosine 比较）。
+ */
+export function readVectorProvenance(db, memoryId) {
+    const r = db.prepare(`SELECT embed_model, dim FROM memory_vectors WHERE memory_id = ?`).get(memoryId);
+    return r ? { model: r.embed_model, dim: Number(r.dim) } : null;
+}
 /** 删除某条记忆的向量（记忆被物理删除时调用）。 */
 export function deleteVector(db, memoryId) {
-    db.prepare(`DELETE FROM memory_vectors WHERE memory_id = ?`).run(memoryId);
+    // ★ 2026-11-07：记录可能已被物理删除，归属判定此时必然为 null；删除向量只需按 id 清两路物理表，
+    //   不依赖记录仍存在。跨库 UNION 视图是 TEMP VIEW，不能通过 INSTEAD OF 触发器承接 DELETE。
+    db.prepare(`DELETE FROM main.memory_vectors WHERE memory_id = ?`).run(memoryId);
+    if (hasSplitVectorStore(db)) {
+        const task = db.prepare(`DELETE FROM task_store.memory_vectors WHERE memory_id = ?`).run(memoryId);
+        // 主库 DELETE 触发器已 bump；仅任务库删除需应用层补一次（与 upsertVector 同口径）。
+        if (Number(task.changes) > 0)
+            bumpVecGenOnSplit(db, 'task_store.memory_vectors');
+    }
 }
 /**
  * ★ P1-2.2 迁移：把 memories.embedding 搬入 memory_vectors，并置空旧列以真正瘦身。
@@ -874,16 +1211,33 @@ export function deleteVector(db, memoryId) {
  *   ④ 保留 memories.embedding 列 —— 结构向后兼容，老代码若遗漏改动会被 NULL 暴露而非静默读错。
  */
 const VECTOR_MIGRATION_KEY = "migration.vectors_split_v1";
+const VECTOR_PROVENANCE_MIGRATION_KEY = "migration.vectors_provenance_v1";
 function migrateVectorsSplit(db) {
     if (readConfig(db, VECTOR_MIGRATION_KEY, false) === true)
         return;
     const legacy = db.prepare(`SELECT COUNT(*) c FROM memories WHERE embedding IS NOT NULL`).get().c;
     db.exec("BEGIN");
     try {
-        db.exec(`
-      INSERT OR IGNORE INTO memory_vectors(memory_id, embedding)
-      SELECT id, embedding FROM memories WHERE embedding IS NOT NULL;
-    `);
+        // ★ 2026-11-07：memories 是跨库 UNION 视图，旧写法会把任务向量硬写进主库。
+        //   首启尚未拆库时 knowledge_records/task_store 都不存在，沿用单库物理表 memories；
+        //   已拆库时按物理表分别迁移，任务向量落任务库。
+        // db.prepare 会把 sqlite_master 改写成 storage_schema；直接走 raw 保留 main 的物理目录语义。
+        const split = db.storage?.raw
+            ? !!db.storage.raw.prepare(`SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='knowledge_records'`).get()
+            : false;
+        if (split) {
+            db.exec(`
+          INSERT OR IGNORE INTO main.memory_vectors(memory_id, embedding)
+          SELECT id, embedding FROM main.knowledge_records WHERE embedding IS NOT NULL;
+          INSERT OR IGNORE INTO task_store.memory_vectors(memory_id, embedding)
+          SELECT id, embedding FROM task_store.task_records WHERE embedding IS NOT NULL;
+        `);
+        } else {
+            db.exec(`
+          INSERT OR IGNORE INTO main.memory_vectors(memory_id, embedding)
+          SELECT id, embedding FROM memories WHERE embedding IS NOT NULL;
+        `);
+        }
         db.exec(`UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL;`);
         writeConfig(db, VECTOR_MIGRATION_KEY, true);
         db.exec("COMMIT");
@@ -894,6 +1248,49 @@ function migrateVectorsSplit(db) {
     }
     if (legacy)
         console.error(`[db] 向量表迁移完成: ${legacy} 条向量移入 memory_vectors（memory 表已瘦身）`);
+}
+/**
+ * ★ 2026-10-15 向量出处迁移：给已有向量行回填 embed_model / dim 两列。
+ * 背景：memory_vectors 表新增 embed_model（TEXT，缺省 'unknown'）与 dim（INTEGER，缺省 0）两列，
+ *   用于在检索时只比对同模型同维度的向量，防止不同模型/维度的向量混比导致静默失真
+ *   （EMBED_MODE 在 local/api/fake 之间切换时，历史向量与新向量不在同一语义空间/维度空间）。
+ *
+ * 回填策略（幂等、单事务、config 标记防重复）：
+ *   ① dim：直接由 BLOB 长度推导（float32 每维 4 字节，length/4 即 dim），**不猜测模型名**；
+ *   ② embed_model：现有向量无法反推真实模型（历史上 EMBED_MODE 缺省为 fake、无标记列），
+ *      统一回填为 'unknown'，交由 reembed.js（现成全量重算入口，重算时按当时 EMBED_MODE 打真实标记）
+ *      或 embed-backfill.js 逐步修正——在此之前，'unknown' 视为需要重算的待办，检索侧对
+ *      embed_model='unknown' 的向量按 stale 同等降权处理（见 upsertVector 与 search.js 侧的约定）。
+ *   ③ 只处理「新列尚缺、或 embed_model='unknown' 且 dim=0」的行，已完成回填的行（dim>0 且
+ *      embed_model!='unknown'）绝不覆盖，保证多次 openDb 启动零成本、零副作用。
+ */
+function migrateVectorProvenance(db) {
+    if (readConfig(db, VECTOR_PROVENANCE_MIGRATION_KEY, false) === true)
+        return;
+    db.exec("BEGIN");
+    try {
+        const missing = db
+            .prepare(`SELECT memory_id, embedding FROM main.memory_vectors
+                      WHERE dim = 0 OR dim IS NULL`)
+            .all();
+        if (missing.length) {
+            const upd = db.prepare(
+                `UPDATE main.memory_vectors SET dim = ?, embed_model = COALESCE(embed_model, 'unknown') WHERE memory_id = ?`
+            );
+            for (const r of missing) {
+                const blobLen = r.embedding?.byteLength ?? 0;
+                const dim = Math.floor(blobLen / 4); // float32：4 字节/维
+                upd.run(dim, r.memory_id);
+            }
+            console.error(`[db] 向量出处回填: ${missing.length} 条向量补 dim（embed_model 保留/默认 'unknown'，待 reembed 逐步修正）`);
+        }
+        writeConfig(db, VECTOR_PROVENANCE_MIGRATION_KEY, true);
+        db.exec("COMMIT");
+    }
+    catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+    }
 }
 /* ---------- ★ v0.4 记忆类别（10 sector） ---------- */
 /**
@@ -906,7 +1303,7 @@ export const SECTORS = {
     working: { cn: "工作记忆", desc: "当前上下文、临时变量、工具返回、任务状态", lambda: 0.05, w: 0.9, legacy: [] },
     episodic: { cn: "情景记忆", desc: "原始对话、时间、参与者、事件链、代码行号", lambda: 0.015, w: 1.2, legacy: ["experience"] },
     semantic: { cn: "语义记忆", desc: "事实、偏好、结论、概念关系", lambda: 0.005, w: 1.0, legacy: [] },
-    procedural: { cn: "程序记忆", desc: "SOP、规约、工具用法、提示词、技能", lambda: 0.008, w: 1.1, legacy: ["convention", "rule"] },
+    procedural: { cn: "程序记忆", desc: "SOP、规约、工具用法、提示词、技能", lambda: 0.008, w: 1.1, legacy: ["convention", "rule", "example"] },
     meta: { cn: "元记忆", desc: "来源、置信度、决策理由、冲突记录、复盘（含反思）", lambda: 0.001, w: 0.8, legacy: ["decision", "pitfall"] },
     social: { cn: "社会/共享记忆", desc: "任务分派、交接、权限、共享黑板", lambda: 0.01, w: 1.0, legacy: ["task"] },
     user: { cn: "用户记忆", desc: "用户画像、偏好与历史交互信息", lambda: 0.003, w: 1.0, legacy: [] },
@@ -974,6 +1371,43 @@ export function migrateSectors(db) {
         throw e;
     }
 }
+const SOURCE_MIGRATION_KEY = "migration.memory_source_v1";
+/**
+ * ★ 2026-10-14（③ 记忆来源标签）来源列回填（幂等、单事务、以 config 标记防重复）。
+ * 只做两件事：① 人工通道写的（agent LIKE 'human%'）→ human；② 采集/笔记镜像 → ingest；其余保持默认 'agent'。
+ * 采集判定用三条确定性证据（互补，不用启发式猜测）：
+ *   ① agent='obsidian' —— 三个 vault 导入入口（CLI / MCP 工具 / 看板路由）统一传该 agent，无其他用途；
+ *   ② obsidian_sync 映射表命中的 memory_id —— 笔记 ↔ 记忆的显式映射；
+ *   ③ agent_fpath ∈ ingest_state.path —— 文件采集写入时把源文件绝对路径记为 agent_fpath。
+ * 实测（生产库副本）：仅靠 ② 只覆盖 5 条（映射表只登记了 5 篇镜像笔记），而 agent='obsidian' 实际有 97 条
+ *   （vault 导入未登记映射）；故 ① 是必需项，②③ 负责 trae/workbuddy/codex 等文件采集面。
+ * 两表都可能因功能未启用而不存在，故先探测再拼语句。不触碰 content/embedding/FTS —— 结构附加，回退安全。
+ */
+export function migrateMemorySource(db) {
+    if (readConfig(db, SOURCE_MIGRATION_KEY, false) === true)
+        return;
+    const hasTable = (n) => db.prepare(`SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name=?`).get(n).c > 0;
+    const conds = [`agent = 'obsidian'`];
+    if (hasTable("obsidian_sync"))
+        conds.push(`id IN (SELECT memory_id FROM obsidian_sync WHERE memory_id IS NOT NULL)`);
+    if (hasTable("ingest_state"))
+        conds.push(`agent_fpath IN (SELECT path FROM ingest_state)`);
+    db.exec("BEGIN");
+    try {
+        const human = Number(db.prepare(`UPDATE memories SET source='human' WHERE agent LIKE 'human%'`).run().changes ?? 0);
+        const ingest = Number(db
+            .prepare(`UPDATE memories SET source='ingest' WHERE source <> 'human' AND (${conds.join(" OR ")})`)
+            .run().changes ?? 0);
+        writeConfig(db, SOURCE_MIGRATION_KEY, true);
+        db.exec("COMMIT");
+        if (human || ingest)
+            console.error(`[db] 记忆来源迁移完成: human=${human} ingest=${ingest} 条`);
+    }
+    catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+    }
+}
 /** upsert 一条会话内 working 记忆（key 为会话内逻辑键，同 key 覆盖） */
 export function setWorkingMemory(db, sessionId, key, content, kind = "note") {
     db.prepare(`INSERT INTO working_memory(session_id, key, kind, content, updated_at)
@@ -1022,6 +1456,7 @@ export function clearWorkingMemory(db, sessionId, key) {
  * @param keep 保留最近 N 份（按文件名日期排序），超出的最旧文件被删除
  */
 export function backupDb(db, dbPath, opts = {}) {
+    if (db.storage) return backupStorage(db, dbPath, opts);
     const dir = opts.dir ?? path.join(path.dirname(dbPath), "backup");
     const keep = opts.keep ?? 7;
     const now = opts.now ?? new Date();
@@ -1106,6 +1541,8 @@ export function rowOf(r) {
         causal_parent: r.causal_parent == null ? null : Number(r.causal_parent),
         // ★ 批次⑦X2：规则强制注入开关（老库未迁移读到 undefined → 安全默认 0）
         inject: Number(r.inject ?? 0),
+        // ★ 2026-10-14（③）：来源标签（老库未迁移读到 undefined → 安全默认 'agent'，与列默认值一致）
+        source: String(r.source ?? "agent"),
     };
 }
 /**
@@ -1123,6 +1560,9 @@ export function writeMemory(db, args) {
     // ★ v0.4：sector 缺省时由 type 推导；λ 缺省取类默认（daemon 按此衰减）
     const sector = normalizeSector(args.sector, args.type);
     const lambda = args.decay_lambda ?? sectorLambda(sector);
+    // ★ 2026-10-14（③ 记忆来源标签）：缺省推导 —— agent 以 'human' 开头（human:dashboard / human:test /
+    //   human:arbitrate 等人工通道）→ source='human'，其余 AI 工具写入 → 'agent'；采集/笔记导入显式传 'ingest'。
+    const source = args.source ?? (String(args.agent ?? "").startsWith("human") ? "human" : "agent");
     // ★ 一致性⑤（2026-09-19）：INSERT + 向量 + grams + 缓存失效包成真事务 —— 原 catch DELETE 伪回滚
     //  在「INSERT 成功 → 进程崩溃」窗口会留下无向量孤儿记忆（FTS 可见、语义检索不可见、永不自愈）。
     //  现在要么全写、要么全不算；嵌入计算由调用方在锁外完成、经 args.embedding 传入（慢活不进事务）；
@@ -1134,16 +1574,25 @@ export function writeMemory(db, args) {
          content,type,agent,agent_fpath,project,confidence,status,
          sector,form,salience,decay_lambda,valid_from,valid_until,
          trigger_cond,trigger_kind,trigger_action,valence,arousal,source_ref,sensitivity,pinned,
-         epoch,idempotency_key,causal_parent
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+         epoch,idempotency_key,causal_parent,source
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
             .run(args.content, args.type, args.agent, args.agent_fpath, args.project, args.confidence ?? 0.8, status, sector, String(args.form ?? "textual"), args.salience ?? 1.0, lambda, args.valid_from ?? null, args.valid_until ?? null, args.trigger_cond ?? null, String(args.trigger_kind ?? "pattern"), args.trigger_action ?? null, args.valence ?? null, args.arousal ?? null, args.source_ref ?? null, String(args.sensitivity ?? "normal"), args.pinned ?? 0,
             // ★ P2-5（E-1）：MACP 可写字段。version/fencing_token 走 DDL 默认值（1/0），只在接管/修订时由工具递增，
             //   故此处不接受外部传值，避免调用方伪造版本号破坏单调性。
-            args.epoch ?? null, args.idempotency_key ?? null, args.causal_parent ?? null);
+            args.epoch ?? null, args.idempotency_key ?? null, args.causal_parent ?? null, source);
         newId = Number(info.lastInsertRowid);
-        if (args.embedding)
-            upsertVector(db, newId, args.embedding); // P1-2.2：向量入独立表
+        if (args.embedding) {
+            // P1-2.2：向量入独立表；★ 2026-10-15 向量带出处：按当时 EMBED_MODE/EMBED_MODEL 打真实标签
+            //   （writeMemory 是同步路径，直接读 env 与 upsertVector 的 fail-closed 判据同源，不走 embedderProvenance）
+            const _mode = process.env.EMBED_MODE ?? "fake";
+            const _model = _mode === "local" ? (process.env.EMBED_MODEL ?? "Xenova/bge-m3")
+                : _mode === "api" ? (process.env.EMBED_MODEL ?? "bge-m3")
+                    : "fake";
+            upsertVector(db, newId, args.embedding, { model: _model, dim: args.embedding.length, recordType: args.type });
+        }
         syncGrams(db, newId, args.content); // P0-3.4：维护 CJK 2-gram 索引
+        setMemoryTerms(db,newId,args);
+        refreshMemoryMetadata(db, newId);
         invalidateVectorCache(db); // P0-4.1：新记忆进入候选池
     });
     return readMemory(db, newId);
@@ -1151,23 +1600,42 @@ export function writeMemory(db, args) {
 export function updateMemory(db, id, args) {
     if (!readMemory(db, id))
         return null;
-    const content = args.content != null ? normalizeContent(args.content).trim() : null;
-    if (content !== null && !content)
+    const content = args.content != null ? normalizeContent(args.content) : null;
+    if (content !== null && !content.trim())
         throw new Error("content 不能为空");
     // ★ 2026-09-19（实操复盘并发竞态）：乐观锁 CAS —— expectedVersion 给出时，content 写与 version 递增
     //   原子化（WHERE version=?）。两会话同时认领同一任务只有一个命中，另一个拿 null 由调用方拒绝。
     //   FTS/2-gram 同步与向量失效仅在校验通过后执行（漂移写不产生任何副作用）。
     if (args.expectedVersion != null) {
-        if (content === null)
-            throw new Error("expectedVersion 仅支持 content 写入");
+        // ★ 2026-11-14（个人版并发编辑）：CAS 从「仅 content」放宽到 content/type/sector 任意组合
+        //   （编辑框一次提交多个字段）；版本号仍是唯一闸门，WHERE version=? 不命中 → 整条 UPDATE 0 行，
+        //   调用方（memory-domain.updateMemoryRow）据此返回「被别人改过」而不是「不存在」。
+        const sets = ["version=version+1"];
+        const vals = [];
+        if (content !== null) {
+            sets.push("content=?", "embedding_stale=1");
+            vals.push(content);
+        }
+        if (args.type) {
+            sets.push("type=?");
+            vals.push(args.type);
+        }
+        if (args.sector !== undefined) {
+            sets.push("sector=?");
+            vals.push(args.sector || null);
+        }
         const cas = db
-            .prepare(`UPDATE memories SET content=?, embedding_stale=1, version=version+1 WHERE id=? AND version=?`)
-            .run(content, id, args.expectedVersion);
+            .prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id=? AND version=?`)
+            .run(...vals, id, args.expectedVersion);
         if (Number(cas.changes) === 0)
             return null; // 版本漂移：未写入任何内容
-        db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(content, id);
-        syncGrams(db, id, content);
+        if (content !== null) {
+            syncFtsContent(db, id, content);
+            syncGrams(db, id, content);
+        }
         invalidateVectorCache(db);
+        setMemoryTerms(db,id,args);
+        refreshMemoryMetadata(db, id);
         return readMemory(db, id);
     }
     if (content !== null) {
@@ -1176,7 +1644,7 @@ export function updateMemory(db, id, args) {
         db.prepare(`UPDATE memories SET content=?, embedding_stale=1 WHERE id=?`).run(content, id);
         // P0-3.1：FTS 同步现已由 trg_memories_au 触发器保证；此处保留为幂等兜底
         // （对触发器创建之前就已存在的旧库仍然有效，重复写入同值无副作用）。
-        db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(content, id);
+        syncFtsContent(db, id, content);
     }
     if (args.type)
         db.prepare(`UPDATE memories SET type=? WHERE id=?`).run(args.type, id);
@@ -1185,11 +1653,14 @@ export function updateMemory(db, id, args) {
     if (content !== null)
         syncGrams(db, id, content); // P0-3.4：正文已改，重建 CJK 2-gram
     invalidateVectorCache(db); // P0-4.1：正文已变（注：向量未重算，见上方 v0.3 约定）
+    setMemoryTerms(db,id,args);
+    refreshMemoryMetadata(db, id);
     return readMemory(db, id);
 }
-/** 合并去重：对命中的已有记忆 confidence+0.1 */
+/** 独立验收或人工仲裁的置信度调整，限于 0..1；重复写入和引用不得调用。 */
 export function bumpConfidence(db, id, delta = 0.1) {
-    db.prepare(`UPDATE memories SET confidence = confidence + ? WHERE id = ?`).run(delta, id);
+    if (!Number.isFinite(delta)) throw new TypeError("置信度增量必须是有限数值");
+    db.prepare(`UPDATE memories SET confidence = MIN(1.0, MAX(0.0, confidence + ?)) WHERE id = ?`).run(delta, id);
 }
 /**
  * 并发守卫：写事务重试封装。多客户端（MCP 多会话）同时写时，busy_timeout 只负责"等锁"，
@@ -1202,7 +1673,7 @@ export function bumpConfidence(db, id, delta = 0.1) {
  *  本项目单进程单 db 句柄，进程级计数即可（同步执行无并发重排）。 */
 let __txDepth = 0;
 export function withTx(db, fn, retries = 3) {
-    if (__txDepth > 0) {
+    if (__txDepth > 0 || db.isTransaction) {
         fn(); // 已在事务内：并入当前事务，不重复 BEGIN
         return;
     }
@@ -1247,16 +1718,39 @@ export function readMemory(db, id) {
 export function getVectorsOnProject(db, project, activeOnly = false) {
     // ★ P1-2.2：向量已独立成表 → JOIN 取代原来的 `embedding IS NOT NULL` 过滤
     //   （JOIN 天然只返回「有向量」的行），且 memories 侧不再读取 BLOB。
+    // ★ 2026-10-15：附带 embed_model/dim 出处字段（跨模型降权判据见 search.js）。
     const rows = db
-        .prepare(`SELECT m.id, v.embedding, m.embedding_stale
-       FROM memories m
-       JOIN memory_vectors v ON v.memory_id = m.id
-       WHERE m.project IN (?, 'global')` + (activeOnly ? ` AND m.status = 'active'` : ""))
-        .all(project);
+        .prepare(`SELECT m.id, v.embedding, m.embedding_stale, v.embed_model, v.dim
+       FROM main.knowledge_records m
+       JOIN main.memory_vectors v ON v.memory_id = m.id
+       WHERE ${project === ALL_PROJECTS ? "1=1" : "m.project COLLATE NOCASE IN (?, 'global')"}` + (activeOnly ? ` AND m.status = 'active'` : ""))
+        .all(...(project === ALL_PROJECTS ? [] : [project]));
     return rows.map((r) => ({
         id: Number(r.id),
         vec: bufToVec(r.embedding),
         stale: Number(r.embedding_stale) === 1,
+        embedModel: r.embed_model ?? "unknown",
+        dim: Number(r.dim) || 0,
+    }));
+}
+/** 归档层语义检索专用：project 内**仅 status='archived'** 且带向量的记忆。
+ *  不走向量缓存 —— 冷层（归档兜底）是低频路径，且缓存键只有 activeOnly 0/1 两档，
+ *  为它单开第三档会扩大热路径改动面（沿用「热路径零改动」取向）。
+ *  口径：只认 archived（rejected/superseded 天然排除）。
+ *  ★ 2026-10-15：同样附带 embed_model/dim 出处字段。 */
+export function getArchivedVectorsOnProject(db, project) {
+    const rows = db
+        .prepare(`SELECT m.id, v.embedding, m.embedding_stale, v.embed_model, v.dim
+       FROM main.knowledge_records m
+       JOIN main.memory_vectors v ON v.memory_id = m.id
+       WHERE ${project === ALL_PROJECTS ? "1=1" : "m.project COLLATE NOCASE IN (?, 'global')"} AND m.status = 'archived'`)
+        .all(...(project === ALL_PROJECTS ? [] : [project]));
+    return rows.map((r) => ({
+        id: Number(r.id),
+        vec: bufToVec(r.embedding),
+        stale: Number(r.embedding_stale) === 1,
+        embedModel: r.embed_model ?? "unknown",
+        dim: Number(r.dim) || 0,
     }));
 }
 /* ---------- ★ P0-4.1 向量缓存：消除"每次检索全表反序列化 embedding" ---------- */
@@ -1274,19 +1768,164 @@ const vecCache = new WeakMap();
 function vecState(db) {
     let s = vecCache.get(db);
     if (!s) {
-        s = { version: 0, byKey: new Map(), annByKey: new Map() }; // ★ P0-ANN：ANN 索引与向量缓存同生命周期
+        s = {
+            version: 0, byKey: new Map(), annByKey: new Map(), // ★ P0-ANN：ANN 索引与向量缓存同生命周期
+            // ★ 架构重构 1c：跨进程失效状态 —— lastGen=上次对账到的全局代数（null=尚未建立基线）
+            lastGen: null, pendingLocal: 0, genStmt: null,
+        };
         vecCache.set(db, s);
     }
     return s;
+}
+/* ── ★ 架构重构 1c（2026-10-14）：跨进程缓存失效「向量代数」───────────────
+ * 缺陷（改前）：vecCache.version 只在**本进程写入**时 ++，别的进程（daemon / ingest CLI /
+ *   另一个 direct 模式 MCP 进程）写库本进程察觉不到，只能靠 60s TTL 兜底 ⇒ 首次查询可能读到陈旧池。
+ * 已否决（用 `PRAGMA data_version` 当失效信号，两条连接探针实测）：同连接自写不改自己看到的值（安全），
+ *   但**其他连接的任何提交都会改** —— 包括别的进程搜索时写的 hit_count/last_seen_at 回血（实测 +1）
+ *   ⇒ 迁移期一搜索就打掉核心缓存，比 60s TTL 更差。
+ * 采用：只在「会改变候选池」的写发生时，由 SQLite 触发器把 config 单行 `vec_gen` +1；
+ *   检索入口读该单行（主键点查 O(1)）与上次基线比对，变了即 `vecState.version++` —— **一处 bump
+ *   同时失效向量缓存与 L1 结果缓存**（search.js 的 L1 失效键就是 `vectorCacheVersion`，无需改 search.js）。
+ * 判据（本批核心目的）：纯命中回血（只写 hit_count/last_hit_at/last_seen_at）**不得**递增代数。
+ * 兜底：60s TTL 保留 —— 漏掉某个写点只退化到现状，不会永久陈旧。
+ * 边界（如实）：任何进程的任何「候选池相关写」都会让**所有**进程失效；范围与代价见 `ensureVecGen` 注释。
+ * 未纳入（如实列报）：`links` 表改动（只影响排序加分、不改变候选集合，且 obsidian 笔记同步会批量写
+ *   —— 纳入即风暴）与派生表（memories_fts / memories_gram），二者陈旧上限 = TTL（30s / 60s）。
+ * 开销：读侧每次检索多 2 次 config 主键点查（`vectorCacheVersion` 与 `getVectorsOnProjectCached` 各一次，
+ *   后者覆盖不经前者的调用方），量级 μs，远小于查询嵌入推理（~27-33ms）。 */
+const VEC_GEN_KEY = "vec_gen";
+/** memories 的「候选池相关列」—— **精确**清单（勿随意增删）：凡参与「某 project 的候选记忆集合 /
+ *  过滤 / 打分 / L1 返回内容」者。
+ *   content(词法候选+L1 正文) project(WHERE 子句) status(activeOnly + 状态过滤) type(类型前置过滤/过滤/decision 豁免)
+ *   sector·salience·decay_lambda(打分与 eff≤0.15 排除) pinned(免衰减) valid_until(过期排除)
+ *   sensitivity(secret 过滤) source_ref(card: 任务排除) embedding_stale(stale 降权与 stale 标记) version(生命周期修订)。
+ *  排除及依据：
+ *   · hit_count / last_hit_at / last_seen_at —— 命中回血，**本批核心目的就是不触发**；
+ *   · confidence / eff_confidence —— 检索层不读（全仓 search.js 无 `eff_confidence` 引用；`confidence` 只作
+ *     返回对象里的展示字段、不参与打分），而 daemon 每小时治理会**批量**写 eff_confidence ⇒ 纳入即每小时
+ *     全库缓存风暴，换来「展示字段最多陈旧 60s」的收益，不成比例；
+ *   · valid_from(检索只读 valid_until) agent / agent_fpath / source(展示与溯源) created_at(只增不改，INSERT 已覆盖)
+ *     conflict_with / superseded_by / derived_from / causal_parent / fencing_token / epoch / idempotency_key
+ *     (生命周期与溯源，不进候选集与打分) inject(规则注入开关，与检索结果缓存无关)
+ *     trigger_cond / trigger_kind / trigger_action / valence / arousal / form(检索层不读)
+ *     embedding(P1-2.2 后恒为 NULL，向量在 memory_vectors)。 */
+const VEC_GEN_MEM_COLS = "content, project, status, type, sector, salience, decay_lambda, pinned, valid_until, sensitivity, source_ref, embedding_stale, version";
+/** 进程内失效统计（验收埋点；进程重启归零；byHour 只保留最近 24 个小时桶）。 */
+const _vecInv = { total: 0, lastAt: null, lastSource: null, bySource: { "local-write": 0, "gen-change": 0 }, byHour: new Map() };
+function noteVecInvalidation(source) {
+    _vecInv.total++;
+    _vecInv.lastAt = new Date().toISOString();
+    _vecInv.lastSource = source;
+    _vecInv.bySource[source] = (_vecInv.bySource[source] ?? 0) + 1;
+    const hour = _vecInv.lastAt.slice(0, 13); // YYYY-MM-DDTHH
+    _vecInv.byHour.set(hour, (_vecInv.byHour.get(hour) ?? 0) + 1);
+    if (_vecInv.byHour.size > 24)
+        for (const k of [..._vecInv.byHour.keys()].sort().slice(0, _vecInv.byHour.size - 24))
+            _vecInv.byHour.delete(k);
+}
+/** ★ 1c 验收埋点：向量缓存 / L1 的失效次数与来源（进程内累计，零 I/O）。 */
+export function vecInvalidationStats() {
+    return {
+        total: _vecInv.total,
+        lastAt: _vecInv.lastAt,
+        byHour: Object.fromEntries([..._vecInv.byHour.entries()].sort()),
+        bySource: { ..._vecInv.bySource },
+        lastSource: _vecInv.lastSource,
+    };
+}
+/** 读全局向量代数（config 主键点查；语句按 db 实例缓存，避免热路径重复 prepare）。 */
+function readVecGen(db) {
+    const s = vecState(db);
+    if (s.genStmt === null)
+        s.genStmt = db.prepare(`SELECT value FROM config WHERE key = ?`);
+    const row = s.genStmt.get(VEC_GEN_KEY);
+    return row ? Number(row.value) || 0 : 0;
+}
+/** DDL 侧（openDb 内、**加列迁移之后**调用）：建计数行 + 六个触发器（幂等）。
+ *
+ *  落到生产库的 DDL 对象（④ 如实盘清）：
+ *   · 数据行：`config('vec_gen','0')`（幂等 INSERT OR IGNORE；仅这一行，不改任何既有 config 行）。
+ *   · 触发器 6 个：
+ *     `trg_vecgen_mi` memories AFTER INSERT / `trg_vecgen_mu` memories AFTER UPDATE OF <VEC_GEN_MEM_COLS>
+ *     / `trg_vecgen_md` memories AFTER DELETE；
+ *     `trg_vecgen_vi` memory_vectors AFTER INSERT / `trg_vecgen_vu` memory_vectors AFTER UPDATE OF embedding
+ *     / `trg_vecgen_vd` memory_vectors AFTER DELETE。
+ *   · 无新增表、无新增列、无索引、无数据回填（生产库既有行一行未改）。
+ *
+ *  运行时开销与行为边界（如实）：
+ *   · 触发体是一次 `config` 主键 UPDATE（每受影响**行**执行一次）——相对该行本身的写，开销可忽略
+ *     （WAL 下同事务内的一条 PK 更新）；INSERT/UPDATE 触发器均不递归（config 上无触发器）。
+ *   · 边界：**任何进程**的任何相关写都会递增，于是**所有**进程下次检索时整体失效。
+ *     逐项判断：daemon 每小时治理里**量最大的一支**（decay → 批量 `eff_confidence`）不在列内 ⇒ 不触发；
+ *     会触发的是「归档（status）」「重嵌（memory_vectors upsert + embedding_stale 清零）」「降权（salience）」
+ *     ——量级为每轮被治理的条数（归档由 computeArchives 决定，通常个位数；重嵌受 stale 集合上限约束；
+ *     降权 `pruneLowEfficiency` 每轮 ≤20）。即每小时数十次失效，而非全库风暴。
+ *   · 真正修掉的一处漏点：向量重算/回填**只写 memory_vectors、不改 memories 任何列**，
+ *     改前既无 version++ 也无任何信号 ⇒ 别的进程重嵌完，本进程语义检索仍用旧向量（60s 内）。本次由
+ *     `trg_vecgen_*`(memory_vectors) 覆盖。
+ *   · 自愈：若有人误删 `config('vec_gen')` 行，触发器 UPDATE 命中 0 行即静默不增（退化为 TTL 兜底）；
+ *     下次 `openDb` 的 INSERT OR IGNORE 会补回该行。
+ *
+ *  回滚（本批要撤时）：`DROP TRIGGER IF EXISTS trg_vecgen_mi/trg_vecgen_mu/trg_vecgen_md/trg_vecgen_vi/`
+ *   `trg_vecgen_vu/trg_vecgen_vd;` + `DELETE FROM config WHERE key='vec_gen';`（纯附加对象，drop 即回到改前，
+ *   本批未改任何生产数据行）。 */
+function ensureVecGen(db) {
+    db.exec(`INSERT OR IGNORE INTO config(key, value) VALUES('${VEC_GEN_KEY}', '0');`);
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_mi AFTER INSERT ON memories BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_mu AFTER UPDATE OF ${VEC_GEN_MEM_COLS} ON memories BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_md AFTER DELETE ON memories BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_vi AFTER INSERT ON main.memory_vectors BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_vu AFTER UPDATE OF embedding ON main.memory_vectors BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_vecgen_vd AFTER DELETE ON main.memory_vectors BEGIN
+      UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='${VEC_GEN_KEY}';
+    END;
+  `);
+}
+/** 跨进程对账：代数与基线不同 ⇒ version++（同时失效向量缓存与 L1）并记一次失效。
+ *  归因：本地写入已在 `invalidateVectorCache` 里 bump 过（pendingLocal>0）→ 不重复 bump；
+ *  否则视为「他写」→ bump + 记 gen-change。（绕过 `invalidateVectorCache` 的本进程裸 SQL 也会落进
+ *  gen-change —— 标签不同，但失效行为正确，属保守侧。） */
+function reconcileVecGen(db) {
+    const s = vecState(db);
+    const gen = readVecGen(db);
+    if (s.lastGen === null) { s.lastGen = gen; s.pendingLocal = 0; return false; } // 首次：仅建立基线（此刻缓存尚空）
+    if (gen === s.lastGen) { s.pendingLocal = 0; return false; }
+    s.lastGen = gen;
+    if (s.pendingLocal > 0) { s.pendingLocal = 0; return false; }
+    s.version++;
+    noteVecInvalidation("gen-change");
+    return true;
 }
 /** 任何改变「向量候选池」的写入后调用：新增记忆、编辑正文、状态流转。 */
 export function invalidateVectorCache(db) {
     const s = vecState(db);
     s.version++;
+    s.pendingLocal++; // ★ 1c：本地 bump 记账 —— 让对账不把「自己刚写的」重复算成他写
+    noteVecInvalidation("local-write");
+}
+/** ★ 2026-10-13（检索优化）：向量缓存版本号只读访问 —— 供检索结果层缓存（L1）做失效键：
+ *  版本一变即代表底层记忆/向量池已改，L1 必须整体作废（比时间 TTL 更严格，杜绝读到旧正文）。
+ *  ★ 1c（2026-10-14）：**先对账跨进程代数**再返回 —— hybridSearch 在算 L1 键时**最先**读本函数
+ *  （早于 getVectorsOnProjectCached），若在此不对账，L1 会先于向量缓存命中「他写前」的陈旧结果。 */
+export function vectorCacheVersion(db) {
+    reconcileVecGen(db);
+    return vecState(db).version;
 }
 /** 带缓存的 getVectorsOnProject —— 仅供检索路径使用。 */
 export function getVectorsOnProjectCached(db, project, activeOnly = false) {
     const s = vecState(db);
+    reconcileVecGen(db); // ★ 1c（任务指定落点）：覆盖不经 vectorCacheVersion 的调用方（如 calibrate-simfloor）
     const key = `${project}\u0000${activeOnly ? 1 : 0}`;
     const hit = s.byKey.get(key);
     const now = Date.now();
@@ -1319,7 +1958,7 @@ export function readMemoriesByIds(db, ids) {
         const part = ids.slice(i, i + ID_CHUNK);
         const ph = part.map(() => "?").join(",");
         const rows = db
-            .prepare(`SELECT ${BASE_COLUMNS} FROM memories WHERE id IN (${ph})`)
+            .prepare(`SELECT ${BASE_COLUMNS} FROM main.knowledge_records WHERE id IN (${ph})`)
             .all(...part);
         for (const r of rows)
             out.set(Number(r.id), rowOf(r));
@@ -1329,21 +1968,47 @@ export function readMemoriesByIds(db, ids) {
 /**
  * 写入决策：对 project 内现有向量做去重/冲突预检（M-1.3）
  * @returns insert=直接写；merge=命中高相似(≥0.92)已记录,conf信心+0.1；conflict=疑似冲突(0.85~0.92)
+ *
+ * ★ 2026-10-18（收尾 P2）：余弦只用于**选候选**，不再直接等于冲突判决。
+ *   传 opts.newContent + opts.contentOf 时，用 proposition.js::classifyRelation 对候选正文做关系判定：
+ *     duplicate → merge；conflict（有显式不相容信号）→ conflict；related → insert（同主题但可分辨）；
+ *     unknown → insert + review=true（**待复核**，不落 conflict_with、不降置信度）。
+ *   不传 opts（旧调用点/单元测试）→ 逐字保留原逐档行为，避免破坏既有断言。
  */
-export function dedupeDecision(existing, newVec, newId, mergeThresh = 0.92, conflictThresh = 0.85) {
+export function dedupeDecision(existing, newVec, newId, mergeThresh = 0.92, conflictThresh = 0.85, opts = {}) {
     let best = { id: newId, sim: -1 };
     for (const e of existing) {
         if (e.id === newId)
+            continue;
+        // ★ 2026-10-15 跨模型守卫：候选行若已带 embed_model/dim 出处字段（getVectorsOnProject 附带），
+        //   且该条是 'unknown' 或 dim=0（尚未被 reembed 回填真实模型）→ 其向量与 newVec 不在同一
+        //   语义/维度空间，cosine 比较结果接近随机数，跳过不计入 best.sim。
+        //   兼容期口径：调用方传入的行若**没有** embedModel 字段（undefined，旧调用点未升级）→ 沿用原行为不跳过，
+        //   不破坏未改动的调用方。
+        //   方向性：宁可漏掉一条「可能本可合并」的机会（等 reembed 修正出处后补跑），
+        //   不可把跨模型噪声相似度误判成 ≥0.92 强合并。
+        if (e.embedModel !== undefined && (e.embedModel === "unknown" || !e.dim))
             continue;
         const s = cosine(e.vec, newVec);
         if (s > best.sim)
             best = { id: e.id, sim: s };
     }
-    if (best.sim >= mergeThresh)
-        return { action: "merge", targetId: best.id, sim: best.sim };
-    if (best.sim >= conflictThresh)
-        return { action: "conflict", targetId: best.id, sim: best.sim };
-    return { action: "insert", targetId: null, sim: best.sim };
+    // 关系判定（仅当调用方提供正文与取文回调时启用；否则走旧逐档行为）
+    const rel = (best.id != null && best.id !== newId && typeof opts.newContent === "string" && typeof opts.contentOf === "function")
+        ? classifyRelation(opts.newContent, opts.contentOf(best.id) ?? "", { sim: best.sim })
+        : null;
+    if (best.sim >= mergeThresh) {
+        if (rel && rel.relation !== "duplicate")
+            return { action: rel.relation === "conflict" ? "conflict" : "insert", targetId: rel.relation === "conflict" ? best.id : null, sim: best.sim, relation: rel.relation, reason: rel.reason };
+        return { action: "merge", targetId: best.id, sim: best.sim, relation: rel?.relation ?? null, reason: rel?.reason ?? null };
+    }
+    if (best.sim >= conflictThresh) {
+        if (!rel || rel.relation === "conflict")
+            return { action: "conflict", targetId: best.id, sim: best.sim, relation: rel?.relation ?? null, reason: rel?.reason ?? null };
+        // 非冲突：related 直接入库；unknown 入库并标记待复核（既不污染 conflict_with 也不提权）
+        return { action: "insert", targetId: null, sim: best.sim, relation: rel.relation, reason: rel.reason, review: rel.relation === "unknown", suspectId: best.id };
+    }
+    return { action: "insert", targetId: null, sim: best.sim, relation: rel?.relation ?? null, reason: rel?.reason ?? null };
 }
 /* ---------- ★ P0-3.4 CJK 2-gram 索引维护 ---------- */
 const CJK_RE = /[\u4e00-\u9fff]/;
@@ -1391,8 +2056,8 @@ export function getVectorsByIds(db, ids) {
         const ph = chunk.map(() => "?").join(",");
         const rows = db
             .prepare(`SELECT m.id, v.embedding, m.embedding_stale
-         FROM memories m
-         JOIN memory_vectors v ON v.memory_id = m.id
+         FROM main.knowledge_records m
+         JOIN main.memory_vectors v ON v.memory_id = m.id
          WHERE m.id IN (${ph})`)
             .all(...chunk);
         for (const r of rows) {
@@ -1413,7 +2078,7 @@ export function getVectorsByIds(db, ids) {
  *   兜底走 getVectorsOnProjectCached：写入后会 invalidateVectorCache，故缓存内容
  *   始终等于库内最新状态（正确性不受影响），同时避免重复读取 4KB/条的 BLOB。
  */
-export function dedupeDecisionFast(db, project, newVec, newContent, mergeThresh = 0.92, conflictThresh = 0.85) {
+export function dedupeDecisionFast(db, project, newVec, newContent, mergeThresh = 0.92, conflictThresh = 0.85, opts = {}) {
     const probe = gramProbe(newContent);
     if (probe) {
         const candidateRows = db
@@ -1422,22 +2087,80 @@ export function dedupeDecisionFast(db, project, newVec, newContent, mergeThresh 
         if (candidateRows.length > 0) {
             const existing = getVectorsByIds(db, candidateRows.map((r) => r.memory_id));
             if (existing.length > 0) {
-                const fast = dedupeDecision(existing, newVec, -1, mergeThresh, conflictThresh);
+                const fast = dedupeDecision(existing, newVec, -1, mergeThresh, conflictThresh, opts);
                 // 快路径成立的条件：词法候选里已存在「足够相似」的记忆。
                 // 此时结果与全量一致（全量的最大值不可能小于候选子集的最大值）。
-                if (fast.sim >= conflictThresh)
+                if (fast.sim >= conflictThresh && fast.action !== "insert")
                     return fast;
             }
         }
     }
     // 兜底：粗筛无候选 / 候选不够相似 → 全量确认（走缓存，避免重复 BLOB IO）
-    return dedupeDecision(getVectorsOnProjectCached(db, project), newVec, -1, mergeThresh, conflictThresh);
+    return dedupeDecision(getVectorsOnProjectCached(db, project), newVec, -1, mergeThresh, conflictThresh, opts);
+}
+/** 三库分离是否已落地：首启迁移窗口内仍是旧单库，不能访问 task_store 物理表。 */
+function hasSplitVectorStore(db) {
+    const raw = db.storage?.raw;
+    return !!raw && !!raw.prepare(`SELECT 1 FROM task_store.sqlite_master WHERE type='table' AND name='memory_vectors'`).get();
+}
+/** 记录归属判定：任务号只存在于 task_store.task_records（★ A1/A2 分流依据）。 */
+function isTaskRecord(db, id) {
+    try {
+        return !!db.prepare(`SELECT 1 AS x FROM task_store.task_records WHERE id = ?`).get(id);
+    }
+    catch {
+        return false; // 旧库/单库模式没有 task_store：按非任务处理，保持原行为
+    }
+}
+/** 向量写侧的三态归属：true=任务 / false=知识 / null=记录不存在。 */
+function recordOwnership(db, id) {
+    if (!hasSplitVectorStore(db)) {
+        const row = db.prepare(`SELECT type FROM memories WHERE id = ?`).get(id);
+        return row ? row.type === 'task' : null;
+    }
+    if (isTaskRecord(db, id))
+        return true;
+    if (db.prepare(`SELECT 1 AS x FROM main.knowledge_records WHERE id = ?`).get(id))
+        return false;
+    return null;
+}
+/** ★ A3（2026-11-06）：向量的物理归属表。任务号 → 任务库；否则主库。
+ *  读侧统一走 TEMP VIEW `memory_vectors`（跨库 UNION），只有写侧必须显式选表
+ *  —— 视图不能承接 `INSERT ... ON CONFLICT` upsert。 */
+function vectorTable(db, id, recordType) {
+    // ★ 2026-11-07：已知 type 时不再依赖 INSERT 兼容视图触发器的可见性时序；未知记录 fail-closed，
+    //   避免「归属未知」被静默当成知识写进主库。显式声明与物理归属冲突时同样拒绝写入。
+    const declared = recordType === 'task' ? true : recordType === undefined ? undefined : false;
+    const actual = recordOwnership(db, id);
+    if (declared !== undefined && actual !== null && declared !== actual)
+        throw new Error(`[vectorTable] 归属冲突 id=${id} 声明=${declared ? 'task' : 'knowledge'} 实测=${actual ? 'task' : 'knowledge'}`);
+    if (declared === undefined && actual === null)
+        throw new Error(`[vectorTable] 记录不存在，拒绝写向量 id=${id}`);
+    const isTask = declared ?? actual;
+    // 旧单库尚未分拆时，任务与知识向量都在主库物理表；不触碰不存在的 task_store。
+    return isTask && hasSplitVectorStore(db) ? 'task_store.memory_vectors' : 'main.memory_vectors';
+}
+/** 主库写入由 trg_vecgen_v* 自动 bump；任务库没有触发器（跨库触发器不可建），必须应用层补一次，
+ *  否则常驻进程察觉不到任务向量的变化，向量缓存/ANN 会陈旧。 */
+function bumpVecGenOnSplit(db, table) {
+    if (table === 'main.memory_vectors') return;
+    db.prepare(`UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?`).run(VEC_GEN_KEY);
+}
+/** 同步单条记录的 FTS 正文（★ A1：任务写 task_store.task_fts，知识写 memories_fts）。 */
+function syncFtsContent(db, id, content) {
+    const sql = isTaskRecord(db, id)
+        ? `UPDATE task_store.task_fts SET content=? WHERE rowid=?`
+        : `UPDATE memories_fts SET content=? WHERE rowid=?`;
+    db.prepare(sql).run(content, id);
 }
 /** 同步单条记忆的 gram 索引（先删后插，幂等）。无 CJK 时写空串哨兵，标记「已同步」。 */
-function syncGrams(db, id, content) {
-    db.prepare(`DELETE FROM memories_gram WHERE memory_id = ?`).run(id);
+export function syncGrams(db, id, content) {
+    // ★ A2：按归属路由到各自的 gram 表，避免任务正文的 bigram 再回写主库
+    const task = isTaskRecord(db, id);
+    const table = task ? 'task_store.task_gram' : 'memories_gram';
+    db.prepare(`DELETE FROM ${table} WHERE memory_id = ?`).run(id);
     const grams = gramTokens(content);
-    const ins = db.prepare(`INSERT INTO memories_gram(gram, memory_id) VALUES (?, ?)`);
+    const ins = db.prepare(`INSERT INTO ${table}(gram, memory_id) VALUES (?, ?)`);
     if (grams.length === 0) {
         ins.run("", id); // 哨兵：避免每次启动重复回填纯英文/代码类记忆
         return;
@@ -1445,63 +2168,115 @@ function syncGrams(db, id, content) {
     for (const g of grams)
         ins.run(g, id);
 }
+/**
+ * ★ 2026-11-14（个人版）：删除记忆时同步清理索引，避免「删了还在索引里」。
+ * 只清 FTS / 2-gram / 向量（可重建的派生数据）；正文、事件、审计一律保留（软删可回溯）。
+ * 撤销恢复由 restoreMemoryIndexes 重建，不会变成「搜不到的僵尸」。
+ */
+export function purgeMemoryIndexes(db, id) {
+    const task = isTaskRecord(db, id);
+    if (task) {
+        db.prepare(`DELETE FROM task_store.task_fts WHERE rowid=?`).run(id);
+        db.prepare(`DELETE FROM task_store.task_gram WHERE memory_id=?`).run(id);
+    }
+    else {
+        db.prepare(`DELETE FROM memories_fts WHERE rowid=?`).run(id);
+        db.prepare(`DELETE FROM memories_gram WHERE memory_id=?`).run(id);
+    }
+    // ★ 写侧必须显式选 main：temp 里同名 `memory_vectors` 是跨库 UNION 只读视图（见 storage.js:98），
+    //   未限定名的 DELETE 会解析到视图并报 "cannot modify memory_vectors"。
+    db.prepare(`DELETE FROM main.memory_vectors WHERE memory_id=?`).run(id);
+    invalidateVectorCache(db);
+}
+/**
+ * ★ 2026-11-14（个人版）：撤销/恢复时重建索引。
+ * FTS 与 2-gram 立即重建（恢复后马上能按关键词搜到）；向量置 embedding_stale=1，
+ * 由 daemon 异步重算（嵌入耗时，不能卡住撤销请求）；语义检索在重算完成前自动降级为词法路。
+ */
+export function restoreMemoryIndexes(db, id) {
+    const row = db.prepare(`SELECT id, content, project FROM memories WHERE id=?`).get(id);
+    if (!row)
+        return false;
+    const task = isTaskRecord(db, id);
+    if (task) {
+        db.prepare(`DELETE FROM task_store.task_fts WHERE rowid=?`).run(id);
+        db.prepare(`INSERT INTO task_store.task_fts(rowid,content,project) VALUES(?,?,?)`).run(id, row.content, row.project);
+    }
+    else {
+        db.prepare(`DELETE FROM memories_fts WHERE rowid=?`).run(id);
+        db.prepare(`INSERT INTO memories_fts(rowid,content,project) VALUES(?,?,?)`).run(id, row.content, row.project);
+    }
+    syncGrams(db, id, row.content);
+    db.prepare(`UPDATE memories SET embedding_stale=1 WHERE id=?`).run(id);
+    invalidateVectorCache(db);
+    return true;
+}
 /** LIKE 元字符转义：查询词里的 % _ \ 应作字面量匹配，否则 "%x%" 会退化为匹配任意内容。 */
 function escapeLike(q) {
     return q.replace(/[\\%_]/g, (c) => "\\" + c);
 }
 /* ---------- 词法路（保留 v0.1 语义，含 scope 隔离 + 短查询 LIKE 兜底） ---------- */
-/** ★ H4（R4 裁决）：词法候选池第一步强制过滤 secret —— secret 不出任何非本机前端通道。所有分支 SQL 均加。 */
-const LEX_SECRET = ` AND sensitivity != 'secret'`;
-export function lexSearch(db, query, project, limit = 20) {
+/** ★ H4（R4 裁决）：词法候选池第一步强制过滤 secret —— secret 不出任何非本机前端通道。双库分支 SQL 已内联该条件。 */
+export function lexSearch(db, query, project, limit = 20, statuses = ["active", "trial"]) {
     const q = query.trim();
+    const all = project === ALL_PROJECTS; // ★ 方案 C：全项目兜底 → 去掉 scope 条件（其余条件不变）
+    const stPlace = statuses.map(() => "?").join(","); // 状态白名单（默认 active/trial；归档层传 ['archived']）
     let rows;
     // FTS5 trigram 对 <3 字符（尤其中文 2 字词）不产 token；中文改为走 LIKE 兜底（实证中文 LIKE 可靠、trigram 0 命中）。
     // 判定：含 CJK → LIKE；否则按长度（>=3 走 FTS trigram，英文友好）
     const HAS_CJK = /[\u4e00-\u9fff]/;
     if (!HAS_CJK.test(q) && q.length >= 3) {
         const esc = q.replace(/"/g, '""');
-        rows = db
-            .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at
-         FROM memories_fts
-         JOIN memories m ON m.id = memories_fts.rowid
-         WHERE memories_fts MATCH ?
-           AND m.project IN (?, 'global')
-           AND m.status IN ('active','trial')${LEX_SECRET}
-         ORDER BY bm25(memories_fts) LIMIT ?`)
-            // FTS5 trigram：整体作短语查询（双引号包裹，内容含引号用 " 转义），不能用 [ ] 包裹（非法语法）
-            .all(`"${esc}"`, project, limit);
+        // FTS5 trigram：整体作短语查询（双引号包裹，内容含引号用 " 转义），不能用 [ ] 包裹（非法语法）
+        const phrase = `"${esc}"`;
+        // ★ A11（2026-11-06）：任务 FTS 已搬到 task_store.task_fts —— 两库各取 limit 条后按 bm25 归并。
+        //   只搬索引不改检索 = 任务静默搜不到，故必须同批改。
+        //   实证约束（node:sqlite）：FTS5 的 MATCH 左值与 bm25() 只接受「裸表名」，
+        //   传别名或 schema.table 都会报 no such column；FROM 仍可用 schema.table 起别名做 JOIN。
+        const fts = (ftsTable, recTable, bare) => db
+            .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at, bm25(${bare}) AS rk
+         FROM ${ftsTable} f JOIN ${recTable} m ON m.id = f.rowid
+         WHERE ${bare} MATCH ?
+           ${all ? "" : "AND m.project COLLATE NOCASE IN (?, 'global')"}
+           AND m.status IN (${stPlace}) AND m.sensitivity != 'secret'
+         ORDER BY rk LIMIT ?`)
+            .all(phrase, ...(all ? [] : [project]), ...statuses, limit);
+        rows = [
+            ...fts('main.memories_fts', 'main.knowledge_records', 'memories_fts'),
+            ...fts('task_store.task_fts', 'task_store.task_records', 'task_fts'),
+        ].sort((a, b) => a.rk - b.rk).slice(0, limit);
     }
     else {
         // LIKE 元字符转义后再拼 pattern：否则查询词里的 % 会被当成通配符（"%x%" 匹配任意内容）。
         const like = `%${escapeLike(q)}%`;
         const probe = cjkProbe(q);
-        if (probe) {
-            // ★ P0-3.4：先用 2-gram 倒排索引把候选集收窄，再 LIKE 精筛。
-            // 原实现直接 `content LIKE '%q%'` —— 前导通配符使索引完全失效，中文查询每次全表扫描。
-            // bigram 命中是子串命中的必要条件，故收窄安全（不漏召回），LIKE 保证语义精确。
-            // ★ 2026-09-25 P0④：排序改为「命中位置优先」——原按 created_at 倒序，会让关键词落在
-            //   结尾的旧记忆压过开头即命中的新记忆，与检索意图相反。INSTR 必须用裸查询词 q
-            //   （LIKE 转义串含 \ 前缀，拿去字面匹配会永远 -1）。下方纯 LIKE 兜底分支同口径。
-            rows = db
-                .prepare(`SELECT id, content, type, agent, project, status, confidence, created_at
-           FROM memories
-           WHERE id IN (SELECT memory_id FROM memories_gram WHERE gram = ?)
-             AND content LIKE ? ESCAPE '\\'
-             AND project IN (?, 'global')
-             AND status IN ('active','trial')${LEX_SECRET}
-           ORDER BY INSTR(content, ?) ASC, created_at DESC LIMIT ?`)
-                .all(probe, like, project, q, limit);
-        }
-        else {
-            // 单个 CJK 字 / <3 字符非 CJK：没有可用的 2-gram 探针，只能回退 LIKE
-            rows = db
-                .prepare(`SELECT id, content, type, agent, project, status, confidence, created_at
-           FROM memories WHERE content LIKE ? ESCAPE '\\' AND project IN (?, 'global')
-             AND status IN ('active','trial')${LEX_SECRET}
-           ORDER BY INSTR(content, ?) ASC, created_at DESC LIMIT ?`)
-                // 实参顺序必须跟随 SQL 中的占位符次序（project 在 ORDER BY 之前）
-                .all(like, project, q, limit);
-        }
+        // ★ A11：知识/任务各查各的 gram 表，再按「命中位置 → 时间倒序」统一归并。
+        const hit = (recTable, gramTable) => probe
+            ? db
+                .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at,
+                  INSTR(m.content, ?) AS pos
+           FROM ${recTable} m
+           WHERE m.id IN (SELECT memory_id FROM ${gramTable} WHERE gram = ?)
+             AND m.content LIKE ? ESCAPE '\\'
+             ${all ? "" : "AND m.project COLLATE NOCASE IN (?, 'global')"}
+             AND m.status IN (${stPlace}) AND m.sensitivity != 'secret'
+           ORDER BY pos ASC, m.created_at DESC LIMIT ?`)
+                .all(q, probe, like, ...(all ? [] : [project]), ...statuses, limit)
+            : db
+                .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at,
+                  INSTR(m.content, ?) AS pos
+           FROM ${recTable} m
+           WHERE m.content LIKE ? ESCAPE '\\'
+             ${all ? "" : "AND m.project COLLATE NOCASE IN (?, 'global')"}
+             AND m.status IN (${stPlace}) AND m.sensitivity != 'secret'
+           ORDER BY pos ASC, m.created_at DESC LIMIT ?`)
+                .all(q, like, ...(all ? [] : [project]), ...statuses, limit);
+        rows = [
+            ...hit('main.knowledge_records', 'main.memories_gram'),
+            ...hit('task_store.task_records', 'task_store.task_gram'),
+        ]
+            .sort((a, b) => a.pos - b.pos || String(b.created_at).localeCompare(String(a.created_at)))
+            .slice(0, limit);
     }
     return rows.map((r, i) => ({ ...rowOf(r), score: rows.length - i }));
 }
@@ -1514,11 +2289,22 @@ export function vecSearch(hitEmbed, existing, project, topN) {
         .slice(0, topN);
 }
 export function ftsCount(db) {
-    return db.prepare(`SELECT COUNT(*) AS c FROM memories_fts`).get().c;
+    // ★ A1：任务索引搬库后，总索引量 = 知识 FTS + 任务 FTS（报告/自检口径）。旧库/单库模式回落主库。
+    const k = Number(db.prepare(`SELECT COUNT(*) AS c FROM memories_fts`).get().c);
+    try { return k + Number(db.prepare(`SELECT COUNT(*) AS c FROM task_store.task_fts`).get().c); } catch { return k; }
 }
 export function logUsage(db, a) {
     db.prepare(`INSERT INTO memory_usage(memory_id,event,reader_agent,writer_agent,project,session_id,task_hint)
      VALUES (?,?,?,?,?,?,?)`).run(a.memory_id, a.event, a.reader_agent, a.writer_agent, a.project, a.session_id ?? null, a.task_hint ?? null);
+    // ★ 2026-11-14（第4项）：任务埋点双写任务库。旧表继续写（回退/历史兼容），新表供任务独立部署读取。
+    //   用显式 is_task 标记，避免给高频记忆读取加一次“是不是任务”的查询。
+    if (a.is_task && isTaskRecord(db, a.memory_id)) {
+        try {
+            db.prepare(`INSERT INTO task_usage(memory_id,event,reader_agent,writer_agent,project,session_id,task_hint)
+             VALUES (?,?,?,?,?,?,?)`).run(a.memory_id, a.event, a.reader_agent, a.writer_agent, a.project, a.session_id ?? null, a.task_hint ?? null);
+        }
+        catch { /* 旧库未建新表：保持记忆侧行为不变 */ }
+    }
 }
 export function usageCount(db, event) {
     const r = event
@@ -1529,6 +2315,115 @@ export function usageCount(db, event) {
 /** 审计留痕（daemon/人工归档共用同一通道） */
 export function logDaemon(db, t) {
     db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run(t.task, t.op, t.memory_id ?? null, t.detail ?? null, t.operator ?? "daemon");
+    // ★ 2026-11-14（第4项）：任务号的治理日志同时落任务库，任务库单备份也能看到完整生命周期。
+    if (t.memory_id != null && isTaskRecord(db, t.memory_id)) {
+        try {
+            db.prepare(`INSERT INTO task_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(t.memory_id, `daemon:${t.task}`, JSON.stringify({ op: t.op, detail: t.detail ?? null }), t.operator ?? "daemon");
+        }
+        catch { /* 旧库未建新表：保持原行为 */ }
+    }
+}
+/** 任务事件最近一条（先新表，读不到回退主库旧表）——task-domain 读取方统一走这里。 */
+export function readTaskEventLatest(db, memoryId, op) {
+    try {
+        const r = db.prepare(`SELECT payload, operator, created_at FROM task_events WHERE memory_id=? AND op=? ORDER BY id DESC LIMIT 1`).get(Number(memoryId), op);
+        if (r)
+            return r;
+    }
+    catch { /* 新表不存在 → 回退 */ }
+    try {
+        return db.prepare(`SELECT payload, operator, created_at FROM memory_events WHERE memory_id=? AND op=? ORDER BY id DESC LIMIT 1`).get(Number(memoryId), op) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 任务事件列表（新旧合并去重，按时间倒序）——历史 306 条仍可见。 */
+export function readTaskEventRows(db, memoryId, ops = [], limit = 20) {
+    const ph = ops.length ? ` AND op IN (${ops.map(() => "?").join(",")})` : "";
+    const list = [];
+    try {
+        list.push(...db.prepare(`SELECT op,payload,operator,created_at FROM task_events WHERE memory_id=?${ph} ORDER BY id DESC LIMIT ?`).all(Number(memoryId), ...ops, limit));
+    }
+    catch { /* 新表不存在 → 只读旧表 */ }
+    try {
+        list.push(...db.prepare(`SELECT op,payload,operator,created_at FROM memory_events WHERE memory_id=?${ph} ORDER BY id DESC LIMIT ?`).all(Number(memoryId), ...ops, limit));
+    }
+    catch { /* 旧表不存在 → 只读新表 */ }
+    const seen = new Set();
+    const out = [];
+    for (const r of list) {
+        const k = `${r.op}|${r.created_at}|${r.payload ?? ""}`;
+        if (seen.has(k))
+            continue;
+        seen.add(k);
+        out.push(r);
+    }
+    const norm = (v) => String(v ?? "").replace(" ", "T");
+    out.sort((a, b) => norm(b.created_at).localeCompare(norm(a.created_at)));
+    return out.slice(0, limit);
+}
+/** 任务最近活动距今天数（新旧表取更近的一次）。 */
+export function taskLastActivityDays(db, memoryId) {
+    try {
+        const r = db.prepare(`SELECT MIN(d) AS d FROM (
+           SELECT julianday('now') - MAX(julianday(created_at)) AS d FROM task_events WHERE memory_id=?
+           UNION ALL
+           SELECT julianday('now') - MAX(julianday(created_at)) AS d FROM memory_events WHERE memory_id=?)`).get(Number(memoryId), Number(memoryId));
+        return r?.d ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** ★ 2026-11-01 批量留痕：与 setEffMany 同因（逐行 prepare 在视图改写层极慢），一次 prepare 复用。 */
+export function logDaemonMany(db, rows) {
+    if (!rows || !rows.length)
+        return;
+    const st = db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`);
+    for (const t of rows)
+        st.run(t.task, t.op, t.memory_id ?? null, t.detail ?? null, t.operator ?? "daemon");
+}
+/**
+ * ★ 2026-11-06 衰减留痕按轮聚合（日志瘦身 ①）。
+ *   背景：daemon 每小时对全部活跃记忆做衰减，原实现逐条写 daemon_log（实测 2,758 行/轮），
+ *   占 daemon_log 总量 99.58%，把运行库撑到 215 MB。
+ *   语义：默认每轮只写 1 条汇总；以下两类仍逐条保留，保证排障不降级：
+ *     · eff < 0.5（快衰减到归档线）；
+ *     · 单轮 |Δeff| > 0.05（异常跳变，通常是 last_seen 重置或参数变更）。
+ *   MEMORYOS_DAEMON_LOG_VERBOSE=1 时恢复逐条全留（临时钻细节用，默认关）。
+ *   rows: [{ id, eff, previous }]（computeDecay 产物，previous 可为 null）
+ */
+export function logDecayRound(db, rows) {
+    if (!rows || !rows.length)
+        return { total: 0, kept: 0, lines: 0 };
+    const verbose = process.env.MEMORYOS_DAEMON_LOG_VERBOSE === "1";
+    const st = db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`);
+    let min = Infinity, max = -Infinity, jumped = 0, kept = 0, lines = 0;
+    for (const r of rows) {
+        const eff = Number(r.eff);
+        if (!Number.isFinite(eff)) continue;
+        min = Math.min(min, eff);
+        max = Math.max(max, eff);
+        const prev = r.previous == null ? null : Number(r.previous);
+        const delta = prev == null || !Number.isFinite(prev) ? null : Math.abs(prev - eff);
+        if (delta != null && delta > 0.05) jumped++;
+        if (verbose) {
+            st.run("decay", "eff_update", r.id, `conf→eff: ${eff}${delta == null ? "" : ` (Δ${(eff - prev).toFixed(4)})`}`, "daemon");
+            lines++; kept++;
+            continue;
+        }
+        if (eff < 0.5 || (delta != null && delta > 0.05)) {
+            st.run("decay", "eff_update", r.id, `conf→eff: ${eff}${delta == null ? "" : ` (Δ${(eff - prev).toFixed(4)})`}`, "daemon");
+            kept++; lines++;
+        }
+    }
+    if (!verbose) {
+        st.run("decay", "round", null,
+            `round: n=${rows.length}, eff ${min.toFixed(4)}~${max.toFixed(4)}, Δ>0.05=${jumped}, notable=${kept}`, "daemon");
+        lines++;
+    }
+    return { total: rows.length, kept, lines, verbose };
 }
 /**
  * 执行面工具调用审计（append-only，P0 exec-audit）。
@@ -1664,19 +2559,38 @@ export function daemonLogCount(db, task, op) {
 }
 export function listEffRows(db) {
     // ★ P1-2.2：向量从独立表 JOIN（原为 memories.embedding + IS NOT NULL 过滤）
+    // ★ 2026-11-14：治理口径隔离 —— 任务（type='task'）有向量也不得进入记忆衰减/归档候选。
+    //   任务状态是文本头 [task][assignee:][status:] + 卡片双状态机，与记忆的 eff/45 天无曝光无关；
+    //   混入会让 daemon 每小时改写任务 eff、超期后把任务头改成 archived 并连带归档卡片。
     const rows = db
         .prepare(`SELECT m.id,m.type,m.content,m.agent,m.project,m.status,m.confidence,m.eff_confidence,
               m.hit_count,m.last_hit_at,m.last_seen_at,m.created_at,
               m.sector,m.salience,m.decay_lambda,m.pinned, v.embedding
-       FROM memories m
-       JOIN memory_vectors v ON v.memory_id = m.id
-       WHERE m.status='active'`)
+       FROM main.knowledge_records m
+       JOIN main.memory_vectors v ON v.memory_id = m.id
+       WHERE m.status='active' AND coalesce(m.type,'experience') <> 'task'`)
         .all();
     return rows.map((r) => ({ ...rowOf(r), vec: bufToVec(r.embedding) }));
 }
 /** 更新有效置信（衰减/回血），并回写 eff_confidence */
 export function setEff(db, id, eff) {
     db.prepare(`UPDATE memories SET eff_confidence = ? WHERE id = ?`).run(eff, id);
+}
+/**
+ * ★ 2026-11-01 启动/治理加速：批量更新有效置信——一次 prepare 复用。
+ *   实测（快照库 2218 行，outputs/startup-fix-20261101/bench-eff.mjs）：
+ *   逐行 prepare 19786ms → 复用语句 376ms（52×）。逐行 prepare 的代价来自
+ *   storage.js 视图改写层每次重新解析/编译 SQL，而非 UPDATE 本身。
+ *   调用方负责事务（daemon applyPlan 已在单事务内）。传空数组是 no-op。
+ */
+export function setEffMany(db, pairs) {
+    if (!pairs || !pairs.length)
+        return;
+    // ★ 2026-11-14：兜底守卫 —— 即使调用方传入任务 id（旧计划/探针），也不改写任务行的 eff。
+    //   记忆行的 SQL 逐字不变（仅多一个类型排除条件），非任务行为零影响。
+    const st = db.prepare(`UPDATE memories SET eff_confidence = ? WHERE id = ? AND coalesce(type,'experience') <> 'task'`);
+    for (const p of pairs)
+        st.run(p.eff, p.id);
 }
 /** 归档 active 记忆（daemon 与 human 共用；留痕由调用方 logDaemon 负责） */
 /** ★ 2026-09-19（实操复盘查漏）：列状态落 archived/merged 时同步任务头文本 —— 归档/合并只改列不碰头
@@ -1721,12 +2635,16 @@ function linkedCardsOf(db, memoryId) {
  *   - 逐卡：状态守卫 UPDATE + card_events 审计 + SSE 推送（pusher 已注入时）；
  *   - 收敛失败不阻断记忆主流程（与 syncCardToTask 同口径：留痕 + 回填/对账兑底）。
  *  返回实际收敛的卡数。 */
-export function convergeLinkedCards(db, memoryId, toStatus, actor = "memory-sync", detail = "") {
+export function convergeLinkedCards(db, memoryId, toStatus, actor = "memory-sync", detail = "", opts = {}) {
     try {
         const OPEN = new Set(["triage", "todo", "ready", "blocked"]);
+        // ★ 2026-11-13：合并/归档时把在途卡（running/review）一并纳入收敛——
+        //   任务被合并后卡上已无对应任务，旧实现跳过 running，卡会挂着一个不存在的任务（374 案例）。
+        //   默认仍只收敛开放态（保持 archiveMemory/done 的既有口径），由调用方显式开启。
+        const eligible = opts.includeInFlight ? new Set([...OPEN, "running", "review"]) : OPEN;
         let changed = 0;
         for (const c of linkedCardsOf(db, memoryId)) {
-            if (!OPEN.has(c.status))
+            if (!eligible.has(c.status))
                 continue;
             if (toStatus === "done") {
                 let meta = null;
@@ -1782,13 +2700,24 @@ export function archiveTrial(db, id) {
 export function markMerged(db, loserId, winnerId) {
     db.prepare(`UPDATE memories SET status='merged', superseded_by = ? WHERE id = ?`).run(winnerId, loserId);
     syncTaskHeaderOnTerminal(db, loserId, "merged"); // ★ 2026-09-18（实操问题 #2，P0）：头文本同步 merged
-    convergeLinkedCards(db, loserId, "archived", "governance:merge", `记忆 #${loserId} 被去重合并（主 #${winnerId}），卡片随归一`); // ★ 2026-09-25 方案A：任务卡侧收敛
+    convergeLinkedCards(db, loserId, "archived", "governance:merge", `记忆 #${loserId} 被去重合并（主 #${winnerId}），卡片随归一`, { includeInFlight: true }); // ★ 2026-09-25 方案A：任务卡侧收敛（2026-11-13 并入在途卡）
+    // ★ 2026-11-13：合并后该任务已不存在，未结算工作证一并 released，避免 active 幽灵挡住接管。
+    db.prepare(`UPDATE dispatches SET state='released', evidence=?, settled_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE memory_id=? AND state IN ('active','stale')`).run(`记忆 #${loserId} 已合并到 #${winnerId}`, loserId);
     invalidateVectorCache(db); // P0-4.1：merged 不再进入检索候选
 }
 export { joinPrefix }; // 保留出口（格式工具，备用）
 /** 写仲裁事件（before 快照 + undone 标记；撤销与审计基础） */
 export function appendEvent(db, e) {
-    db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(e.memory_id, e.op, e.payload, e.operator ?? "human:arbitrate");
+    const info = db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator) VALUES (?,?,?,?)`).run(e.memory_id, e.op, e.payload, e.operator ?? "human:arbitrate");
+    // ★ 2026-11-14（第4项）：任务号事件双写任务库。旧表保留（回退/历史），新表承载任务独立部署。
+    //   事件写入是低频路径，这里用主键查询确认；新行沿用旧行的 created_at，保证合并读取时能按（op,时间,payload）去重。
+    if (isTaskRecord(db, e.memory_id)) {
+        try {
+            const ts = db.prepare(`SELECT created_at FROM memory_events WHERE id=?`).get(info.lastInsertRowid)?.created_at ?? null;
+            db.prepare(`INSERT INTO task_events(memory_id,op,payload,operator,created_at) VALUES (?,?,?,?,COALESCE(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))`).run(e.memory_id, e.op, e.payload, e.operator ?? "human:arbitrate", ts);
+        }
+        catch { /* 旧库未建新表：保持原行为 */ }
+    }
 }
 export function pendingConflicts(db) {
     const rows = db
@@ -1830,6 +2759,12 @@ export function applyArbitration(db, pendingId, key) {
             clearConflict(db, pending.id, 0.8);
             restore(db, snapRow(readMemory(db, old.id)), 0.8);
             break;
+    }
+    // 引用正文保留审计；人工“不冲突”裁决解除该对来源的pending反驳关系。
+    if (key === "4" && old && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_evidence'").get()) {
+        db.prepare(`UPDATE knowledge_evidence SET resolution='reviewed_no_conflict'
+          WHERE relation='refutes' AND resolution='pending'
+            AND ((memory_id=? AND source_id=?) OR (memory_id=? AND source_id=?))`).run(pending.id,old.id,old.id,pending.id);
     }
     appendEvent(db, { memory_id: pending.id, op, payload: JSON.stringify(snap) });
     return SUMMARY[key];
@@ -1875,8 +2810,22 @@ function restore(db, s, confOverride) {
 /** 软删：置 status='rejected'（保留原文/向量/审计），供规则页删除与人仲裁复用。可选传入 operator 自动写审计。 */
 export function rejectMemory(db, id, operator = "unknown") {
     setStatus(db, id, "rejected");
+    // ★ 2026-11-14（个人版）：软删同时清 FTS / 2-gram / 向量 —— 删掉的记忆不再占用索引，
+    //   也不会被任何检索通道意外命中；正文与审计保留，撤销走 restoreMemoryIndexes 重建。
+    purgeMemoryIndexes(db, id);
+    // ★ 2026-10-15（架构改进第一档④）：负反馈加速衰减 —— 被显式标记过时/有误的记忆，
+    //   立即把 salience 压到 0.3（×0.3），使其在**同类型、同命中量**的其他记忆之前更快跌过归档阈值
+    //   （daemon archiveEff=0.1 / 45 天无曝光双判据）。rejected 状态本身已排除在检索结果之外，
+    //   这里压 salience 是为了让「若有人仲裁恢复成 active」（applyArbitration 撤销 reject）时，
+    //   其衰减从更低基线起跑，不会立刻回到正常活跃状态——负反馈信号被真正用上，而非只做一次性软删标记。
+    // ★ 2026-10-15 修（代为提交时发现并修掉，否则本批提交门禁必红）：
+    //   原写法用了 `GREATEST(salience, 0)` —— 那是 **MySQL/Oracle 的专有函数，SQLite 没有**
+    //   ⇒ 该语句在本库直接抛 `no such function: GREATEST`，反馈路径（memory_feedback soft-reject）
+    //   与依赖衰减评分的归档候选判定一起失效（实证：smoke-mcp / smoke-daemon 各 1 FAIL）。
+    //   SQLite 的多参标量取大应写 **`max(a, b)`**（等价语义，≥2 参时 `max` 是标量函数而非聚合）。
+    db.prepare(`UPDATE memories SET salience = max(salience, 0) * 0.3 WHERE id = ?`).run(id);
     convergeLinkedCards(db, id, "cancelled", "governance:reject", `记忆 #${id} 软删 rejected（${operator}），关联卡取消`); // ★ 2026-09-25 方案A：任务卡侧收敛
-    logDaemon(db, { task: "reject", op: "reject", memory_id: id, operator, detail: "软删 rejected" });
+    logDaemon(db, { task: "reject", op: "reject", memory_id: id, operator, detail: "软删 rejected（负反馈加速衰减：salience ×0.3）" });
 }
 /** 按类型查列表（规则页用 type='rule'），status 为空则不限；created 倒序 */
 export function queryByType(db, type, opts = {}) {
@@ -1889,6 +2838,11 @@ export function queryByType(db, type, opts = {}) {
     return rows.map(rowOf);
 }
 export function setStatus(db, id, status, supersededBy) {
+    // ★ 2026-11-14（个人版）：从「删除/归档」恢复为 active/trial 时重建派生索引，
+    //   否则撤销后会变成「正文在、但搜不到」的僵尸。只在恢复方向做，正常状态流转零开销。
+    const prev = db.prepare(`SELECT status FROM memories WHERE id=?`).get(id)?.status;
+    if ((status === "active" || status === "trial") && (prev === "rejected" || prev === "archived"))
+        restoreMemoryIndexes(db, id);
     if (supersededBy != null) {
         db.prepare(`UPDATE memories SET status=?, superseded_by=? WHERE id=?`).run(status, supersededBy, id);
     }
@@ -1946,7 +2900,7 @@ export function foldInto(db, winnerId, loserContent, meta = {}) {
         return { ok: true, skipped: 'too_long' };
     }
     db.prepare(`UPDATE memories SET content=?, embedding_stale=1, version=version+1 WHERE id=?`).run(newContent, winnerId);
-    db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(newContent, winnerId);
+    syncFtsContent(db, winnerId, newContent);
     syncGrams(db, winnerId, newContent);
     invalidateVectorCache(db);
     appendEvent(db, { memory_id: winnerId, op: 'fold', payload: JSON.stringify({ ...basePayload, afterLen: newContent.length }), operator: meta.agent ?? 'daemon' });
@@ -1995,8 +2949,14 @@ export function readActiveDispatch(db, memoryId) {
  *  「同时只有一个 active」由 idx_dispatches_active 兜底；本函数需在事务内调用才原子。
  *  ★ 批次 B1（2026-10-03）：取代范围从「仅 active」扩到「active + stale」——reaper 标 stale 的尝试属
  *    「待裁决」，被接管时若不置 superseded，会审计断链（旧记录永留 stale、不指向新世代）。 */
-export function createDispatch(db, { key, memoryId, agent, sessionId = null, credentialId = null, leaseMinutes = 10 }) {
-    const min = Math.max(1, Math.min(1440, Math.floor(Number(leaseMinutes) || 10)));
+/** ★ 第二批·第 3 步：租约默认时长统一口径 —— 认领 / 续租 / 过期判据同一套（MEMORYOS_LEASE_MINUTES，未设=10）。
+ *  数据层不引业务模块，故本地读 env；偏差只在「未显式传参」的调用点，业务显式传值不受影响。 */
+function leaseDefaultMinutes() {
+    const n = Math.floor(Number(process.env.MEMORYOS_LEASE_MINUTES));
+    return Number.isFinite(n) && n > 0 ? n : 10;
+}
+export function createDispatch(db, { key, memoryId, agent, sessionId = null, credentialId = null, leaseMinutes = null }) {
+    const min = Math.max(1, Math.min(1440, Math.floor(Number(leaseMinutes) || leaseDefaultMinutes())));
     // ★ generation 取该任务历史最大值 +1（不是「仅在有 active 时 +1」）——否则结算后重新认领会拿到相同世代，
     //   旧 token 与新一代无法判序，fencing 的核心（新生代永远更大）就失效了。
     const maxRow = db.prepare(`SELECT MAX(generation) g FROM dispatches WHERE memory_id=?`).get(Number(memoryId));
@@ -2025,8 +2985,8 @@ export function releaseDispatch(db, dispatchId, reason = null) {
     return Number(r.changes ?? 0) > 0;
 }
 /** 续租/心跳：只证存活，不证完成；顺带把 stale 唤醒回 active（absence 不是失败）。 */
-export function touchDispatchLease(db, dispatchId, minutes = 10) {
-    const min = Math.max(1, Math.min(1440, Math.floor(Number(minutes) || 10)));
+export function touchDispatchLease(db, dispatchId, minutes = null) {
+    const min = Math.max(1, Math.min(1440, Math.floor(Number(minutes) || leaseDefaultMinutes())));
     const r = db.prepare(`UPDATE dispatches SET state='active', heartbeat_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',?) WHERE id=? AND state IN ('active','stale')`).run(`+${min} minutes`, Number(dispatchId));
     return Number(r.changes ?? 0) > 0;
 }
@@ -2034,9 +2994,10 @@ export function touchDispatchLease(db, dispatchId, minutes = 10) {
 /** ★ 节点画布执行器共用：卡片租约 + 工作证租约一次性续期（原三处拷贝合一，字段口径以 knowledge 版为准）。
  *  调用方自包 try/catch（打卡失败不中断执行）与 60s 定时器。 */
 export function renewCardLease(db, cardId, dispatchId) {
-    db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 minutes'), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(cardId);
+    const min = Math.max(10, Math.min(120, leaseDefaultMinutes())); // ★ 第二批·第 3 步：与心跳/认领同一套时长（卡片侧沿用 10..120 档）
+    db.prepare(`UPDATE cards SET heartbeat_at=datetime('now'), lease_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',?), lease_notice_at=NULL, lease_stale_at=NULL WHERE id=? AND status='running'`).run(`+${min} minutes`, cardId);
     if (dispatchId)
-        touchDispatchLease(db, dispatchId, 10);
+        touchDispatchLease(db, dispatchId, min);
 }
 
 /* ── ★ 批次 D1（2026-10-03）：request_id 幂等回执读写 ─────────────────────────

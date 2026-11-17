@@ -18,7 +18,8 @@
  *  选项：--batch N（默认 20）｜--allow-fake（仅供临时库冒烟测试，生产禁用）
  */
 import { openDb, upsertVector, withTx, logDaemon } from "./db.js";
-import { getEmbedder, cosine, bufToVec } from "./embed.js";
+import { recordsFrom, vectorsFrom, TASK_TABLE } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
+import { getEmbedder, cosine, bufToVec, embedderProvenance } from "./embed.js";
 import { fileURLToPath } from "node:url";
 
 function hash(s) {
@@ -60,7 +61,7 @@ const db = openDb(dbPath);
 const norm = (s) => String(s ?? "").replace(/\r\n?/g, "\n");
 
 // —— 1) 体检分类 ——
-const rows = db.prepare(`SELECT m.id, m.content, m.embedding_stale, v.embedding FROM memories m LEFT JOIN memory_vectors v ON v.memory_id = m.id ORDER BY m.id`).all();
+const rows = db.prepare(`SELECT m.id, m.content, m.embedding_stale, v.embedding FROM ${recordsFrom(db, { alias: "m" })} LEFT JOIN ${vectorsFrom(db, { alias: "v" })} ON v.memory_id = m.id ORDER BY m.id`).all();
 const need = [];
 let real = 0, fake = 0, missing = 0, staleReal = 0;
 for (const r of rows) {
@@ -103,7 +104,13 @@ if (embedder.mode === "fake" && !ALLOW_FAKE) {
     process.exit(1);
 }
 console.log(`[回填] embedder=${embedder.mode} 模型=${embedder.modelName ?? "-"} 待处理 ${need.length} 条（batch=${BATCH}）`);
-const clearStale = db.prepare(`UPDATE memories SET embedding_stale=0 WHERE id=?`);
+const prov = embedderProvenance(); // ★ 2026-10-15：向量带出处
+// ★ 2026-11-17（B8）：按物理归属分流，不再写跨库 UNION 视图（任务向量同样需要回填）
+const clearMainStale = db.prepare(`UPDATE main.knowledge_records SET embedding_stale=0 WHERE id=?`);
+let clearTaskStale = null;
+try { clearTaskStale = db.prepare(`UPDATE ${TASK_TABLE} SET embedding_stale=0 WHERE id=?`); }
+catch { /* 旧单库未分表 */ }
+const clearStale = { run: (id) => { if (clearTaskStale) clearTaskStale.run(id); clearMainStale.run(id); } };
 let done = 0, failed = 0;
 for (let i = 0; i < need.length; i += BATCH) {
     const slice = need.slice(i, i + BATCH);
@@ -111,7 +118,7 @@ for (let i = 0; i < need.length; i += BATCH) {
         const vecs = await embedder.embedTexts(slice.map((s) => s.content));
         withTx(db, () => {
             for (let j = 0; j < slice.length; j++) {
-                upsertVector(db, slice[j].id, vecs[j]);
+                upsertVector(db, slice[j].id, vecs[j], { model: prov.model, dim: prov.dim });
                 clearStale.run(slice[j].id);
             }
         });

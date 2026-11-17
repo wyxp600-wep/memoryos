@@ -3,8 +3,11 @@
  * 设计取舍（方案已陈述、用户拍板「要」启动 P2）：
  *  - 排除真 pty（node-pty/xterm 违「零新 npm 依赖」硬约束）；排除 shell:true（["powershell","-Command"]
  *    可绕过白名单 = 没有白名单，exec-tools.js:153-155 注释明写的坑）；
- *  - 与 MCP exec_run **同一安全口径**：execAllowlist()（npm/npx/node/git，env 可扩）+
+ *  - 与 MCP exec_run **同一白名单口径**：execAllowlist()（npm/git/node，env 可扩）+
  *    resolveInside() cwd 白名单 + spawn(shell:false) argv 数组 + killTree 超时/断连杀树 + logExecAudit。
+ *  - ★ 2026-10-14 刻意差异：MCP exec_run 另加「命令形态守卫」execDenyReason()（拦 node -e / npm
+ *    exec·install / git -c alias 等单次调用即任意代码的形态）；**本终端不施加该守卫** —— 这里是人
+ *    手敲命令、自负其责，与「防被提示注入的 LLM 乱跑 argv」是两个威胁模型。故命令集保持宽松。
  *  - 无管道/重定向（argv 模式固有边界）——「准终端」名副其实，前端输入框旁有文案提示。
  * SSE 约定：event=start/out/err/exit/trunc；data 为 JSON.stringify 字符串（内容可含换行）。
  * 鉴权走全局 onRequest hook（同源 EventSource 自动带 cookie，与 /api/cards/stream 同体例）。
@@ -45,7 +48,7 @@ function killTree(child) {
 const exeBase = (exe) => path.basename(String(exe)).replace(/\.(exe|cmd|bat|ps1)$/i, "").toLowerCase();
 
 export function registerTerm(app, ctx) {
-    const { db, RESTRICTED } = ctx;
+    const { db, RESTRICTED, execSurfaceEnabled } = ctx;
     /** runId → {child, done}：kill 端点与断连清理由此表定位 */
     const runs = new Map();
 
@@ -54,8 +57,14 @@ export function registerTerm(app, ctx) {
     /** argv 解析与白名单校验（供 /api/exec/stream 使用；返回 {ok} 或 {status,error}） */
     function parseArgv(queryArgv) {
         let arr;
-        try { arr = JSON.parse(String(queryArgv ?? "")); }
-        catch { return { status: 400, error: "argv 必须是 JSON 数组字符串，例：[\"git\",\"status\"]" }; }
+        // ★ L-6 补丁：POST body 直接传数组（更符合 JSON 语义）；GET 兼容原 JSON 字符串。
+        if (Array.isArray(queryArgv)) {
+            arr = queryArgv.map((x) => String(x));
+        }
+        else {
+            try { arr = JSON.parse(String(queryArgv ?? "")); }
+            catch { return { status: 400, error: "argv 必须是字符串数组（POST body）或 JSON 数组字符串（GET），例：[\"git\",\"status\"]" }; }
+        }
         if (!Array.isArray(arr) || !arr.length || arr.length > ARGV_MAX)
             return { status: 400, error: `argv 须为 1~${ARGV_MAX} 项的数组` };
         for (const a of arr) {
@@ -69,25 +78,33 @@ export function registerTerm(app, ctx) {
         return { argv: arr };
     }
 
-    // ── GET /api/exec/stream：SSE 流式执行（校验先行，之后才升级 SSE） ──
-    app.get("/api/exec/stream", (req, reply) => {
+    // ── /api/exec/stream：SSE 流式执行（校验先行，之后才升级 SSE） ──
+    // ★ 2026-11-16（L-6 补丁）：执行是状态变更，入口改为 POST；GET 仅回 405 提示（不执行命令）。
+    //   参数来源兼容：POST 读 JSON body，GET 读 query（仅为 405 前的统一校验路径保留）。
+    const execStreamHandler = (req, reply) => {
+        const src = (req.method === "POST" && req.body && typeof req.body === "object" && !Array.isArray(req.body)) ? req.body : req.query;
         if (RESTRICTED)
             return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
-        const pv = parseArgv(req.query.argv);
+        const pv = parseArgv(src.argv);
         if (pv.status)
             return reply.code(pv.status).send({ ok: false, error: pv.error });
+        // ★ 2026-11-16（H-2）：执行面总开关（config.execOn / MEMORYOS_EXEC_ON）。
+        //   放在参数校验之后，保住「无参 GET → 400」的既有响应基线（snapshot:check）。
+        if (typeof execSurfaceEnabled === "function" && !execSurfaceEnabled())
+            return reply.code(403).send({ ok: false, error: "执行面已关闭（设置 → 安全 → Agent 执行能力）：开启后才能使用准终端" });
         const argv = pv.argv;
+        const cwdRaw = String(src.cwd ?? ".");
         let cwd;
         try {
-            cwd = resolveInside(WORKSPACE, String(req.query.cwd ?? "."));
+            cwd = resolveInside(WORKSPACE, cwdRaw);
             if (!fs.statSync(cwd).isDirectory())
-                throw new Error(`cwd 不是目录：${req.query.cwd}`);
+                throw new Error(`cwd 不是目录：${cwdRaw}`);
         }
         catch (e) {
             return reply.code(400).send({ ok: false, error: `cwd 校验失败：${e.message}` });
         }
-        const timeoutMs = Math.min(TIMEOUT_MAX, Math.max(1000, Number(req.query.timeout_ms) || TIMEOUT_DEFAULT));
-        const argsDigest = digestArgs({ cmd: argv, cwd: String(req.query.cwd ?? ".") });
+        const timeoutMs = Math.min(TIMEOUT_MAX, Math.max(1000, Number(src.timeout_ms) || TIMEOUT_DEFAULT));
+        const argsDigest = digestArgs({ cmd: argv, cwd: cwdRaw });
 
         const runId = randomUUID();
         const t0 = Date.now();
@@ -157,7 +174,13 @@ export function registerTerm(app, ctx) {
                 // close 事件仍会触发 finish 补发 exit（对已断连接写失败被 send 吞掉）
             }
         });
-    });
+    };
+    app.post("/api/exec/stream", execStreamHandler);
+    app.get("/api/exec/stream", (_req, reply) => reply.code(405).send({
+        ok: false,
+        error: "method-not-allowed",
+        hint: "执行接口已改为 POST（JSON body：{ argv, cwd, timeout_ms }）；GET 不再触发任何命令",
+    }));
 
     // ── POST /api/exec/kill：显式停止（SSE 已断但进程残留时的兜底通道） ──
     app.post("/api/exec/kill", (req, reply) => {

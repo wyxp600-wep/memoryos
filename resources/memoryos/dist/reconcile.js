@@ -12,8 +12,15 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { recordsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询（默认 both ≡ 旧视图语义）
 import { EXPECT_CARD_OF } from "./task-status-map.js"; // ★ 一致性③（2026-09-19）：映射上移权威对照表
+import { settleDispatch } from "./db.js";
 const NON_TERMINAL = ["pending", "in_progress", "blocked"];
+// ★ #700061（2026-11-07）：任务终态集合——头部 status 与记忆列 status 两条判据都算终态。
+//   为什么两条都要：头 done 但列仍 active 是历史常态（列只用来管可见性，头才是任务态）；
+//   而 merged/rejected/archived 只体现在列上（头可能停在 done/in_progress）。
+const TERMINAL_TASK_STATES = new Set(["done", "cancelled", "merged", "archived"]);
+const TERMINAL_MEMORY_STATES = new Set(["archived", "merged", "rejected"]);
 // ★ 修 #3（2026-09-19）：对账只对齐「投影三态」ready/running/blocked（C-5 的映射目标集）。
 //   原 CARD_TERMINAL 跳过口径太宽：review/failed/triage/todo 既不在终态名单、又不是映射目标，
 //   会被强拉回三态 —— review 进卡 5 分钟即被抹（syncCardToTask 把 review 写成头 in_progress，
@@ -40,13 +47,70 @@ function headAssignee(content) {
     return !v || v === "?" ? null : v;
 }
 
+/**
+ * ★ #700061（2026-11-07）：任务终态后兜底结算残留工作证。
+ *
+ * 背景（2026-11-07 直连 memory.tasks.db 实测）：dispatches 里有 21 条 state='active'
+ * 且租约早已过期的残留，其中 13 条所属任务头/列已是 done/merged/archived。根因是
+ * task_done 软模式不传 dispatch_key 就不结算工作证（task-domain.js 只在传 key 时 settle），
+ * 而 daemon reaper 只扫 cards.status='running'，done/archived 卡上的残留无人回收；
+ * task_next 的「待决策」段又直接扫过期 active，于是每完成一次软任务就多一条僵尸占位。
+ *
+ * 边界（刻意）：**只结算任务已终态的**。非终态任务（blocked/pending/in_progress）的过期工作证
+ * 是「待裁决」信号，不是残留——贸然置 settled 会切断持有者 heartbeat 复活与 takeover 的路径，
+ * 且 task_done 的 dispatch 权威校验会直接失效。故本段不碰非终态任务。
+ *
+ * 幂等：靠 settleDispatch 的 `WHERE state='active'` 判定——重复对账时第二次 changes=0，
+ * 不会重复写 daemon_log；并发两进程也只有一个能把 active 改掉。
+ * @returns {number} 本轮实际结算的工作证条数
+ */
+export function settleTerminalDispatches(db) {
+    let settled = 0;
+    const rows = db
+        .prepare(`SELECT d.id AS dispatch_id, d.memory_id, d.agent, d.generation, d.lease_expires_at,
+                m.status AS mem_status, m.content
+            FROM dispatches d
+            JOIN ${recordsFrom(db, { alias: "m" })} ON m.id = d.memory_id
+            WHERE d.state=? AND m.type=?`)
+        .all("active", "task");
+    for (const r of rows) {
+        const st = headStatus(r.content);
+        const why = st && TERMINAL_TASK_STATES.has(st)
+            ? `任务头 status=${st}`
+            : TERMINAL_MEMORY_STATES.has(String(r.mem_status ?? ""))
+                ? `记忆 status=${r.mem_status}`
+                : null;
+        if (!why)
+            continue;
+        // cancelled 是「没做成」，其余终态按做成记——orca 口径要求 outcome 明确，不能只写在散文里。
+        const outcome = st === "cancelled" ? "failed" : "succeeded";
+        const evidence = JSON.stringify({
+            settled_by: "reconciler",
+            reason: "task_terminal",
+            task_state: why,
+            previous_agent: r.agent,
+            generation: Number(r.generation),
+            previous_lease_expires_at: r.lease_expires_at,
+        });
+        if (!settleDispatch(db, r.dispatch_id, outcome, evidence))
+            continue; // 已被别的进程结算/释放 → 不重复写事件
+        db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run(
+            "reconcile", "settle", r.memory_id,
+            `工作证 #${r.dispatch_id}（gen=${r.generation}，${r.agent}，原租约 ${r.lease_expires_at}）随任务终态结算（${why}，outcome=${outcome}）`,
+            "reconciler",
+        );
+        settled++;
+    }
+    return settled;
+}
+
 export function reconcileTasksAndCards(db) {
-    const out = { created: 0, aligned: 0, lagAlerts: 0, divergenceAlerts: 0 };
+    const out = { created: 0, aligned: 0, lagAlerts: 0, divergenceAlerts: 0, settled: 0 };
     try {
         const pairs = db
             .prepare(`SELECT cm.memory_id, cm.card_id, m.content, c.status AS card_status, c.updated_at AS card_updated
                 FROM card_memory cm
-                JOIN memories m ON m.id = cm.memory_id
+                JOIN ${recordsFrom(db, { alias: "m" })} ON m.id = cm.memory_id
                 JOIN cards c ON c.id = cm.card_id
                 WHERE cm.relation=? AND m.type=? AND m.status IN (?,?)`)
             .all("dispatch", "task", "active", "trial");
@@ -65,20 +129,20 @@ export function reconcileTasksAndCards(db) {
                 db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run("reconcile", "lag", p.memory_id, `卡片 #${p.card_id} 镜像滞后 ${Math.round(lagMin)} 分钟（任务 #${p.memory_id}），已修复至 ${want}`, "reconciler");
             }
         }
-        // ★ 2026-09-19（弊端 M1）：todo/triage 泳道发散告警——头 in_progress 但卡停 todo/triage
+        // ★ 2026-09-19（弊端 M1）：todo/triage 泳道发散告警——头 in_progress/blocked 但卡停 todo/triage
         //   （无回写、非对账目标）；卡静止超 30 分钟写 daemon_log 告警，避免无声失同步
         for (const p of pairs) {
             const st2 = headStatus(p.content);
-            if (st2 !== "in_progress" || (p.card_status !== "todo" && p.card_status !== "triage"))
+            if ((st2 !== "in_progress" && st2 !== "blocked") || (p.card_status !== "todo" && p.card_status !== "triage"))
                 continue;
             const lagMin2 = p.card_updated ? (Date.now() - Date.parse(p.card_updated)) / 60000 : null;
             if (lagMin2 == null || lagMin2 <= 30)
                 continue;
             out.divergenceAlerts++;
-            db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run("reconcile", "diverge", p.memory_id, `任务 #${p.memory_id} 头=in_progress 但卡 #${p.card_id} 停留 ${p.card_status} 泳道 ${Math.round(lagMin2)} 分钟（todo/triage 非对账目标）：需 task_release / task_block，或把卡移回 ready`, "reconciler");
+            db.prepare(`INSERT INTO daemon_log(task,op,memory_id,detail,operator) VALUES (?,?,?,?,?)`).run("reconcile", "diverge", p.memory_id, `任务 #${p.memory_id} 头=${st2} 但卡 #${p.card_id} 停留 ${p.card_status} 泳道 ${Math.round(lagMin2)} 分钟（todo/triage 非对账目标）：需 task_release / task_admin(action=block)，或把卡移回 ready`, "reconciler");
         }
         const orphans = db
-            .prepare(`SELECT m.id, m.content FROM memories m
+            .prepare(`SELECT m.id, m.content FROM ${recordsFrom(db, { alias: "m" })}
                 WHERE m.type=? AND m.status IN (?,?)
                 AND NOT EXISTS (SELECT 1 FROM card_memory cm WHERE cm.memory_id=m.id AND cm.relation=?)`)
             .all("task", "active", "trial", "dispatch");
@@ -93,7 +157,8 @@ export function reconcileTasksAndCards(db) {
             //   正解：复用文件顶部已定义的单一映射 EXPECT_CARD_OF（pending→ready / in_progress→running / blocked→blocked）。
             const cardStatus = EXPECT_CARD_OF[st] ?? st;
             // ★ 2026-09-19（弊端 L7）：卡标题剥掉 [task]/[assignee]/[status]/[depends] 头标记，只留纯任务描述
-            const titleSrc = String(o.content ?? "").split("\n")[0].replace(/^\[task\]\[assignee:[^\]]*\]\[status:[^\]]*\]\s*(?:\[depends:[^\]]*\]\s*)?/, "").trim();
+            // ★ 第 5 步：头段增至 scope/depends/accept/progress —— 按已知段名循环剥离，避免新段污染标题
+            const titleSrc = String(o.content ?? "").split("\n")[0].replace(/^(?:\[task\]|\[(?:assignee|status|gate|a2a|plan|taskid|scope|depends|accept|progress):[^\]]*\]\s*)+/, "").trim();
             const title = titleSrc.slice(0, 120) || `任务 #${o.id}`;
             const info = db
                 .prepare(`INSERT INTO cards(board,kind,title,body,status,ref_kind,ref_id,priority,assignee) VALUES (?,?,?,?,?,?,?,?,?)`)
@@ -103,6 +168,8 @@ export function reconcileTasksAndCards(db) {
             db.prepare(`INSERT INTO card_events(card_id, actor, action, from_status, to_status, detail) VALUES (?,?,?,?,?,?)`).run(cid, "reconciler", "reconcile_created", null, cardStatus, `任务 #${o.id} 无卡，投影重建（C-5）`);
             out.created++;
         }
+        // ★ #700061：第三段对账——任务已终态但工作证仍 active → 结算（放在最后，不影响前两段的修复结果）
+        out.settled = settleTerminalDispatches(db);
     }
     catch (e) {
         console.error(`[reconcile] 失败（不阻断）: ${e instanceof Error ? e.message : String(e)}`);

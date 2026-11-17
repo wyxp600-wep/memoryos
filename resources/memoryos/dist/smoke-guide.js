@@ -45,17 +45,17 @@ const m1 = memFsx();
 const g1 = connectGuideFor(codexA, { read: (p) => m1.fsx.read(p) });
 check("G1.codex canAutoWrite=true", g1.canAutoWrite === true, `auto=${g1.canAutoWrite}`);
 check("G1.codex TOML 片段为键表 [mcp_servers.memoryos]（对齐实配）", (g1.attachSnippet || "").includes("[mcp_servers.memoryos]") && !(g1.attachSnippet || "").includes("[[mcp_servers]]"), (g1.attachSnippet || "").split("\n")[0]);
-check("G1.codex 片段 env 含 MEMORY_DB+MEMORY_AGENT+EMBED_MODE（20261005 补全）", (g1.attachSnippet || "").includes("MEMORY_DB") && (g1.attachSnippet || "").includes("MEMORY_AGENT = 'codex'") && (g1.attachSnippet || "").includes("EMBED_MODE = 'local'"));
+check("G1.codex 片段 env 含 MEMORY_DB+MEMORY_AGENT+EMBED_MODE（20261005 补全）", (g1.attachSnippet || "").includes("MEMORY_DB") && (g1.attachSnippet || "").includes('MEMORY_AGENT = "codex"') && (g1.attachSnippet || "").includes('MEMORYOS_MCP_MODE = "shim"'));
 check("G1.codex guide 携带 dbMatches/importSnippet 新字段", "dbMatches" in g1 && !!g1.importSnippet && !!g1.fileSnippet, `shape=${g1.carrierShape}`);
 // G2 未实证（zcode）→ 手动
-const zcodeA = fakeAgent("zcode", "ZCode");
+const zcodeA = fakeAgent("unsupported-client", "未知客户端");
 const g2 = connectGuideFor(zcodeA, { read: () => "" });
 check("G2.zcode canAutoWrite=false", g2.canAutoWrite === false);
 check("G2.zcode manualSteps 非空", !!g2.manualSteps && g2.manualSteps.length > 0, `steps=${g2.manualSteps?.length}`);
-check("G2.zcode snippet 是 JSON + 含绝对路径(可复制即用)", !!g2.manualSnippet && g2.manualSnippet.includes('"memoryos"') && g2.manualSnippet.includes("C:/Users/WYX") && !g2.manualSnippet.includes("memoryos\\dist"), g2.manualSnippet?.slice(0, 60));
-check("G2.zcode steps 含绝对路径(非相对)", g2.manualSteps?.some(s => s.includes("C:/Users/WYX")) === true);
-check("G2.zcode generic 双格式（20261005 通用化）", !!g2.importSnippet && !!g2.importSnippetDoc, `doc-top=${(g2.importSnippetDoc || "").slice(0, 20)}`);
-check("G2.zcode 整份文档顶层 mcpServers", (() => { try { return typeof JSON.parse(g2.importSnippetDoc).mcpServers === "object"; } catch { return false; } })());
+check("未知客户端不返回猜测JSON",g2.manualSnippet===null&&!g2.importSnippet);
+check("未知客户端明确说明配置入口未确认",g2.manualSteps?.some(s=>s.includes("未确认")));
+check("未知客户端没有伪造的双格式",!g2.importSnippet&&!g2.importSnippetDoc);
+check("未知客户端不提供错误mcpServers模板",!g2.importSnippetDoc);
 // G3 dry-run：codex 返回预览但不落盘（20261005 契约：返回 target/dbPath/preview）
 const m3 = memFsx();
 m3.files[CODEX_TOML] = ""; // 已存在空 config
@@ -71,7 +71,7 @@ const r4 = applyConnectWrite(claudeA, {}, m4.fsx);
 const after = JSON.parse(m4.files[CLAUDE_JSON]);
 check("G4.claude 合并写 ok + backup", r4.ok === true && !!r4.backupPath, `mode=${r4.mode}`);
 check("G4.claude 保留既有键（version/projects/other）", after.version === 1 && !!after.projects && !!after.mcpServers.other, Object.keys(after).join(","));
-check("G4.claude memoryos 条目 env 含 EMBED_MODE", after.mcpServers.memoryos?.env?.EMBED_MODE === "local");
+check("新配置默认使用共享内核shim",after.mcpServers.memoryos?.env?.MEMORYOS_MCP_MODE === "shim");
 check("G4.claude 写前备份(copy)", m4.copies.length === 1, `copies=${m4.copies.length}`);
 // G4b 坏 JSON 拒绝自动写（防覆盖坏文件，20261005）
 const m4b = memFsx();
@@ -88,9 +88,9 @@ check("G4c.codex TOML 含键表段且无数组表", (m4c.files[CODEX_TOML] || ""
 check("G4c.codex 原 TOML 内容保留", (m4c.files[CODEX_TOML] || "").includes("model = \"gpt-5\""));
 // G4d 已连接且库对齐 → 拒绝重复写；库不一致 → 允许改库（修复「改库按钮永远无效」，20261005）
 const m4d = memFsx();
-m4d.files[CLAUDE_JSON] = JSON.stringify({ mcpServers: { memoryos: { command: "node", args: ["C:/Users/WYX/Desktop/MemoryOS/resources/memoryos/dist/server.js"], env: { MEMORY_DB: "C:/Users/WYX/AppData/Roaming/MemoryOS/data/memory.db" } } } });
+m4d.files[CLAUDE_JSON] = JSON.stringify({ mcpServers: { memoryos: { command: "node", args: ["C:/Users/WYX/Desktop/MemoryOS/resources/memoryos/dist/server.js"], env: { MEMORY_DB: path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "MemoryOS", "data", "memory.db").split(path.sep).join("/") } } } });
 const r4d = applyConnectWrite(claudeA, {}, m4d.fsx);
-check("G4d.已连接且库对齐拒绝重复写", r4d.ok === false && (r4d.error || "").includes("已连接"), `err=${(r4d.error || "").slice(0, 30)}`);
+check("旧配置缺少身份元数据时可修复",r4d.ok===true);
 const m4e = memFsx();
 m4e.files[CLAUDE_JSON] = JSON.stringify({ mcpServers: { memoryos: { command: "node", args: ["C:/Users/WYX/Desktop/MemoryOS/resources/memoryos/dist/server.js"], env: { MEMORY_DB: "C:/somewhere/else.db" } } } });
 const r4e = applyConnectWrite(claudeA, {}, m4e.fsx);

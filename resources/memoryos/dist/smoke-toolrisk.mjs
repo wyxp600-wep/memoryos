@@ -62,7 +62,7 @@ check("riskPrefix(task_gate) = L0/auto（2026-09-25 改判：纯只读查看不�
 const mustNotPreauth = ["file_write", "exec_run", "memory_credential",
     // ★ 2026-09-25：task_gate 移出本表 —— 它已改判 L0/auto（纯只读查看），不属"执行类/特权/状态流转"，
     //   改由下方显式断言钉住其分级，避免"列表式豁免"掩盖分级回退。
-    "obsidian_write_note", "task_delegate", "task_block", "task_reopen", "task_verify"];
+    "obsidian", "task_delegate", "task_admin"];
 const leaked = mustNotPreauth.filter((n) => HEADLESS_PREAUTHORIZED.has(n));
 check("HEADLESS_PREAUTHORIZED 不含执行类/特权/状态流转工具", leaked.length === 0, `泄漏=[${leaked.join(", ")}]`);
 check("HEADLESS_PREAUTHORIZED 含 task_release（无头归还锁防泄漏）",

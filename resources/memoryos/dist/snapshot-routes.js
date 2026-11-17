@@ -91,8 +91,12 @@ const maskVolatile = (obj) => normalize(obj);
 
 const db = openDb(DB);
 // 夹具：3 条 active（含 1 条 secret）+ 1 条 archived + 1 条 decision + 1 条任务
+// ★ 2026-11-16（R02-07）：这些是**人工构造的路由快照夹具**，不是 agent 知识记忆；
+//   按六字段规则「人工内容保留各自格式」显式标 source='human'（正文不变 → 快照基线不变）。
+//   生产 agent 写入的六字段门禁仍由 db 触发器拦截，由 smoke-memory-body / smoke-sixfields 专测，未被放宽。
 const w = (content, extra = {}) => writeMemory(db, {
     content, type: extra.type ?? "experience", agent: extra.agent ?? "snapshot",
+    source: extra.source ?? "human",
     agent_fpath: null, project: extra.project ?? "global", embedding: null, ...extra,
 });
 const m1 = w("快照夹具 A：端口 80 被 IIS 占用时先查 W3SVC 服务状态");
@@ -100,9 +104,10 @@ const m2 = w("快照夹具 B：微信回调时间戳容差需设 5 分钟");
 const m3 = w("快照夹具 C:secret 敏感样本（内容不应出现在任何响应里）", { sensitivity: "secret" });
 const m4 = w("快照夹具 D：已归档样本", { type: "decision" });
 w("[task][assignee:snapshot][status:pending] 快照夹具任务：验证路由快照稳定", { type: "task" });
-db.prepare(`UPDATE memories SET status='archived' WHERE id=?`).run(m4.id);
-db.prepare(`UPDATE memories SET created_at=datetime('now','-2 days') WHERE id=?`).run(m2.id);
-db.prepare(`UPDATE memories SET created_at=datetime('now','-5 days') WHERE id=?`).run(m3.id);
+// ★ 2026-11-17（B8）：夹具 m2/m3/m4 都是记忆（非任务），直连记忆物理表
+db.prepare(`UPDATE main.knowledge_records SET status='archived' WHERE id=?`).run(m4.id);
+db.prepare(`UPDATE main.knowledge_records SET created_at=datetime('now','-2 days') WHERE id=?`).run(m2.id);
+db.prepare(`UPDATE main.knowledge_records SET created_at=datetime('now','-5 days') WHERE id=?`).run(m3.id);
 void m1;
 
 const app = buildApp(db, { token: TOKEN });

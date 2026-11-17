@@ -23,13 +23,28 @@ const path = require("node:path");
 const ROOT = __dirname;
 const ASAR = path.join(ROOT, "resources", "app.asar");
 const SYNC_FILES = [
-  "/main.js", "/services/core-process.js", "/window/tray.js", "/services/updater.js", // ★ 2026-09-14：updater.js 加入同步（T1 热更新加固）
-  "/preload.js", "/welcome.html", "/assets/icon-512.png", "/assets/icon.ico", "/assets/tray.png", // ★ P2-7：asar-only → 落树纳管
-  "/assets/tray.ico", // ★ 2026-10-10：多尺寸托盘图标（托盘根治 T3）
-  // ★ 2026-09-21（A 分区跨区修复，P0）：以下壳层文件在 asar 内但不在本清单 → 改动重打包后静默丢失
-  //   （与 09-18 发现的 lint 白名单盲区同类）。补齐后所有壳层源码改动均可被 `node pack-asar.js` 带入 asar。
-  "/window/main-window.js", "/window/welcome-window.js",
-  "/services/scheduler.js", "/services/port.js", "/security/token.js", "/security/ipc.js", "/app/lifecycle.js",
+  "/app/lifecycle.js",
+  "/assets/icon-512.png",
+  "/assets/icon.ico",
+  "/assets/tray.ico",
+  "/assets/tray.png",
+  "/main.js",
+  "/preload.js",
+  "/security/ipc.js",
+  "/security/token.js",
+  "/services/core-process.js",
+  "/services/login-startup.js",
+  "/services/personal-desktop.js",
+  "/services/port.js",
+  "/services/scheduler.js",
+  "/services/updater.js",
+  "/startup.html",
+  "/welcome.html",
+  "/window/appearance-state.js",
+  "/window/appearance-themes.json",
+  "/window/main-window.js",
+  "/window/tray.js",
+  "/window/welcome-window.js"
 ];
 /** 有意留在 asar-only 的条目（见文件头说明），--extract-only 不会提取它们 */
 const EXTRACT_EXCLUDE = ["/package.json", "/release-settings.json"];
@@ -130,6 +145,8 @@ function packAsar(entries, oldHeader) {
 }
 
 function main() {
+  const onlyIndex=process.argv.indexOf('--only');
+  if(onlyIndex>=0){const selected=String(process.argv[onlyIndex+1]||'').split(',').filter(Boolean).map(p=>p.startsWith('/')?p:'/'+p);if(!selected.length||selected.some(p=>!SYNC_FILES.includes(p)))throw new Error('--only 含未知同步路径');SYNC_FILES.splice(0,SYNC_FILES.length,...SYNC_FILES.filter(p=>selected.includes(p)));}
   const checkOnly = process.argv.includes("--check");
   const extractOnly = process.argv.includes("--extract-only");
   const old = readAsar(ASAR);
@@ -172,6 +189,19 @@ function main() {
     data: SYNC_FILES.includes(f.p) ? fs.readFileSync(sourceFile(f.p)) : extract(old, f),
     recompute: SYNC_FILES.includes(f.p),
   }));
+  // Release metadata comes from the kernel version, without a local development updater.
+  const releaseVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "resources", "memoryos", "version.json"), "utf8")).version;
+  for (const entry of entries) {
+    if (entry.p === "/package.json") {
+      const metadata = JSON.parse(entry.data.toString("utf8"));
+      metadata.version = releaseVersion;
+      entry.data = Buffer.from(JSON.stringify(metadata, null, 2) + "\n");
+      entry.recompute = true;
+    } else if (entry.p === "/release-settings.json") {
+      entry.data = Buffer.from(JSON.stringify({ updateUrl: "", note: "请从 GitHub Releases 下载完整发行包。" }, null, 2) + "\n");
+      entry.recompute = true;
+    }
+  }
   // ★ 2026-10-10：SYNC_FILES 里的新文件（旧 asar 没有）也要带入，否则新增资源静默丢失
   for (const p of SYNC_FILES) {
     if (!old.files.find((f) => f.p === p)) {

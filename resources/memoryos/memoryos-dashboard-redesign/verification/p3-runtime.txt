@@ -1,0 +1,55 @@
+  /* P3：CSS、图表和滚动共用减少动效判定。系统偏好不能被站内关闭覆盖。 */
+  const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+  function motionReduced() { return motionPreference.matches || document.documentElement.dataset.reduceMotion === 'true'; }
+  function motionDuration(token) { return motionReduced() ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue(token)) || 0; }
+  function installChartMotion() {
+    const charts = window.echarts;
+    if (!charts || charts.__memoryosMotion) return;
+    charts.__memoryosMotion = true;
+    charts.registerPreprocessor(option => {
+      option.animationDuration = motionDuration('--dur-enter');
+      option.animationDurationUpdate = motionDuration('--dur-base');
+      for (const series of option.series || []) { series.animationDuration=motionDuration('--dur-enter');series.animationDurationUpdate=motionDuration('--dur-base'); }
+    });
+  }
+  function refreshMotionPolicy() {
+    document.documentElement.dataset.motion = motionReduced() ? 'reduced' : 'full';
+    installChartMotion();
+    document.querySelectorAll('[_echarts_instance_]').forEach(el => {
+      const chart = window.echarts?.getInstanceByDom(el);
+      if (chart) { chart.setOption({animationDuration:motionDuration('--dur-enter'),animationDurationUpdate:motionDuration('--dur-base')}); if(motionReduced())chart.getZr().animation.clear(); }
+    });
+    refreshStyleguideTokens();
+  }
+  motionPreference.addEventListener('change', refreshMotionPolicy);
+  new MutationObserver(refreshMotionPolicy).observe(document.documentElement,{attributes:true,attributeFilter:['data-reduce-motion']});
+  function refreshStyleguideTokens() {
+    const root = document.getElementById('page-styleguide'); if (!root) return;
+    const css = getComputedStyle(document.documentElement);
+    root.querySelectorAll('[data-token]').forEach(el => el.textContent = css.getPropertyValue(el.dataset.token).trim());
+    const status = document.getElementById('sgMotionState'); if(status)status.textContent = motionReduced() ? '当前：减少动效，结果立即呈现' : '当前：标准动效，短反馈与轻微位移';
+  }
+  function initStyleguide(sub) {
+    refreshStyleguideTokens();
+    const section = document.getElementById('sg-' + sub); if(section)requestAnimationFrame(()=>section.scrollIntoView({block:'start',behavior:'instant'}));
+  }
+  function bindStyleguide() {
+    const root = document.getElementById('page-styleguide'); if(!root)return;
+    const dialog = document.getElementById('sgDialog');
+    dialog.addEventListener('keydown',event=>{
+      if(event.key!=='Tab')return;
+      const buttons=[...dialog.querySelectorAll('button:not(:disabled)')],first=buttons[0],last=buttons[buttons.length-1];
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+    });
+    document.getElementById('sgNotify').onclick=()=>toast('示例操作已完成',3500,'success');
+    document.getElementById('sgWarn').onclick=()=>toast('危险操作示例：未执行数据修改',5000,'warn');
+    document.getElementById('sgOpenDialog').onclick=()=>dialog.showModal();
+    for(const id of ['sgDialogClose','sgDialogCancel'])document.getElementById(id).onclick=()=>dialog.close();
+    document.getElementById('sgDialogConfirm').onclick=()=>{dialog.close();toast('示例已确认',3500,'success');};
+    document.getElementById('sgReplay').onclick=()=>{const demo=document.getElementById('sgMotionDemo');demo.classList.remove('replay');requestAnimationFrame(()=>requestAnimationFrame(()=>demo.classList.add('replay')));};
+    root.querySelectorAll('[aria-pressed]').forEach(button=>button.onclick=()=>root.querySelectorAll('[aria-pressed]').forEach(peer=>{const on=peer===button;peer.classList.toggle('active',on);peer.setAttribute('aria-pressed',String(on));}));
+    new MutationObserver(refreshStyleguideTokens).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+    window.addEventListener('hashchange',()=>{if(location.hash.split('/')[0]!=='#styleguide'&&dialog.open)dialog.close();});
+    refreshMotionPolicy();
+  }

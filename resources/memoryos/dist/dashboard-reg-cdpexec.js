@@ -1,3 +1,5 @@
+import { scanAgentsAsync, getScanCachedShared } from './scan.js';
+import { executionOwned, watchExecution } from './exec-lifecycle.js';
 /* ═══════════════════════════════════════════════════════════════════════════
  * dashboard-reg-cdpexec.js — 节点画布 P3：CDP 驾驶执行器（2026-10-04）
  * 能力：channel='cdp' 的智能体卡派发 → 带参拉起桌面智能体（工作区目录 +
@@ -18,7 +20,7 @@
  *  - 收口复用 finalizeCardDispatch（结算/翻边/交接卡语义不变）。
  * 依赖：Node ≥22 内置 WebSocket 全局（runtime v24 实测可用），零新依赖。
  * ═══════════════════════════════════════════════════════════════════════════ */
-import { spawn, execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { renewCardLease } from "./db.js";
 import { killTree, overridesOf, pruneFinishedJobs, findJobByCard, streamJobSSE } from "./dashboard-exec-util.js";
@@ -33,19 +35,21 @@ export function registerCdpExec(app, ctx) {
     let jobs = new Map();
     let portCursor = 0;
     // scanAgents 是 spawnSync 秒级同步扫描，绝不能在派发热路径裸调（会卡住所有 SSE/HTTP）——60s TTL 缓存
-    let _scanCache = { list: null, at: 0 };
     async function scanAgentsCached() {
-        const now = Date.now();
-        if (_scanCache.list && now - _scanCache.at < 60000)
-            return _scanCache.list;
-        try {
-            const { scanAgents } = await import("./scan.js");
-            _scanCache = { list: scanAgents()?.agents ?? [], at: now };
+        const result=getScanCachedShared() ?? await (ctx.scanAgentsAsync || scanAgentsAsync)();
+        return result?.agents ?? [];
+    }
+    const pending=[];
+    const targetKey=job=>String(job.resolvedTarget || overridesOf(job.profile)?.exe || job.profile.agent_key || job.profile.id).replace(/\\/g,'/').toLowerCase();
+    function pump(){
+        const busy=new Set([...jobs.values()].filter(j=>['launching','driving'].includes(j.status)).map(targetKey));
+        for(let i=0;i<pending.length;){
+            const job=pending[i],key=targetKey(job);
+            if(['done','failed'].includes(job.status)){pending.splice(i,1);continue;}
+            if(busy.has(key)){i++;continue;}
+            pending.splice(i,1);busy.add(key);job.status='launching';job.startedAt=Date.now();job.queueWaitMs=job.startedAt-job.createdAt;
+            start(job).catch(e=>fail(job,`驾驶启动异常：${e.message}`));
         }
-        catch {
-            _scanCache = { list: null, at: now };
-        }
-        return _scanCache.list;
     }
 
     function pushLine(job, stream, text) {
@@ -55,12 +59,14 @@ export function registerCdpExec(app, ctx) {
         job.waiters?.forEach((w) => w());
     }
 
-    function pollHttp(url, timeoutMs) {
+    function pollHttp(url, timeoutMs, signal) {
         const deadline = Date.now() + timeoutMs;
         return new Promise((resolve) => {
+            let delay=80;
             const tick = async () => {
+                if(signal?.aborted)return resolve(null);
                 try {
-                    const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
+                    const r = await fetch(url, { signal: signal ? AbortSignal.any([signal,AbortSignal.timeout(Math.min(2000,Math.max(1,deadline-Date.now())))]) : AbortSignal.timeout(Math.min(2000,Math.max(1,deadline-Date.now()))) });
                     if (r.ok) {
                         const list = await r.json();
                         if (Array.isArray(list) && list.length)
@@ -70,7 +76,10 @@ export function registerCdpExec(app, ctx) {
                 catch { /* 未就绪继续等 */ }
                 if (Date.now() > deadline)
                     return resolve(null);
-                setTimeout(tick, 500);
+                const onAbort=()=>{clearTimeout(timer);resolve(null);};
+                const timer=setTimeout(()=>{signal?.removeEventListener("abort",onAbort);tick();},Math.min(delay,Math.max(1,deadline-Date.now())));delay=Math.min(500,Math.round(delay*1.5));
+                signal?.addEventListener("abort",onAbort,{once:true});
+                if(signal?.aborted)onAbort();
             };
             tick();
         });
@@ -164,60 +173,6 @@ export function registerCdpExec(app, ctx) {
             + ` 交给已有实例后直接退出，端口因此永远不会就绪。请先完全退出 ${exeName}（含托盘图标），再重新派发`;
     }
 
-
-    /** ★ 宿主保护（2026-10-06）：自动关闭旧实例前，先确认目标 exe 不是当前仪表盘的宿主应用
-     *  （如 ZCode.exe 托着本 dashboard 进程）——否则会把用户正在用的宿主连同本服务一起杀掉。 */
-    function ancestorExeNames() {
-        try {
-            const out = execSync("powershell -NoProfile -Command " +
-                "$p = Get-CimInstance Win32_Process -Filter (\"ProcessId=\" + $PID);" +
-                " while ($p) { $pp = Get-CimInstance Win32_Process -Filter (\"ProcessId=\" + $p.ParentProcessId); if (-not $pp) { break }; $pp.Name; $p = $pp }",
-                { encoding: "utf8", timeout: 8000, windowsHide: true });
-            return String(out).split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter(Boolean);
-        }
-        catch { return []; }
-    }
-    const _ancestorCache = { at: 0, names: [] };
-    function isHostApp(exe) {
-        if (Date.now() - _ancestorCache.at > 30000) {
-            _ancestorCache.names = ancestorExeNames();
-            _ancestorCache.at = Date.now();
-        }
-        const name = String(exe ?? "").split(/[\\/]/).pop().toLowerCase();
-        return !!name && _ancestorCache.names.includes(name);
-    }
-
-    /** 根治（2026-10-06）：单实例应用已有旧实例且未开调试口时，自动关闭旧实例再重启。
-     *  旧行为只报错让用户「先完全退出再重派」，等于把活推回给人（实测用户被这个死循环卡住）。
-     *  流程：taskkill（不带 /F，发 WM_CLOSE 优雅退）→ 等 2s → 残余 Stop-Process 强杀 → 返回剩余进程数。 */
-    function closeExistingInstances(exe) {
-        if (isHostApp(exe))
-            return Promise.resolve("宿主应用，跳过自动关闭");
-        return new Promise((resolve) => {
-            const name = String(exe ?? "").split(/[\\/]/).pop().replace(/'/g, "''");
-            if (!name)
-                return resolve("无可执行名");
-            let out = "";
-            let settled = false;
-            const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-            try {
-                const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-                    `$pids = (Get-CimInstance Win32_Process -Filter "Name='${name}'").ProcessId;` +
-                        ` foreach ($x in $pids) { taskkill /PID $x 2>$null | Out-Null };` +
-                        ` Start-Sleep -Seconds 2;` +
-                        ` $left = (Get-CimInstance Win32_Process -Filter "Name='${name}'").ProcessId;` +
-                        ` foreach ($x in $left) { Stop-Process -Id $x -Force -ErrorAction SilentlyContinue };` +
-                        ` Start-Sleep -Milliseconds 800;` +
-                        ` (Get-CimInstance Win32_Process -Filter "Name='${name}'" | Measure-Object).Count`],
-                { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
-                ps.stdout.on("data", (d) => { out += String(d); });
-                ps.on("error", () => done("关闭脚本失败"));
-                ps.on("close", () => done(`剩余进程 ${out.trim() || "0"}`));
-                setTimeout(() => { try { ps.kill(); } catch { /* 已退出 */ } done("关闭超时（已尽力）"); }, 12000);
-            }
-            catch { done("关闭异常"); }
-        });
-    }
 
     /** 注入任务文本：chatSelector 找输入框 → 原生 setter 赋值 → input 事件 → 找发送按钮或回车
      *  ★ 根治批：选择器三级回退（textarea → [contenteditable] → input[type=text]），
@@ -401,7 +356,7 @@ export function registerCdpExec(app, ctx) {
         const timeoutMs = ov?.readyTimeoutMs ?? 15000;
         const deadline = Date.now() + timeoutMs;
         const started = Date.now();
-        while (Date.now() < deadline) {
+        while (!job.abort.signal.aborted && Date.now() < deadline) {
             try {
                 const res = await cdpCall(job, "Runtime.evaluate", { expression: `!!document.querySelector(${JSON.stringify(sel)})`, returnByValue: true }, 4000);
                 if (res?.result?.value === true)
@@ -583,7 +538,7 @@ export function registerCdpExec(app, ctx) {
         //   有界等待重试：最多 15s、每 900ms 一次，编辑框挂载即注入；不需要用户配置 readySelector。
         if (!r.ok && /未找到输入框/.test(r.why || "")) {
             const startedAt = Date.now();
-            while (Date.now() - startedAt < 15000 && !r.ok) {
+            while (!job.abort.signal.aborted && Date.now() - startedAt < 15000 && !r.ok) {
                 await sleep(900);
                 r = await domInject(job, ov, text);
                 if (r.ok)
@@ -596,6 +551,7 @@ export function registerCdpExec(app, ctx) {
     }
 
     async function start(job) {
+        if(!executionOwned(db,job)){job.stale=true;fail(job,'派发凭证失效，拒绝驾驶');return;}
         job.status = "launching";
         const p = job.profile;
         const ov = overridesOf(p); // ★ 批1：容忍双重编码存量，与 cliexec 同口径（见 dashboard-exec-util.overridesOf）
@@ -608,15 +564,40 @@ export function registerCdpExec(app, ctx) {
             }
             catch { /* 扫描失败走降档 */ }
         }
+        if(job.abort.signal.aborted)return;
         if (!exe) {
             const scanIds = (await scanAgentsCached()).map((a) => a.id).slice(0, 24).join(", ");
             return fail(job, `未找到该智能体的可执行文件（agent_key=${p.agent_key}；扫描清单：${scanIds || "扫描为空"}）。确认已安装，或在配置 launch_overrides.exe 中手动指定`);
         }
+        job.resolvedTarget=String(exe).replace(/\\/g,'/').toLowerCase();
+        // ★ 2026-11-16 安全加固（M-3）：`launch_overrides.exe` 不得成为「任意程序启动」入口。
+        //   缺省要求：必须是 .exe，且**命中本机已安装应用扫描清单**（大小写/斜杠归一比较）；
+        //   确需自定义（便携版/非标准安装）时显式 MEMORYOS_CDP_ALLOW_EXE=1 自行承担风险。
+        //   fail-closed：扫描失败时已知清单为空 → 拒绝并给出可行动提示，不静默放行。
+        if (!/\.exe$/i.test(String(exe)))
+            return fail(job, `CDP 通道只允许 .exe 载体：${exe}`);
+        if (ov?.exe && process.env.MEMORYOS_CDP_ALLOW_EXE !== "1") {
+            let known = [];
+            try {
+                known = ((await scanAgentsCached()) ?? [])
+                    .map((a) => String(a.path ?? "").replace(/\\/g, "/").toLowerCase())
+                    .filter(Boolean);
+            }
+            catch { /* 扫描失败 → 已知清单为空 → 拒绝（fail-closed） */ }
+            const want = String(exe).replace(/\\/g, "/").toLowerCase();
+            if (!known.includes(want))
+                return fail(job, `launch_overrides.exe 未命中本机已安装应用扫描清单（${exe}）——如确认可信，设 MEMORYOS_CDP_ALLOW_EXE=1 后重启内核`);
+        }
+        if([...jobs.values()].some(other=>other!==job && ['launching','driving'].includes(other.status) && targetKey(other)===targetKey(job))){
+            job.status='queued';pending.push(job);return;
+        }
         const port = PORT_BASE + ((job.profileId * 7 + (++portCursor)) % 600);
         job.port = port;
+        if(job.abort.signal.aborted)return;
         const args = ov?.args ?? [];
         // ★前置①：应用已开调试口 → 直接复用（单实例应用的第二进程会吞掉 --remote-debugging-port）
         const reuse = await reuseExistingCdp(exe, args);
+        if(job.abort.signal.aborted)return;
         let targets = reuse?.targets ?? null;
         if (reuse) {
             job.port = reuse.port;
@@ -625,6 +606,7 @@ export function registerCdpExec(app, ctx) {
         if (!targets) {
             const waitMs = ov?.cdpTimeoutMs ?? CDP_WAIT_DEFAULT_MS;
             const launchOnce = async () => {
+                if(job.abort.signal.aborted)return null;
                 const launchArgs = [...(p.workspace ? [p.workspace] : []), ...args, `--remote-debugging-port=${port}`, "--no-first-run"];
                 pushLine(job, "sys", `[驾驶] 拉起 ${exe} ${launchArgs.join(" ")}`);
                 try {
@@ -635,30 +617,21 @@ export function registerCdpExec(app, ctx) {
                     fail(job, `拉起失败：${e instanceof Error ? e.message : e}`);
                     return null;
                 }
+                job.proc.on("exit", () => { job.pid = null; });
                 job.proc.on("error", (e) => pushLine(job, "err", `[驾驶] 进程错误：${e.message}`));
                 // 等 CDP 端口
-                return await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs);
+                return await pollHttp(`http://127.0.0.1:${port}/json/list`, waitMs, job.abort.signal);
             };
             targets = await launchOnce();
             if (!targets) {
                 // ★前置②：先诊断再报错——有同类实例在跑就给可行动指引，不甩「应用可能不支持」这种误导
                 const why = await diagnoseNoCdp(exe, job.pid);
-                if (why && !job._cdpRemediated) {
-                    // ★ 根治（2026-10-06）：单实例应用已有旧实例 → 自动关闭旧实例并带调试口重启（仅此一次）。
-                    //   旧行为把「先完全退出」推回给用户，实测用户被这个死循环卡住（拉起了应用、任务注不进）。
-                    job._cdpRemediated = true;
-                    pushLine(job, "sys", `[驾驶] ${why}——自动接管：关闭旧实例后带调试口重启`);
-                    const closed = await closeExistingInstances(exe);
-                    pushLine(job, "sys", `[驾驶] 旧实例已处理（${closed}），重新拉起`);
-                    targets = await launchOnce();
-                }
-                if (!targets) {
-                    const why2 = await diagnoseNoCdp(exe, job.pid);
-                    return fail(job, why2 ?? `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）——应用可能不支持 --remote-debugging-port 或启动过慢`);
-                }
+                return fail(job, why ?? `CDP 调试端口 ${port} 未就绪（等待 ${Math.round(waitMs / 1000)}s）。请检查应用是否支持调试连接，或改用 CLI 通道`);
+
             }
         }
         pushLine(job, "sys", `[驾驶] CDP 已连接（端口 ${job.port}，${targets.length} 个页面）`);
+        if(job.abort.signal.aborted)return;
         // 选目标页：targetMatch 正则优先（非法正则降级为不匹配，不能崩进程），否则第一个 page
         const pages = targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
         let match = null;
@@ -677,13 +650,18 @@ export function registerCdpExec(app, ctx) {
         pushLine(job, "sys", `[驾驶] 目标页：${String(target.title || target.url).slice(0, 80)}`);
         // WebSocket 连入
         try {
+            if(job.abort.signal.aborted)return;
             job.ws = new WebSocket(target.webSocketDebuggerUrl);
         }
         catch (e) {
             return fail(job, `WebSocket 连接失败：${e.message}`);
         }
         job.status = "driving";
+        job.connectTimer=setTimeout(()=>finish(job,false,"调试连接握手超时"),8000);
+        job.ws.addEventListener("error",()=>{if(!["done","failed"].includes(job.status))finish(job,false,"调试连接错误");});
         job.ws.addEventListener("open", async () => {
+            clearTimeout(job.connectTimer);
+            if(job.abort.signal.aborted)return;
             pushLine(job, "sys", "[驾驶] 已连入应用界面，开始画面直播");
             cdpSend(job, "Page.enable", {});
             cdpSend(job, "Runtime.enable", {});
@@ -711,12 +689,7 @@ export function registerCdpExec(app, ctx) {
                 finish(job, false, "调试连接断开（应用可能被关闭）");
         });
         // 心跳 + 会话上限（SQL 单点在 db.js renewCardLease）
-        job.heartbeat = setInterval(() => {
-            try {
-                renewCardLease(db, job.cardId, job.dispatchId);
-            }
-            catch { /* 不中断驾驶 */ }
-        }, HEARTBEAT_MS);
+
         job.timer = setTimeout(() => finish(job, false, "驾驶会话到达上限，自动收口"), ov?.maxMinutes ? ov.maxMinutes * 60000 : DEFAULT_MAX_MS);
     }
 
@@ -728,24 +701,19 @@ export function registerCdpExec(app, ctx) {
     }
     function cdpCall(job, method, params, timeoutMs = 5000) {
         return new Promise((resolve, reject) => {
-            if (!job.ws || job.ws.readyState !== 1)
+            if (job.abort.signal.aborted || !job.ws || job.ws.readyState !== 1)
                 return reject(new Error("WS 未连接"));
             const id = ++msgId;
-            const timer = setTimeout(() => {
-                job.ws.removeEventListener("message", onMsg);
-                reject(new Error(`${method} 超时`));
-            }, timeoutMs);
-            const onMsg = (ev) => {
-                let m;
-                try { m = JSON.parse(ev.data); } catch { return; }
-                if (m.id === id) {
-                    clearTimeout(timer);
-                    job.ws.removeEventListener("message", onMsg);
-                    m.error ? reject(new Error(m.error.message)) : resolve(m.result);
-                }
+            const ws=job.ws;
+            const cleanup=()=>{clearTimeout(timer);ws.removeEventListener('message',onMsg);ws.removeEventListener('close',onClose);ws.removeEventListener('error',onClose);};
+            const onClose=()=>{cleanup();reject(new Error(`${method} 连接已断开`));};
+            const onMsg=(ev)=>{
+                let m;try{m=JSON.parse(ev.data);}catch{return;}
+                if(m.id===id){cleanup();m.error?reject(new Error(m.error.message)):resolve(m.result);}
             };
-            job.ws.addEventListener("message", onMsg);
-            job.ws.send(JSON.stringify({ id, method, params }));
+            const timer=setTimeout(()=>{cleanup();reject(new Error(`${method} 超时`));},timeoutMs);
+            ws.addEventListener('message',onMsg);ws.addEventListener('close',onClose);ws.addEventListener('error',onClose);
+            try{ws.send(JSON.stringify({id,method,params}));}catch(error){cleanup();reject(error);}
         });
     }
 
@@ -761,6 +729,8 @@ export function registerCdpExec(app, ctx) {
         const neverDrove = job.status !== "driving";
         job.status = ok ? "done" : "failed";
         job.finishedAt = Date.now();
+        clearTimeout(job.connectTimer);
+        job.abort?.abort();
         clearTimeout(job.timer);
         clearInterval(job.heartbeat);
         try { job.ws?.close(); } catch { /* 忽略 */ }
@@ -768,7 +738,7 @@ export function registerCdpExec(app, ctx) {
             killTree(job.pid);
         pushLine(job, "sys", `[驾驶] 收口：${detail}`);
         try {
-            ctx.finalizeCardDispatch?.({ cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId, actor: job.agent || "dispatch-agent", detail: `${detail}（CDP 驾驶）` });
+            if(!job.stale && !job.settledByTask) ctx.finalizeCardDispatch?.({ cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId, actor: job.agent || "dispatch-agent", detail: `${detail}（CDP 驾驶）` });
         }
         catch (e) {
             pushLine(job, "sys", `[驾驶] 收口异常：${e instanceof Error ? e.message : e}`);
@@ -777,27 +747,32 @@ export function registerCdpExec(app, ctx) {
         job.waiters = [];
         // 收口后的会话只留最近 10 条（帧 base64 每条可达数百 KB，防常驻内存无界增长）
         pruneFinishedJobs(jobs, 10);
+        queueMicrotask(pump);
     }
 
-    /** 派发入口：启动驾驶会话（不排队——每个驾驶会话独占一个 App 实例/端口） */
+    /** 派发入口：同一可执行文件串行驾驶，不同应用可并行；别名扫描后再次校验。 */
     ctx.startCdpRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message, agent }) => {
+        // ★ 2026-11-16（H-2）：执行面总开关。抛错由 cards 派发链回滚认领（不会留 running 卡）。
+        if (typeof ctx.execSurfaceEnabled === "function" && !ctx.execSurfaceEnabled())
+            throw new Error("执行面已关闭（设置 → 安全 → Agent 执行能力）：开启后才能派发 CDP 驾驶卡");
         const runId = `cdp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const job = {
-            runId, cardId, agentCardId: agentCardId ?? null, profileId: profile.id, dispatchId: dispatchId ?? null,
+            runId, cardId, agentCardId: agentCardId ?? null, profileId: profile.id, dispatchId: dispatchId ?? null, dispatchKey:dispatchKey??null, abort:new AbortController(), createdAt:Date.now(),
             taskId: taskId ?? null, message, profile, status: "queued", lines: [], frame: null, startedAt: null, finishedAt: null,
             agent: agent || "dispatch-agent", // ★ 收口比对用：须与卡上 assignee 同源（见 finish 的 actor）
         };
         jobs.set(runId, job);
+        job.heartbeat=watchExecution(db,job,finish);
         // start 是 async：必须接住 rejection（launch_overrides 正则写错等不能崩整个 dashboard）
-        start(job).catch((e) => fail(job, `驾驶启动异常：${e instanceof Error ? e.message : e}`));
-        return { runId, queued: false, queueAhead: 0 };
+        pending.push(job);pump();
+        return { runId, queued:job.status==="queued", queueAhead:Math.max(0,pending.indexOf(job)),timings:{acceptedAt:job.createdAt,startedAt:job.startedAt,queueWaitMs:job.queueWaitMs??null} };
     };
 
     // 直播 SSE：帧 + 行 + 结束
     // ★ 根治批（2026-10-06）：驾驶 run 的文本日志此前只在内存里、无任何读取路由 —— 注入链断了无从诊断。
     app.get("/api/agent-cards/:id/cdp-log", (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = findJobByCard(jobs, cardId);
+        const job = findJobByCard(jobs, cardId, { runId: String(req.query.runId ?? "") });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡没有驾驶会话" });
         return { ok: true, runId: job.runId, status: job.status, lines: (job.lines ?? []).slice(-80) };
@@ -805,7 +780,7 @@ export function registerCdpExec(app, ctx) {
 
     app.get("/api/agent-cards/:id/live", (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = findJobByCard(jobs, cardId);
+        const job = findJobByCard(jobs, cardId, { runId: String(req.query.runId ?? "") });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡没有驾驶会话" });
         let lastFrame = null; // 帧去重按连接独立
@@ -823,7 +798,7 @@ export function registerCdpExec(app, ctx) {
     // 停止 = 断开驾驶连接并收口（不杀用户的 App）
     app.post("/api/agent-cards/:id/live/stop", async (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = findJobByCard(jobs, cardId, { runningOnly: true });
+        const job = findJobByCard(jobs, cardId, { runningOnly: true, runId: String(req.query.runId ?? "") });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡当前没有驾驶会话" });
         finish(job, false, "用户断开驾驶");

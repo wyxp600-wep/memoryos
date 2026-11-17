@@ -83,9 +83,11 @@ function withEnv(vars, fn) {
   }
 }
 
+/** 可写 dataDir 的临时目录（discoverHealthyCore 测试用：放 core.json） */
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-shell-test-"));
+
 /** 造一个注入了替身的 core；返回句柄供断言 */
-function makeCore({ port, env = {}, overrides = {} } = {}) {
-  return withEnv(env, () => {
+function makeCore({ port, env = {}, overrides = {} } = {}) {  return withEnv(env, () => {
     const spawned = [];
     const dialogs = [];
     const logs = [];
@@ -134,12 +136,30 @@ test("core: startCore 拉起 dashboard 与 daemon，且注入关键 env", async 
   assert.equal(dash.opts.env.MEMORY_TOKEN, "tok");
   assert.equal(dash.opts.env.MEMORY_DB, path.join("/data", "data", "memory.db"));
   assert.equal(dash.opts.env.EMBED_MODE, "local");
-  assert.equal(dash.opts.env.MEMORYOS_EXEC_ON, "1");
+  // ★ 2026-10-14 发布默认收口：缺省=关（对齐 2026-09-15 用户拍板「决策 1(a)」与 README「默认关闭」；
+  //   原实现无条件写 "1"，与文档相反 —— 等于把「Agent 可跑命令」随桌面版发给每个人）
+  assert.equal(dash.opts.env.MEMORYOS_EXEC_ON, "0");
 
   // daemon 走嵌入侧车（P1-perf B6′：不再自持 560MB 模型）
   const dae = h.spawned.find((s) => s.script === "daemon.js");
   assert.equal(dae.opts.env.EMBED_MODE, "api");
   assert.match(dae.opts.env.EMBED_API_URL, /\/v1\/embeddings$/);
+});
+
+/* ★ 2026-10-14 发布默认收口：缺省=关；仅 config.json 显式 execOn=true 才开。 */
+test("core: 执行面缺省关闭，config.execOn=true 才注入 MEMORYOS_EXEC_ON=1", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+
+  // ① 缺省（readConfig 返回 {} → 无 execOn）→ 关
+  const off = makeCore({ port });
+  await off.core.startCore();
+  assert.equal(off.spawned.find((s) => s.script === "dashboard.js").opts.env.MEMORYOS_EXEC_ON, "0");
+
+  // ② 显式 execOn=true → 开
+  const on = makeCore({ port, overrides: { readConfig: () => ({ execOn: true }) } });
+  await on.core.startCore();
+  assert.equal(on.spawned.find((s) => s.script === "dashboard.js").opts.env.MEMORYOS_EXEC_ON, "1");
 });
 
 test("core: 意外退出按指数退避重排 3000→6000→12000→24000→48000", async (t) => {
@@ -384,6 +404,90 @@ test("core: restartCore 重启窗口内旧子进程退出不排自愈，新实�
   assert.equal(h.core.stats().scripts["dashboard.js"].restarts, 0, "重启窗口内不计数");
   assert.equal(h.core.stats().scripts["daemon.js"].restarts, 0);
   assert.ok(h.logs.some((l) => /主动重启中退出，不排自愈/.test(l)));
+});
+
+/* ★ 2026-10-15 核心发现协议（根治端口竞态/EADDRINUSE 重试 → 启动失败僵尸壳） */
+
+/** 造一个带真实 dataDir（可写 core.json）的 core；fetchImpl 可替身（顶层传或 overrides） */
+function makeCoreWithData({ port, env = {}, overrides = {}, fetchImpl } = {}) {
+  return withEnv(env, () => {
+    const spawned = [];
+    const dialogs = [];
+    const logs = [];
+    const timers = fakeTimers();
+    const core = createCore({
+      nodeExe: () => "node",
+      getKernel: () => "/kernel",
+      dataDir: () => dataDir,
+      readConfig: () => ({}),
+      getPort: () => port,
+      getToken: () => "tok",
+      isQuitting: () => false,
+      log: (...a) => logs.push(a.map(String).join(" ")),
+      dialog: { showMessageBox: (o) => dialogs.push(o) },
+      spawnImpl: (exe, args, opts) => {
+        const child = fakeChild(9000 + spawned.length);
+        spawned.push({ exe, args, opts, child, script: path.basename(String(args[0])) });
+        return child;
+      },
+      spawnSyncImpl: () => ({ status: 0, signal: null, stdout: "", stderr: "" }),
+      timers,
+      ...(fetchImpl ? { fetchImpl } : {}),
+      ...overrides,
+    });
+    return { core, spawned, dialogs, logs, timers };
+  });
+}
+
+test("core: discoverHealthyCore —— core.json 缺失/损坏 → null（回退 spawn 路径）", async (t) => {
+  const h = makeCoreWithData({ fetchImpl: async () => ({ ok: true }) });
+  assert.equal(await h.core.discoverHealthyCore(), null, "无 core.json → null");
+  fs.writeFileSync(path.join(dataDir, "core.json"), "{ 坏 JSON", "utf8");
+  assert.equal(await h.core.discoverHealthyCore(), null, "JSON 损坏 → null");
+});
+
+test("core: discoverHealthyCore —— pid 已退出（陈旧 core.json）→ null", async (t) => {
+  const deadPid = 2147483646; // 几乎不可能存在的 pid：kill(pid,0) 必抛 ESRCH
+  fs.writeFileSync(path.join(dataDir, "core.json"), JSON.stringify({ port: 8788, pid: deadPid, startedAt: "x" }), "utf8");
+  const h = makeCoreWithData({ fetchImpl: async () => ({ ok: true }) });
+  assert.equal(await h.core.discoverHealthyCore(), null, "pid 死 → null，不误判为可复用");
+});
+
+test("core: discoverHealthyCore —— health 非 200 / 无 token 不符 → null", async (t) => {
+  fs.writeFileSync(path.join(dataDir, "core.json"), JSON.stringify({ port: 8788, pid: process.pid, startedAt: "x" }), "utf8");
+  const h = makeCoreWithData({ fetchImpl: async () => ({ ok: false }) });
+  assert.equal(await h.core.discoverHealthyCore(), null, "health 非 200 → null");
+  // fetch 抛异常（连接失败）→ 同样 null
+  const h2 = makeCoreWithData({ fetchImpl: async () => { throw new Error("ECONNREFUSED"); } });
+  assert.equal(await h2.core.discoverHealthyCore(), null, "连接失败 → null");
+});
+
+test("core: discoverHealthyCore —— pid 活 + health 200 → {port,pid}", async (t) => {
+  fs.writeFileSync(path.join(dataDir, "core.json"), JSON.stringify({ port: 8788, pid: process.pid, startedAt: "x" }), "utf8");
+  const seen = [];
+  const h = makeCoreWithData({ fetchImpl: async (url, opts) => { seen.push([url, opts.headers["x-memory-token"]]); return { ok: true }; } });
+  const r = await h.core.discoverHealthyCore();
+  assert.deepEqual(r, { port: 8788, pid: process.pid });
+  assert.equal(seen[0][0], "http://127.0.0.1:8788/api/health", "健康检查走本机 health 端点");
+  assert.equal(seen[0][1], "tok", "带 token 鉴权（防 core.json 指向他人服务）");
+});
+
+test("core: startCore —— 发现健康核心则复用，不再 spawn（僵尸壳/端口竞态根治）", async (t) => {
+  fs.writeFileSync(path.join(dataDir, "core.json"), JSON.stringify({ port: 8788, pid: process.pid, startedAt: "x" }), "utf8");
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+  const h = makeCoreWithData({ port, fetchImpl: async () => ({ ok: true }) });
+  await h.core.startCore();
+  assert.equal(h.spawned.length, 0, "复用已有核心：不应 spawn 任何 dashboard/daemon");
+  assert.ok(h.logs.some((l) => /发现已在服务的核心.*复用并跳过拉起/.test(l)), "应记录复用日志");
+});
+
+test("core: startCore —— 未发现核心时行为与改前一致（照旧 spawn）", async (t) => {
+  const { server, port } = await listenEphemeral();
+  t.after(() => server.close());
+  const h = makeCoreWithData({ port, fetchImpl: async () => ({ ok: false }) }); // health 非 200 → 不复用
+  await h.core.startCore();
+  assert.deepEqual(h.spawned.map((s) => s.script).sort(), ["daemon.js", "dashboard.js"], "未命中发现协议 → 原 spawn 路径");
 });
 
 /* ================== 二、scheduler：调度锁与超时 ================== */

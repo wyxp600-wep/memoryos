@@ -2,7 +2,7 @@
  * MemoryOS v0.2 冒烟自检（M-1.3 去重/冲突预检 + M-1.4 混合检索）
  * 统一用 fake embed（确定性伪向量）测机制，不引入真实语义。
  *   D1 dedupeDecision 单元：同向量→merge；正交→insert；0.9 相似→conflict
- *   D2 写入管线：同内容二次写 → 命中 merge（confidence+0.1，不计新行）
+ *   D2 写入管线：同内容二次写 → 命中 merge（不改变置信度、不计新行）
  *   D3 混合检索：语义路召回 + RRF 融合出分 + 命中回血(hit_count+1, last_hit_at)
  *   C2 截断契约（2026-10-03 批次C2）：hybridSearch 返回数组上的 _searchStats（semSliced/limitSliced/degraded）
  * 用法：node dist/smoke-v02.js
@@ -58,9 +58,6 @@ try {
     const d = existing.length
         ? dedupeDecision(existing, emb, -1)
         : { action: "insert", targetId: null, sim: -1 };
-    if (d.action === "merge" && d.targetId) {
-        // server 侧 bumpConfidence
-    }
     const after = db.prepare("SELECT COUNT(*) c FROM memories WHERE project='ecommerce'").get().c;
     check("D2.同内容二次写 → 判定 merge", d.action === "merge" && d.targetId === 1, `action=${d.action} target=${d.targetId}`);
     check("D2.merge 不新增行", after === before, `rows ${before}→${after}`);

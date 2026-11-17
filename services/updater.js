@@ -130,10 +130,10 @@ function makeUpdater(deps) {
   }
 
   /** 执行一次内核热更新。status ∈ done / none / error / disabled */
-  async function applyKernelUpdate() {
+  async function applyKernelUpdate({checkOnly=false}={}) {
     const cfg = readConfig() || {};
     const updateUrl = cfg.updateUrl || readReleaseSettings().updateUrl;
-    if (!updateUrl) return { status: "disabled" };
+    if (!updateUrl) return { status: "disabled",current:readVersion() };
     try { assertTrustedOrigin(updateUrl); }
     catch (e) { log("热更新源未通过信任校验:", e.message); return { status: "disabled", current: readVersion(), error: e.message }; }
     const current = readVersion();
@@ -155,11 +155,13 @@ function makeUpdater(deps) {
         const local = path.join(getKernel(), relNorm);
         if (sha256File(local) !== f.hash) todo.push({ rel: relNorm, hash: f.hash });
       }
+      if (!todo.length && checkOnly) return {status:'available',current,latest,files:0};
       if (!todo.length) {
         // 文件已全部一致但版本号还是旧值 → 上轮覆盖后重启未成功，本轮只补重启
         log("热更新：文件已一致，版本号未落（上轮重启未完成），仅补重启");
         return { status: "applied", current, latest, applied: 0, restartPending: true };
       }
+      if(checkOnly)return {status:'available',current,latest,files:todo.length};
       tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-hotup-"));
       const downloaded = [];
       for (const f of todo) {
@@ -226,14 +228,18 @@ function makeUpdater(deps) {
     if (_hotupdating) return;
     _hotupdating = true;
     try {
-      const r = await applyKernelUpdate();
+      const mode=readConfig()?.preferences?.updateMode||'auto';
+      if(mode==='off')return;
+      const r = await applyKernelUpdate({checkOnly:mode==='notify'});
       if (r.status === "applied") {
         const ok = await restartAfterUpdate(r);
+        if(api.onStatus)api.onStatus(ok?r:{status:'error',current:r.current,error:'更新文件已写入，但内核重启失败，版本号未推进'});
         if (ok) log(`自动热更新：${r.current} → ${r.latest}（${r.applied} 文件）`);
         else log(`自动热更新：文件已覆盖但内核重启失败，版本号保持 ${r.current}，下一轮检查将自动补重启`);
       } else if (r.status === "error") {
         log(`自动热更新失败：${r.error}`);
       }
+      if(r.status!=='applied'&&api.onStatus)api.onStatus(r);
     } finally {
       _hotupdating = false;
     }
@@ -245,7 +251,7 @@ function makeUpdater(deps) {
     setInterval(runAutoHotUpdate, intervalMs);
   }
 
-  return { applyKernelUpdate, runAutoHotUpdate, auto, updateLocalVersion, restartAfterUpdate };
+  const api={ applyKernelUpdate, runAutoHotUpdate, auto, updateLocalVersion, restartAfterUpdate };return api;
 }
 
 module.exports = { makeUpdater, sha256File, sha256Buf };

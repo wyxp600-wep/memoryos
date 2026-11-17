@@ -78,9 +78,14 @@ const AGENT_SKILL_PROFILES = {
  * 豆包不在 scan.js 列表中（无标准 exe 探测），在此按 skills 目录存在性追加。
  */
 export function detectSkillTargets() {
-    const { agents } = scanAgents();
+    return detectedFromScan(scanAgents().agents ?? []);
+}
+/** 从 scans 结果构造 detected（无 spawnSync 副作用）：detectSkillTargets 的纯映射部分，
+ *  ★ 2026-10-15 抽出——skills/status 的 worker 化链路改为复用 scan.js 共享扫描结果，
+ *  避免 worker 内再跑一份 spawnSync 探测（探测 burst 会拖慢主线程 socket 传输）。 */
+export function detectedFromScan(agents) {
     const existingDirs = new Set(TARGETS.map((t) => path.resolve(t.dir)));
-    const result = agents.map((a) => {
+    const result = (agents ?? []).map((a) => {
         const profile = AGENT_SKILL_PROFILES[a.id];
         const skillsDir = profile?.skillsDir ?? null;
         return {

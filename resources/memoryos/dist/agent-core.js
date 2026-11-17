@@ -1,3 +1,4 @@
+import { MEMORY_BODY_GUIDE, MEMORY_BODY_TEMPLATE } from './memory-body.js';
 /**
  * MemoryOS — Agent 核心（可复用：CLI agent.js / dashboard agent 端点共用）
  * 职责：
@@ -20,13 +21,14 @@ import { callLlmStream } from "./agent-stream.js";
  *  未声明风险级的工具由 server.js 注入 fail-closed 前缀（L4/required），故此集合仅用于
  *  **兼容未打前缀的旧 server.js**（升级期回落），不是主判据。                        */
 export const LEGACY_WRITE_TOOLS = new Set([
-    "memory_write", "memory_feedback", "memory_cite",
-    "obsidian_import", "obsidian_export", "obsidian_write_note",
-    "task_assign", "task_claim", "task_done", "task_supersede",
+    "memory_write", "memory_feedback", "memory_cite", "memory_work", "memory_evidence",
+    "obsidian", "method_apply",
+    "task_assign", "task_claim", "task_done", "task_supersede", "task_admin",
 ]);
-/** 解析风险前缀；无前缀返回 null（旧服务端） */
+/** 解析风险标记；无标记返回 null（旧服务端）。
+ *  ★ 2026-11-07（#700054）：标记已从描述首句挪到末尾（首句留给用途），故改为全串匹配。 */
 export function parseRiskPrefix(desc) {
-    const m = /^⟨risk:(L[0-4])\|gate:(required|auto)⟩/.exec(String(desc ?? ""));
+    const m = /⟨risk:(L[0-4])\|gate:(required|auto)⟩/.exec(String(desc ?? ""));
     return m ? { risk: m[1], gate: m[2] === "required" } : null;
 }
 /** 该工具是否需要过 writeGate。tool = tools/list 里的定义对象 */
@@ -41,11 +43,12 @@ export function buildSystemPrompt(agentName, extra = "") {
     return [
         `你是 ${agentName}，MemoryOS 共享记忆中心的本地 agent。你通过 MCP 工具读写团队共享记忆库与多 Agent 任务队列。`,
         `工具用法约定：`,
-        `1. 会话/关键任务开始先调用 memory_context（project=<scope>）一键注入当前项目高价值记忆；scope 不确定先 memory_projects 看一眼。`,
+        `1. 会话/关键任务开始：用户指定任务卡时先 memory_context(task_card_id=<稳定卡ID>,project=<scope>,limit=3) 同次读任务简报与定向经验，需全文再 memory_work(action=read,task_card_id,project)。无任务卡则 memory_context(project,focus=<下一步与症状>,keywords=<2至5个明确锚点>,limit=3)。不凭最近会话猜任务；关键词辅助排序试验默认关闭。`,
         `2. 检索用 memory_search（语义+关键词混合，scope 隔离）；命中片段要精确引用/展开时用 memory_read。`,
-        `3. 写记忆（memory_write）纪律：只写「可跨会话复用的结论」（决策/踩坑/隐藏约定/可复用资产）；≤200 字、自包含、含具体数值/路径/命令；重复内容宁可不写；绝不写入敏感凭据。`,
+        `3. 写记忆纪律：${MEMORY_BODY_GUIDE}\n${MEMORY_BODY_TEMPLATE}`,
         `4. 发现记忆已过时/有误 → memory_feedback 标记；落地方案实际采用了某条记忆 → memory_cite 声明。`,
         `5. 任务队列：task_next 查可做集（含依赖拓扑与优先级）；task_claim 领取（pending→in_progress）；完成实质工作后 task_done 附结论；发现跨链路重复任务用 task_supersede 归档到主任务。`,
+        `阶段变化保存 memory_work(action=write,task_card_id,session_id,project,expected_version,checkpoint)；checkpoint含goal/acceptance/completed及evidence/pending/blockers/decisions及scope与evidence/next_step/workspace/environment/verified_at。读取检查点不授予认领、部署或重试权限；条件变化先复核，不机械沿用失败路径。`,
         `回答风格：结论先行；引用记忆时带 [#记忆ID]；无工具结果支撑的内容明确标注「（推测）」。`,
         // ★ 2026-09-20：输出契约 —— 前端按 <结论>/<过程> 切分：结论进对话气泡，过程进「执行过程」区。
         //   无过程段可省略；标记外不写正文（解析不到标记时前端按整段结论兜底，不会丢内容）。

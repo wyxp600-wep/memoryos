@@ -9,7 +9,10 @@
  * 冒烟：buildApp(db) 交给 smoke-dashboard.js 用 app.inject() 端到端测试。
  */
 import Fastify from "fastify";
+import { spawnSync } from "node:child_process";             // ★ 2026-11-16（M-9）：令牌文件 ACL 收紧
+import { FastMCP } from "fastmcp";                            // ★ 2026-10-14（1a）：核心侧工具面容器（只注册，不 listen）
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { installRateGuard } from "./rate-guard.js"; // ★ 2026-11-16（R02-05 / M-8）：重工具端点速率与并发守卫
 import os from "node:os";
 import { openDb, archiveMemory, logUsage, logDaemon, withTx, writeMemory, updateMemory, queryByType, rejectMemory, pendingConflicts, applyArbitration, markMerged, listWorkingMemory, setWorkingMemory, clearWorkingMemory, readMemory, queryStats } from "./db.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,7 +21,7 @@ import path from "node:path";
 import { funnel, trend, topMemories, zombies, crossTool } from "./report.js";
 import { buildPlan, loadHygieneConfig, reembedStale } from "./daemon.js";
 import { readConfig, writeConfig } from "./db.js";
-import { scanAgents, connectGuideFor, applyConnectWrite } from "./scan.js";
+import { scanAgents, connectGuideFor, applyConnectWrite, primeScanAgentsInWorker } from "./scan.js";
 import { getSources, ingestAll, loadCustomSpecs, saveCustomSpecs, validateCustomSource, customSourcesPath } from "./ingest.js";
 import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { detectVaults, importVault, exportMemories, vaultStatus, syncNotesIndex, demoteNoteLinks, writeNoteToVault } from "./obsidian-sync.js";
@@ -34,6 +37,7 @@ import { registerMemory } from "./dashboard-reg-memory.js";
 import { registerPlans } from "./dashboard-reg-plans.js";
 import { registerIngest } from "./dashboard-reg-ingest.js";
 import { registerDesktop } from "./dashboard-reg-desktop.js";
+import { registerSettings } from './dashboard-reg-settings.js';
 import { registerStatic } from "./dashboard-reg-static.js";
 import { registerCards } from "./dashboard-reg-cards.js";
 import { registerKnowledge } from "./dashboard-reg-knowledge.js";
@@ -43,6 +47,9 @@ import { registerGithub } from "./dashboard-reg-github.js";   // Orca 融合 P2�
 import { registerDesign } from "./dashboard-reg-design.js";   // Orca 融合 P3：Design Mode（CDP 元素拾取，零新依赖）
 import { registerCliExec } from "./dashboard-reg-cliexec.js"; // 节点画布 P2：CLI 直控执行器（headless 智能体 + SSE 终端）
 import { registerCdpExec } from "./dashboard-reg-cdpexec.js"; // 节点画布 P3：CDP 驾驶执行器（桌面智能体拉起 + screencast 直播）
+import { registerExecApproval } from "./dashboard-reg-exec-approval.js"; // ★ 方案 B：exec_run 高危命令待批审批
+import { registerAllTools } from "./server-tools.js";        // ★ 2026-10-14（1a）：与 MCP server 共用同一份工具注册编排
+import { registerOps } from "./dashboard-reg-ops.js";        // ★ 2026-10-14（1a）：核心侧工具面接口（/ops/:tool · /ops/catalog · /health）
 const DEFAULT_PORT = 8787;
 /** 人工/编辑/新建允许的 type（含规则页 rule） */
 const ALLOWED_TYPES = ["decision", "experience", "pitfall", "convention", "rule"];
@@ -101,18 +108,80 @@ function resolvePlansDir() {
 const PLANS_DIR = resolvePlansDir();
 /** loopback 主机白名单（比对时去掉端口）：防 DNS rebinding 把外部域名解析到 127.0.0.1 后直连本机 API */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-/** ★ 2026-10-02 手机版配对：MEMORY_ALLOW_LAN=1 时放行私网 Host（RFC1918 IPv4 / 单标签机器名 / .local）。
- *  仅放行 Host 头，令牌门禁（②）照旧逐请求强制；缺省（无该 env）行为与之前完全一致（fail-closed）。 */
-const PRIVATE_HOST_RE = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|[a-z0-9-]+(\.local)?)$/i;
+/** ★ 2026-10-02 手机版配对：MEMORY_ALLOW_LAN=1 时放行私网 Host（RFC1918 IPv4）。
+ *  ★ 2026-11-16（L-1 加固）：**不再默认放行任意单标签机器名 / .local** —— 那等于把
+ *  「任意域名解析到本机」也当合法 Host，DNS rebinding 防护被弱化。需要机器名访问的，
+ *  显式在 MEMORY_LAN_HOSTS 里逗号列出（例：MEMORY_LAN_HOSTS=my-pc,my-pc.local）。
+ *  令牌门禁（②）在任何情况下都逐请求强制，缺省（无 env）行为与之前完全一致（fail-closed）。 */
+const LAN_IPV4_RE = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})$/i;
 function lanHostAllowed(host) {
-    return process.env.MEMORY_ALLOW_LAN === "1" && PRIVATE_HOST_RE.test(host);
+    if (process.env.MEMORY_ALLOW_LAN !== "1")
+        return false;
+    if (LAN_IPV4_RE.test(host))
+        return true;
+    const extra = String(process.env.MEMORY_LAN_HOSTS ?? "")
+        .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    return extra.includes(String(host).toLowerCase());
 }
 const TOKEN_COOKIE = "memoryos_token";
 /** 令牌文件名（与库同目录）：CLI 启动时自动生成/读取 */
 export const TOKEN_FILE = "token";
-/** 安全响应头（P1-2）：脚本仅同源（页面无内联脚本）；样式放行内联与现有字体域；禁止 object/base 劫持与 iframe 嵌套 */
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://miaoda.feishu.cn; " +
-    "font-src 'self' data: https://miaoda.feishu.cn; img-src 'self' data: blob:; connect-src 'self'; " +
+/** ★ 2026-11-07（#700056）：401 提示给真实绝对路径，而不是相对项目根的 "data/token"。
+ *  数据目录优先 MEMORYOS_DATA_DIR；无 env 时按 %APPDATA%（Windows）/ os.homedir()（Linux/Termux）
+ *  推「…/MemoryOS/data」，与 server.js::DB_PATH 及 CLI 自举口径一致。未启动桌面壳也能按路径找到。 */
+function tokenPathHint() {
+    if (process.env.MEMORYOS_DATA_DIR)
+        return path.join(process.env.MEMORYOS_DATA_DIR, "data", TOKEN_FILE);
+    if (process.env.MEMORY_DB)
+        return path.join(path.dirname(process.env.MEMORY_DB), TOKEN_FILE);
+    if (process.env.APPDATA)
+        return path.join(process.env.APPDATA, "MemoryOS", "data", TOKEN_FILE);
+    return path.join(os.homedir(), ".config", "MemoryOS", "data", TOKEN_FILE);
+}
+/** ★ 2026-11-16（M-9）：Windows 上 `mode:0o600` 是空操作 —— 令牌文件实际继承目录 ACL。
+ *  这里用 icacls 去掉继承、只授当前用户完全控制（仍可轮换写），失败只告警不阻断启动。
+ *  非 Windows 走 chmod 0600（POSIX 下 mode 已生效，此处为一致性兜底）。 */
+function hardenTokenFile(file) {
+    try {
+        if (process.platform === "win32") {
+            const user = process.env.USERNAME;
+            if (!user)
+                return;
+            spawnSync("icacls", [file, "/inheritance:r", "/grant:r", `${user}:F`], { stdio: "ignore", windowsHide: true, timeout: 5000 });
+        }
+        else {
+            fs.chmodSync(file, 0o600);
+        }
+    }
+    catch (e) {
+        console.warn(`[dashboard] 令牌文件权限收紧失败（鉴权仍生效）：${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+/* ★ 2026-11-16（M-1）：一次性配对码 —— 手机端打开 `/?pair=<code>` 即换发 cookie，
+ *  码 60 秒过期、用后即焚。这样二维码/聊天记录里不必再出现**长期令牌**；
+ *  `?token=` 通道原样保留（旧客户端兼容，不破坏现有配对流程）。 */
+const _pairCodes = new Map(); // code -> expiresAt
+export function issuePairCode(ttlMs = 60_000) {
+    const now = Date.now();
+    for (const [k, exp] of _pairCodes) {
+        if (exp <= now)
+            _pairCodes.delete(k);
+    }
+    const code = randomBytes(16).toString("hex");
+    _pairCodes.set(code, now + ttlMs);
+    return { code, expiresIn: Math.round(ttlMs / 1000) };
+}
+function consumePairCode(code) {
+    const exp = _pairCodes.get(String(code ?? ""));
+    if (!exp)
+        return false;
+    _pairCodes.delete(String(code)); // 一次性：无论是否过期都焚毁，防重放
+    return exp > Date.now();
+}
+/** 安全响应头（P1-2）：脚本仅同源（页面无内联脚本）；样式放行内联；禁止 object/base 劫持与 iframe 嵌套
+ *  ★ 2026-11-16（L-3）：移除外部字体/样式域 miaoda.feishu.cn —— 前端已改本地字体，CSP 不再需要外域。 */
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; " +
     "object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 /**
  * 访问控制（P1-2）三段：
@@ -121,7 +190,7 @@ const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
  *     前端无需改动即可让后续同源请求带凭据
  *  ③ 安全响应头 —— CSP + nosniff + no-referrer
  */
-function installAccessControl(app, token) {
+function installAccessControl(app, token, opts = {}) {
     /** ★ 2026-09-15（P-4171）：常数时间令牌比较。原 `===` 有长度/早期退出侧信道；
      *  先 sha256 摘要再 timingSafeEqual —— 摘要恒定 32B，消除长度侧信道。 */
     const safeEqual = (a, b) => {
@@ -129,9 +198,30 @@ function installAccessControl(app, token) {
         const hb = createHash("sha256").update(String(b ?? "")).digest();
         return timingSafeEqual(ha, hb);
     };
+    /* ★ 2026-11-16（M-8 / L-2）：鉴权失败节流 + 审计。
+     *  同来源 60s 内失败 ≥20 次 → 429（先于 401 判定，慢化令牌爆破）；每次失败回调
+     *  onAuthFail（dashboard 侧写 daemon_log，审计失败不阻断响应）。内存计数，重启清零。 */
+    const AUTH_FAIL_WINDOW_MS = 60_000;
+    const AUTH_FAIL_MAX = 20;
+    const fails = new Map(); // ip -> { count, firstAt }
+    const failKey = (req) => String(req.ip || "unknown");
+    const noteFail = (req, reason) => {
+        const key = failKey(req);
+        const now = Date.now();
+        let rec = fails.get(key);
+        if (!rec || now - rec.firstAt > AUTH_FAIL_WINDOW_MS) {
+            rec = { count: 0, firstAt: now };
+            fails.set(key, rec);
+        }
+        rec.count += 1;
+        try { opts.onAuthFail?.({ ip: key, reason, path: String(req.url ?? "").split("?")[0], count: rec.count }); }
+        catch { /* 审计失败不阻断 */ }
+        return rec.count;
+    };
     app.addHook("onRequest", async (req, reply) => {
         const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
         if (!LOOPBACK_HOSTS.has(host) && !lanHostAllowed(host)) {
+            noteFail(req, "forbidden-host");
             return reply.code(403).send({ ok: false, error: "forbidden-host" });
         }
         // fail-closed（P0-2.2）：无令牌配置时拒绝，而非放行。
@@ -143,7 +233,24 @@ function installAccessControl(app, token) {
                 .send({ ok: false, error: "token-not-configured", hint: "设置 MEMORY_TOKEN 或确保 data/token 存在后重启" });
         }
         const url = String(req.url ?? "");
-        const fromQuery = new URLSearchParams(url.includes("?") ? url.slice(url.indexOf("?") + 1) : "").get("token");
+        const _qs = new URLSearchParams(url.includes("?") ? url.slice(url.indexOf("?") + 1) : "");
+        // ★ 2026-11-16（M-1）：一次性配对码换 cookie（60s、用后即焚、302 去码）。
+        //   放在长期令牌校验之前，只对 GET/HEAD 导航生效；API 调用行为不变。
+        const fromPair = _qs.get("pair");
+        if (fromPair) {
+            const isNav = (req.method === "GET" || req.method === "HEAD") && String(req.headers.accept ?? "").includes("text/html");
+            if (!isNav)
+                return reply.code(400).send({ ok: false, error: "pair-code-nav-only", hint: "配对码只用于浏览器导航打开；脚本请用 ?token= 或 x-memory-token" });
+            if (!consumePairCode(fromPair))
+                return reply.code(401).send({ ok: false, error: "pair-code-invalid", hint: "配对码无效或已过期（一次性，60 秒内有效）；请在桌面端重新生成" });
+            const secure = req.protocol === "https" ? "; Secure" : "";
+            reply.header("set-cookie", `${TOKEN_COOKIE}=${token}; Path=/; SameSite=Strict; HttpOnly${secure}; Max-Age=31536000`);
+            _qs.delete("pair");
+            const rest = _qs.toString();
+            const base = url.split("?")[0] || "/";
+            return reply.code(302).header("location", rest ? `${base}?${rest}` : base).send();
+        }
+        const fromQuery = _qs.get("token");
         const cookie = String(req.headers.cookie ?? "");
         const fromCookie = cookie
             .split(";")
@@ -153,10 +260,22 @@ function installAccessControl(app, token) {
         const bearer = String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, ""); // ★ 一致性⑥：兼容 OpenAI 风格 Bearer（/v1/embeddings 共享端点用，同一令牌）
         const ok = safeEqual(fromQuery, token) || safeEqual(String(req.headers["x-memory-token"] ?? ""), token) || safeEqual(fromCookie, token) || safeEqual(bearer, token);
         if (!ok) {
-            return reply.code(401).send({ ok: false, error: "unauthorized", hint: "需带 ?token=<令牌> 访问；令牌见 data/token" });
+            const n = noteFail(req, "unauthorized");
+            /* ★ 2026-11-16（复审加固）：节流只作用于「这一次确实不带有效令牌」的请求 ——
+             *   正确令牌永远放行，不会因本机脚本爆破而把合法浏览器锁在 60s 门外（原实现的自伤点）。 */
+            if (n >= AUTH_FAIL_MAX)
+                return reply.code(429).send({ ok: false, error: "too-many-auth-failures", hint: `鉴权失败次数过多，请 ${Math.ceil(AUTH_FAIL_WINDOW_MS / 1000)} 秒后重试` });
+            // ★ 2026-11-07（#700056）：仍是 JSON，仍是 401，只把 hint 换成真实路径 + 两种带 token 方式。
+            return reply.code(401).send({
+                ok: false,
+                error: "unauthorized",
+                hint: `未带令牌：令牌文件在 ${tokenPathHint()}（运行数据目录 data 下；未启动桌面壳时也在该位置）。浏览器打开地址后拼接 ?token=<令牌> 即可，脚本调用同样在 URL 拼 ?token=<令牌>（或带 x-memory-token / Authorization: Bearer 请求头）。`,
+            });
         }
         if (safeEqual(fromQuery, token)) {
-            reply.header("set-cookie", `${TOKEN_COOKIE}=${token}; Path=/; SameSite=Strict; HttpOnly; Max-Age=31536000`);
+            // ★ 2026-11-16（M-10）：https 下补 Secure（本机 http 不能加，否则 cookie 直接不发送）
+            const secure = req.protocol === "https" ? "; Secure" : "";
+            reply.header("set-cookie", `${TOKEN_COOKIE}=${token}; Path=/; SameSite=Strict; HttpOnly${secure}; Max-Age=31536000`);
             // ★ P1-6 / T3 收尾：首次带 ?token= 的「浏览器导航」→ 302 到去掉 token 的同一 URL，
             //   使令牌不再停留在地址栏（可经历史、截图、浏览器扩展泄漏）。
             //   仅对 GET/HEAD 且 Accept 含 text/html 的导航生效：API 调用（curl / 冒烟脚本 /
@@ -189,6 +308,47 @@ function dataDirOf() {
 }
 function configFilePath() {
     return dataDirOf() ? path.join(dataDirOf(), "config.json") : "";
+}
+/** ★ 2026-10-14（架构重构 1a）：核心实例信息落盘 —— 临时文件 + rename **原子写**（绝不直接覆盖，
+ *  读取方永远看不到半截 JSON）。目录走 dataDirOf()（尊重 MEMORYOS_DATA_DIR / MEMORY_DB）。
+ *  MCP shim（1b）等进程据此发现核心端口。失败只告警，不阻断监听。 */
+function writeCoreJson(o) {
+    const dir = dataDirOf();
+    if (!dir)
+        return;
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        const tmp = path.join(dir, `core.json.tmp-${process.pid}`);
+        fs.writeFileSync(tmp, JSON.stringify(o), "utf8");
+        fs.renameSync(tmp, path.join(dir, "core.json"));
+    }
+    catch (e) {
+        console.warn(`[dashboard] core.json 落盘失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+/* ★ 2026-10-14（架构重构 1a）：核心侧工具面 —— dashboard 与 MCP server 共用同一份注册编排
+ *  （server-tools.js::registerAllTools）。FastMCP 实例在此**只当注册容器**（不 listen）。
+ *  模块级惰性单例：buildApp 被 smoke 等多次调用时只构建一次。 */
+let _opsTools = null;
+function opsToolface(db) {
+    if (!_opsTools) {
+        const container = new FastMCP({ name: "memory-hub", version: "0.2.0" });
+        // ★ 口径对齐 server.js:19 / 本文件 CLI:361 —— dbPath 必须是**真实库路径**：
+        //   server-tools.js 用 `path.dirname(dbPath)` 推 `_DATA_DIR`，进而决定执行面 artifact 落点。
+        //   原写法以 dataDirOf()+"memory.db" 反推，在生产布局（…/MemoryOS/data/memory.db）下会得出
+        //   …/MemoryOS/memory.db，_DATA_DIR 随之错一层（直连路径不受影响——那边传的是真实 DB_PATH）。
+        const dbPath = process.env.MEMORY_DB ?? (process.env.APPDATA
+            ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db")
+            : fileURLToPath(new URL("../data/memory.db", import.meta.url)));
+        _opsTools = registerAllTools(container, {
+            db,
+            AGENT: process.env.MEMORY_AGENT ?? "unknown",
+            AGENT_FPATH: process.env.MEMORY_AGENT_FPATH ?? null,
+            ENV_CRED: process.env.MEMORYOS_A1_CREDENTIAL ?? null,
+            dbPath,
+        });
+    }
+    return _opsTools;
 }
 function readDiskConfig() {
     const f = configFilePath();
@@ -243,8 +403,24 @@ export function logLevelShouldDiagnose() { return _LOG_ORDER.indexOf(_logLevel) 
 // dashboard 退出时收掉 MCP 子进程（stdio 子进程随父进程 stdin EOF 退出，这里是显式兜底）
 process.once("exit", () => { try { _agentMcp?.close(); } catch { /* 已断 */ } _agentMcp = null; });
 export function buildApp(db, opts = {}) {
-    const app = Fastify({ logger: false });
-    installAccessControl(app, opts.token ?? process.env.MEMORY_TOKEN ?? null);
+    const app = Fastify({ logger: false, bodyLimit: 1 * 1024 * 1024 });
+    installAccessControl(app, opts.token ?? process.env.MEMORY_TOKEN ?? null, {
+        /* ★ 2026-11-16（L-2）：鉴权失败留痕 —— 只写 daemon_log 审计，不改响应；
+           写库失败静默（审计不能反过来把请求打成 500）。 */
+        onAuthFail: (f) => {
+            try {
+                logDaemon(db, { task: "auth", op: "deny", detail: `${f.reason} ip=${f.ip} path=${f.path} count=${f.count}`, operator: "system:auth" });
+            }
+            catch { /* 审计失败不阻断 */ }
+        },
+    });
+    /* ★ 2026-11-16（R02-05 / M-8）：重工具/高风险端点守卫 —— 只对「起子进程 / 出站请求 / 重磁盘 IO」
+       计数（exec、agent exec/live、ingest、obsidian、design、worktrees）；看板轮询与静态资源不在规则表内，
+       永不 429。规则与阈值集中在 rate-guard.js，便于审计与调参。 */
+    installRateGuard(app);
+    /* ★ 2026-11-16（M-1）：生成一次性配对码（需已鉴权；POST 非无参 GET，不影响快照基线）。
+       手机端用 `/?pair=<code>` 打开即换 cookie，长期令牌不必进入二维码/聊天记录。 */
+    app.post("/api/pair/code", async () => ({ ok: true, ...issuePairCode() }));
     /* ★ Orca 融合 P0（2026-10-03）：JSON content-type 容错 —— 客户端对无体请求（典型：DELETE /api/worktrees/:name）
      *  常仍带 `content-type: application/json`（axios / 部分 SDK / 封装 fetch 的默认行为），fastify 默认解析器在
      *  **路由前**直接 400（FST_ERR_CTP_EMPTY_JSON），路由层收不到请求。替换为：空体 → {}（交各 handler 做业务校验，
@@ -282,12 +458,66 @@ export function buildApp(db, opts = {}) {
             }
         }
         // 5xx 只回通用文案（不泄漏内部信息）；4xx 回自身 message（Fastify 校验错误对调用方有用）
-        const message = status >= 500 ? "内部错误（详见服务端日志）" : String(err?.message ?? "请求无效");
+        // ★ 2026-11-16（L-5）：4xx 也做绝对路径脱敏并限长，避免把内部路径/超长用户输入原样回显。
+        const rawMsg = String(err?.message ?? "请求无效");
+        const message = status >= 500
+            ? "内部错误（详见服务端日志）"
+            : rawMsg.replace(/[A-Za-z]:[\\/][^\s"']{2,}/g, "<path>").slice(0, 500);
         return reply.code(status).type("application/json; charset=utf-8").send({ ok: false, error: message, code });
     });
+    /* ★ 2026-10-14（设置页执行面开关 · 修「重启不生效」）：把 config.json 里持久化的 execOn
+     *   在**启动时**回填到 MCP 子进程 env。原实现只写不读 —— exec-toggle 把 execOn 落了盘，
+     *   但启动时无人读它，MCP 子进程重启后仍继承壳层注入的 MEMORYOS_EXEC_ON=1
+     *   ⇒ 用户关掉执行面，重启后又自己开回来（多人分发场景下等于「以为锁了，其实没锁」）。
+     *   仅在显式 boolean 时回填；null（未设置）维持原行为=继承壳层，向后兼容零回归。 */
+    {
+        const _c = readDiskConfig();
+        if (typeof _c.execOn === "boolean")
+            _agentMcpEnv = { ..._agentMcpEnv, MEMORYOS_EXEC_ON: _c.execOn ? "1" : "0" };
+    }
+    /* ★ 灰度开关（P0/P1 · 2026-10-18）：config.json → 本进程 env 回填。
+    *   口径（沿用 execOn「重启不生效」事故的教训）：config **显式** boolean 时覆盖 env——
+      持久态即真相，防「shell 里残留旧值 silently 覆盖用户设置」；config 未写则该开关走 env/缺省（关）。
+    *   必须早于 opsToolface（registerAllTools 在注册期读 MEMORYOS_TASK_SETTLE）；
+    *   其余三个调用时解析，本段仅为 core 进程（含 shim 代执行）统一来源。direct MCP 进程在
+    *   server.js 有同款回填（config.json 单一开关，两种模式行为一致）。 */
+    {
+        const _c = readDiskConfig();
+        const _flagMap = {
+            depValidate: "MEMORYOS_DEP_VALIDATE",
+            taskSettle: "MEMORYOS_TASK_SETTLE",
+            atomicClaim: "MEMORYOS_ATOMIC_CLAIM",
+            doneAutoreview: "MEMORYOS_DONE_AUTOREVIEW",
+            gateBreaker: "MEMORYOS_GATE_BREAKER", // ★ B3（P2）：门控连续失败熔断
+            prioViaDispatch: "MEMORYOS_PRIO_VIA_DISPATCH", // ★ P15：直派任务 priority 回退 dispatch 链接取数
+            reviewGuard: "MEMORYOS_REVIEW_GUARD", // ★ B1（P2）：agent 收口不得覆盖人工 review 卡
+        };
+        for (const [_k, _env] of Object.entries(_flagMap)) {
+            if (typeof _c[_k] === "boolean")
+                process.env[_env] = _c[_k] ? "1" : "0";
+        }
+    }
+    // ★ 2026-10-14（1a）：核心侧工具面（与 MCP server 同一份注册编排；模块级惰性单例）
+    const _ops = opsToolface(db);
+    /* ★ 2026-11-16 安全加固（H-2）：执行面总开关。
+     *   原 MEMORYOS_EXEC_ON 只控制 MCP 的 file_read/file_write/exec_run；而看板的
+     *   cli / cdp / term / design 四个通道会直接拉起本机进程，却完全不看该开关 ——
+     *   用户在设置页「关闭执行工具」后仍能派发 CLI/拉起任意 exe，「锁了其实没锁」。
+     *   口径（与壳层 core-process 一致）：MEMORYOS_EXEC_OFF=1 一律熔断；config.execOn
+     *   显式 boolean 时以持久态为准；未写则继承 shell 注入的 MEMORYOS_EXEC_ON。
+     *   以**访问器**下发（调用时求值）—— 设置页改完立即生效，不需要重启内核。 */
+    const execSurfaceEnabled = () => {
+        if (process.env.MEMORYOS_EXEC_OFF === "1")
+            return false;
+        const _c = readDiskConfig();
+        if (typeof _c.execOn === "boolean")
+            return _c.execOn;
+        return process.env.MEMORYOS_EXEC_ON === "1";
+    };
     // T8（P2-3）：路由域拆分 —— 8 个 dashboard-reg-*.js；handler 逐字搬移，注册顺序不变；共享顶层名经 ctx 注入
-    const ctx = { db, app, restricted, RESTRICTED, RESTRICTED_MSG, UI_DIR, _staticCache, clampLimit, PLANS_DIR, LOOPBACK_HOSTS, TOKEN_COOKIE, CSP, dataDirOf, configFilePath, readDiskConfig, writeDiskConfig, getAgentMcp, ALLOWED_TYPES, DEFAULT_PORT, resetAgentMcp: () => { _agentMcp = null; }, setAgentMcpEnv: (env) => { _agentMcpEnv = env || {}; }, getLogLevel: () => _logLevel, setLogLevel, };
+    const ctx = { db, app, restricted, RESTRICTED, RESTRICTED_MSG, UI_DIR, _staticCache, clampLimit, PLANS_DIR, LOOPBACK_HOSTS, TOKEN_COOKIE, CSP, dataDirOf, configFilePath, readDiskConfig, writeDiskConfig, getAgentMcp, ALLOWED_TYPES, DEFAULT_PORT, opsTools: _ops.tools, opsExecEnabled: _ops.execEnabled, execSurfaceEnabled, resetAgentMcp: () => { _agentMcp = null; }, setAgentMcpEnv: (env) => { _agentMcpEnv = env || {}; }, getLogLevel: () => _logLevel, setLogLevel, };
     registerCore(app, ctx);
+    registerSettings(app, ctx);
     registerMemory(app, ctx);
     registerPlans(app, ctx);
     registerIngest(app, ctx);
@@ -301,6 +531,8 @@ export function buildApp(db, opts = {}) {
     registerDesign(app, ctx);    // Orca 融合 P3：Design Mode（真实 Chromium 点选元素 → HTML/CSS/裁剪截图进 prompt）
     registerCliExec(app, ctx);   // 节点画布 P2：CLI 直控执行器（channel='cli' 的智能体卡走本机 CLI）
     registerCdpExec(app, ctx);   // 节点画布 P3：CDP 驾驶执行器（channel='cdp' 拉起桌面 App + 直播 + 尽力注入）
+    registerExecApproval(app, ctx); // ★ 方案 B：exec_run 高危命令待批审批（看板点同意/拒绝）
+    registerOps(app, ctx);          // ★ 2026-10-14（1a）：核心侧工具面接口（走既有全局令牌门禁，零新增暴露面）
 
     return app;
 }
@@ -316,6 +548,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (!token) {
         try {
             token = fs.readFileSync(tokenFile, "utf8").trim();
+            hardenTokenFile(tokenFile); // ★ M-9：存量令牌文件同样收紧 ACL（幂等）
         }
         catch { /* 文件不存在 → 下面生成 */ }
     }
@@ -324,6 +557,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         try {
             fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
             fs.writeFileSync(tokenFile, token, { encoding: "utf8", mode: 0o600 });
+            hardenTokenFile(tokenFile);
         }
         catch (e) {
             console.warn(`[dashboard] 令牌落盘失败（鉴权仍生效）：${e instanceof Error ? e.message : String(e)}`);
@@ -338,9 +572,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         .listen({ host, port })
         .then(() => {
         console.log(`MemoryOS Dashboard: http://${host}:${port}/  （访问令牌不在 URL/日志中打印；令牌见 ${tokenFile}）`);
+        // ★ 2026-10-14（1a）：监听成功 → 原子写 data/core.json（{port,pid,startedAt}），供 MCP shim 等进程发现核心端口
+        writeCoreJson({ port, pid: process.pid, startedAt: new Date().toISOString() });
         // ★ 批次⑧：规则反思生产线 —— 启动即水位初始化（LLM-free），此后每小时窗口检查；
         //   常驻 daemon 进程另有同款钩子，config 当日认领门禁保证只跑一次；失败仅记日志。
         maybeRunRuleReflection(db).catch((e) => console.error(`[reflect] 启动检查失败: ${e instanceof Error ? e.message : String(e)}`));
         setInterval(() => maybeRunRuleReflection(db).catch((e) => console.error(`[reflect] 运行失败: ${e instanceof Error ? e.message : String(e)}`)), 60 * 60 * 1000);
+        // ★ 2026-10-15（第三批）：scanAgents 探测 worker 预热发车 —— spawnSync 从主线程挪走，
+        //   首屏 /api/cards/graph、/api/scan-agents 等到达时命中共享缓存（或在途合并），不再阻塞 load。
+        primeScanAgentsInWorker();
     });
 }

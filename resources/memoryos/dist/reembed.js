@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { openDb, logDaemon } from "./db.js";
-import { getEmbedder, vecToBuf, embedMode } from "./embed.js";
+import { openDb, logDaemon, upsertVector } from "./db.js";
+import { getEmbedder, vecToBuf, embedMode, embedderProvenance } from "./embed.js";
+import { recordsFrom, vectorsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
 /** 统计唯一向量数与碰撞条数（hex 指纹去重） */
 function collisionStats(rows) {
     const seen = new Set();
@@ -22,7 +23,7 @@ async function main() {
     const db = openDb(dbPath);
     const rows = db
         .prepare(`SELECT m.id, m.content, v.embedding
-       FROM memories m JOIN memory_vectors v ON v.memory_id = m.id
+       FROM ${recordsFrom(db, { alias: "m" })} JOIN ${vectorsFrom(db, { alias: "v" })} ON v.memory_id = m.id
        WHERE m.status='active' ORDER BY m.id`)
         .all();
     console.log(`[reembed] active 记忆 ${rows.length} 条，EMBED_MODE=${embedMode()}，dry-run=${dryRun}`);
@@ -47,19 +48,18 @@ async function main() {
         return;
     }
     // ★ P1-2.2：向量写入独立表（upsert 语义，兼容该行尚无向量的情况）
-    const upd = db.prepare(`INSERT INTO memory_vectors(memory_id, embedding) VALUES (?, ?)
-     ON CONFLICT(memory_id) DO UPDATE SET embedding = excluded.embedding`);
+    // ★ 2026-10-15：向量带出处——改用 upsertVector（而非裸 INSERT），随向量一并落 embed_model/dim，
+    //   修正历史存量向量的 'unknown' 出处（db.js migrateVectorProvenance 的既定补救路径）。
+    const prov = embedderProvenance(); // { model, dim }：随本次重算的真实嵌入模型打标
     db.exec("BEGIN");
     try {
-        // ★ 2026-09-30：实参次序必须跟随列序 (memory_id, embedding) —— P1-2.2 重构到独立向量表时
-        //   列序换了实参没换（vec 塞进 memory_id → datatype mismatch），该工具自重构后从未跑通。
         for (let i = 0; i < rows.length; i++)
-            upd.run(rows[i].id, vecToBuf(newVecs[i]));
+            upsertVector(db, rows[i].id, newVecs[i], { model: prov.model, dim: prov.dim });
         // 审计留痕：operator=daemon，task=reembed
         logDaemon(db, {
             task: "reembed",
             op: "vec_update",
-            detail: `重算 ${rows.length} 条 active 向量（${embedMode()}），碰撞 ${before.collision}→${after.collision}`,
+            detail: `重算 ${rows.length} 条 active 向量（${embedMode()}，model=${prov.model} dim=${prov.dim}），碰撞 ${before.collision}→${after.collision}`,
             operator: "daemon",
         });
         db.exec("COMMIT");

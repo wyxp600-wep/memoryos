@@ -11,6 +11,7 @@ import { trend } from "./report.js";
 import { loadHygieneConfig } from "./daemon.js";
 import { getSources, ingestAll, loadCustomSpecs, saveCustomSpecs, validateCustomSource, customSourcesPath } from "./ingest.js";
 import { evolutionRegressionGate } from "./reconcile.js";
+import { a1Hard } from "./a1-mode.js"; // ★ 2026-11-16（R02-04）：A1 门禁状态默认 fail-closed
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 export function registerIngest(app, ctx) {
@@ -268,8 +269,8 @@ export function registerIngest(app, ctx) {
             hoursSince: hours === null ? null : Number(hours.toFixed(1)),
             stale: hours === null || hours > 26,
             pending: {
-                trial: count(`SELECT COUNT(*) c FROM memories WHERE status='trial'`),
-                active: count(`SELECT COUNT(*) c FROM memories WHERE status='active'`),
+                trial: count(`SELECT COUNT(*) c FROM main.knowledge_records WHERE status='trial'`),
+                active: count(`SELECT COUNT(*) c FROM main.knowledge_records WHERE status='active'`),
             },
             hygiene: loadHygieneConfig(db), // 生效阈值（含可调旋钮），便于排查"为什么 trial 不动"
         };
@@ -301,7 +302,7 @@ export function registerIngest(app, ctx) {
                 autoVacuum: Number(pragma("auto_vacuum")),
             },
             a1: { // ★ 一致性⑧（2026-09-19）：凭据门禁水位（只报状态与计数，绝不含凭据本体）
-                enforce: process.env.MEMORYOS_A1_ENFORCE === "1",
+                enforce: a1Hard(), // ★ 2026-11-16（R02-04）：默认 fail-closed，仅显式 MEMORYOS_A1_ENFORCE=0 为 false
                 envCredential: Boolean(process.env.MEMORYOS_A1_CREDENTIAL),
                 activeCredentials: db.prepare(`SELECT COUNT(*) c FROM agent_credentials WHERE revoked_at IS NULL AND expires_at > ?`).get(new Date().toISOString())?.c ?? 0,
             },

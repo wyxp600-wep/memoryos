@@ -33,7 +33,19 @@ try {
     const embNoTok = await app.inject({ method: "POST", url: "/v1/embeddings", payload: { input: "测试" } });
     check("⑥a./v1/embeddings 无令牌 401（全局访问控制覆盖）", embNoTok.statusCode === 401, `status=${embNoTok.statusCode}`);
     const embFake = await app.inject({ method: "POST", url: "/v1/embeddings", headers: { "x-memory-token": TOKEN }, payload: { input: "测试" } });
-    check("⑥b.fake embedder 下 503 拒产伪向量（宁不服务不污染）", embFake.statusCode === 503, `status=${embFake.statusCode} body=${JSON.stringify(embFake.body).slice(0, 70)}`);
+    /* ★ 2026-10-18（DeepSeek 收尾 P1）：断言按当前 embed 模式分派 —— 本冒烟用进程内 buildApp（app.inject），
+     *   故本进程的 EMBED_MODE 生效。fake 模式下须 503（宁不服务不污染）；local 模式下须 200 且出处非 fake
+     *   （真实向量可服务）。两分支均验证同一条不变量「绝不产出伪向量」，不是放宽断言。 */
+    const _embMode = String(process.env.EMBED_MODE || "").toLowerCase();
+    if (_embMode === "local") {
+        const _body = embFake.json();
+        const _model = String(_body?.model ?? "");
+        check("⑥b.local embedder 下 200 且出处非 fake（不产伪向量）", embFake.statusCode === 200 && _model.length > 0 && !/fake/i.test(_model),
+            `status=${embFake.statusCode} model=${_model} dim=${_body?.data?.[0]?.embedding?.length ?? "-"}`);
+    }
+    else {
+        check("⑥b.fake embedder 下 503 拒产伪向量（宁不服务不污染）", embFake.statusCode === 503, `status=${embFake.statusCode} body=${JSON.stringify(embFake.body).slice(0, 70)}`);
+    }
     const embBearer = await app.inject({ method: "POST", url: "/v1/embeddings", headers: { authorization: `Bearer ${TOKEN}` }, payload: { input: "测试" } });
     check("⑥c.Bearer 令牌过鉴权（抵达 embedder-fake 守卫=非 401）", embBearer.statusCode !== 401, `status=${embBearer.statusCode}`);
     const emb = await getEmbedder();

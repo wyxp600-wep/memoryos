@@ -51,7 +51,7 @@ export function runAutoConnect(db, opts = {}) {
             skipped.push({ id: a.id, name: a.name, reason: `向导生成失败：${msg(e)}` });
             continue;
         }
-        const needsWork = !g.connected || g.needsDbFix === true || g.staleServer === true;
+        const needsWork = !g.configured || g.needsRepair === true;
         if (!needsWork) {
             skipped.push({ id: a.id, name: a.name, reason: "已连接且库已对齐" });
             continue;
@@ -62,7 +62,7 @@ export function runAutoConnect(db, opts = {}) {
         }
         let r;
         try {
-            r = applyConnectWrite(a, { dryRun });
+            r = applyConnectWrite(a, { dryRun, automatic: true });
         }
         catch (e) {
             r = { ok: false, error: msg(e) };
@@ -88,7 +88,7 @@ export function runAutoConnect(db, opts = {}) {
         catch {
             continue; // 上面 ① 已记过一次失败原因，此处静默跳过
         }
-        if (!g.connected && !justConnected.has(a.id))
+        if (!g.configured && !justConnected.has(a.id))
             continue; // 未连接：写规矩文件也无智能体会读
         const t = resolveAgentRuleTarget(a.id, a.configFile ?? a.configDir ?? g.autoWriteFile ?? null);
         if (!t) {

@@ -30,7 +30,14 @@ export function registerStatic(app, ctx) {
         return reply.send(a.buf);
     };
     app.get("/", sendStatic("index.html", "text/html; charset=utf-8", "no-cache"));
+    app.get("/styleguide", async (_req,reply) => reply.redirect("/#guide"));
+    app.get("/personal-upgrade.js", sendStatic("personal-upgrade.js", "application/javascript", "no-cache"));
+    app.get("/personal-upgrade.css", sendStatic("personal-upgrade.css", "text/css", "no-cache"));
     app.get("/echarts.min.js", sendStatic("echarts.min.js", "application/javascript", "public, max-age=31536000, immutable"));
     app.get("/app.js", sendStatic("app.js", "application/javascript", "no-cache"));
+    // 固定白名单，禁止路径穿越；字体与 HTML/JS 一样用 ETag 协商缓存，更新后不保留旧字体。
+    for (const font of ['inter-400.woff2','inter-600.woff2','jetbrains-mono-400.woff2','jetbrains-mono-600.woff2']) {
+        app.get('/fonts/' + font, sendStatic('fonts/' + font, 'font/woff2', 'public, max-age=0, must-revalidate'));
+    }
     // /canvas-editor.js 路由 2026-10-05 随节点画布并入任务地图而移除（canvas-editor.js 已删）
 }

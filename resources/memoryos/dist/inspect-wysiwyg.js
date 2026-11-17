@@ -15,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "./db.js";
 import { aiViews, aiVisible, normContent, CLIP_SEARCH, CLIP_CONTEXT, EFF_FLOOR } from "./format.js";
+import { recordsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const DB_PATH = process.env.MEMORY_DB ?? path.resolve(HERE, "..", "data", "memory.db");
 if (!fs.existsSync(DB_PATH)) {
@@ -23,12 +24,12 @@ if (!fs.existsSync(DB_PATH)) {
 }
 const db = openDb(DB_PATH);
 const one = (sql, ...a) => db.prepare(sql).get(...a);
-const total = one(`SELECT COUNT(*) c FROM memories`).c;
-const active = one(`SELECT COUNT(*) c FROM memories WHERE status='active'`).c;
+const total = one(`SELECT COUNT(*) c FROM ${recordsFrom(db)}`).c;
+const active = one(`SELECT COUNT(*) c FROM ${recordsFrom(db)} WHERE status='active'`).c;
 const rows = db
-    .prepare(`SELECT id, content, type, agent, project, status, confidence, eff_confidence, hit_count, created_at,
-                 (SELECT COUNT(*) FROM memory_usage u WHERE u.memory_id=memories.id AND u.event='cited' AND u.project=memories.project) cited
-          FROM memories ORDER BY id DESC LIMIT ?`)
+    .prepare(`SELECT r.id, r.content, r.type, r.agent, r.project, r.status, r.confidence, r.eff_confidence, r.hit_count, r.created_at,
+                 (SELECT COUNT(*) FROM memory_usage u WHERE u.memory_id=r.id AND u.event='cited' AND u.project=r.project) cited
+          FROM ${recordsFrom(db, { alias: "r" })} ORDER BY r.id DESC LIMIT ?`)
     .all(Number(process.argv[2] ?? 500));
 let clippedSearch = 0, clippedContext = 0, invisible = 0, hiddenSearch = 0, hiddenContext = 0;
 const reasons = new Map();

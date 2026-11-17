@@ -1,3 +1,4 @@
+const {registerPersonalDesktop}=require('./services/personal-desktop');
 /**
  * MemoryOS 桌面版 — Electron 主进程（编排层，main < 150 行目标达成）
  *
@@ -143,7 +144,7 @@ const updater = makeUpdater({
   },
   getKernel: () => KERNEL, dataDir, restartCore: () => core.restartCore(), log,
 });
-const sched = createScheduler({ nodeExe, getKernel: () => KERNEL, dataDir, log, getPort: () => port, getToken: () => TOKEN });
+const sched = createScheduler({ nodeExe, getKernel: () => KERNEL, dataDir, log, getPort: () => port, getToken: () => TOKEN,isMaintenance:()=>personalDesktop.isBusy() });
 
 async function runUpdateCheck() {
   const r = await updater.applyKernelUpdate();
@@ -162,8 +163,15 @@ async function runUpdateCheck() {
   dialog.showMessageBox({ title: "MemoryOS 更新", type: "question", noLink: true, ...opts });
 }
 
+const personalDesktop=registerPersonalDesktop({readConfig,dataDir,getKernel:()=>KERNEL,getPort:()=>port,getToken:()=>TOKEN,shell,core,updater,restartMcp,getMainWindow:win.getMainWindow,log,isIngestRunning:()=>sched.stats().locks['自动采集']?.running});
 /* ---------- 启动编排 ---------- */
-async function finalizeStartup(cfg) {
+let startupPromise = null;
+function finalizeStartup(cfg) {
+  if (!startupPromise) startupPromise = startDesktop(cfg);
+  return startupPromise;
+}
+async function startDesktop(cfg) {
+  if (!port) port = await findFreePort(8787);
   fs.mkdirSync(dataDir(), { recursive: true });
   fs.mkdirSync(path.join(dataDir(), "data"), { recursive: true });
 
@@ -171,6 +179,19 @@ async function finalizeStartup(cfg) {
   TOKEN = token.ensureToken();
   log(`访问令牌就绪（${TOKEN.slice(0, 6)}…，见 data/token）`);
   log(`运行时版本: electron=${process.versions.electron} chrome=${process.versions.chrome}`);
+  win.prepareMainWindow({ port, TOKEN, shell, isQuitting: () => quitting,readPreferences:()=>readConfig()?.preferences||{},onQuit:()=>{quitting=true;app.quit();} });
+  win.createMainWindow();
+  // ★ 2026-10-15 核心发现协议（必须在 TOKEN 就绪**之后**）：health 校验带 MEMORY_TOKEN，
+  //   TOKEN 未初始化时必然 401 误判 null——lifecycle 层 discover 曾因此在 TOKEN 前调用，
+  //   端口走了 findFreePort（8789）而复用核心在 8788 → 窗口 ERR_CONNECTION_REFUSED 60s
+  //   直至兜底错误页（c5a27c9 的实测事故）。故 discover 归位到此，命中即覆盖端口。
+  {
+    const discovered = await core.discoverHealthyCore();
+    if (discovered) {
+      port = discovered.port;
+      log(`复用已在服务的核心（pid=${discovered.pid} port=${discovered.port}），端口已指向它`);
+    }
+  }
   if (!readConfig()) {
     fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2), "utf8");
     log("已写入配置:", cfg.llmUrl ? `LLM=${cfg.llmUrl}` : "LLM 提炼：未配置（跳过）");
@@ -178,8 +199,7 @@ async function finalizeStartup(cfg) {
   // ★ 托盘提前：先建托盘/窗口让 Windows 及时注册图标，再 await startCore()。
   //   原来的顺序（startCore → createMainWindow → createTray）在 gram 回填等启动耗时超过约 3s 时，
   //   Windows 11 会把来不及注册的托盘图标静默丢弃，导致托盘图标始终不出现。
-  win.prepareMainWindow({ port, TOKEN, shell, isQuitting: () => quitting });
-  win.createMainWindow();
+  win.prepareMainWindow({ port, TOKEN, shell, isQuitting: () => quitting,readPreferences:()=>readConfig()?.preferences||{},onQuit:()=>{quitting=true;app.quit();} });
   const trayOpts = {
     shell, port, TOKEN, log, trayIconPath: ensureTrayIconPath(),
     onShowMain: () => win.showMain(),
@@ -206,8 +226,11 @@ async function finalizeStartup(cfg) {
   try {
     await core.startCore();
   } catch (e) {
+    // ★ 2026-10-15：失败路径必须**干净退出**——原 app.quit() 在托盘常驻语义
+    //   （window-all-closed 空实现）下会挂起，残留无窗口/1MB 僵尸壳（19:21 实例实证）。
+    //   改 app.exit(1)：先弹框告知，再强清整个进程（含所有子进程）。
     dialog.showMessageBox({ type: "error", title: "MemoryOS", message: String(e.message || e) });
-    app.quit();
+    app.exit(1);
     return;
   }
   log("内核启动完成，通知主窗口加载页面");
@@ -219,9 +242,11 @@ async function finalizeStartup(cfg) {
 /* ---------- IPC（sender 校验在 security/ipc.js） ---------- */
 registerIpc({
   getWelcomeWin: () => welcome.getWelcomeWindow(),
+  getMainWin: () => win.getMainWindow(),
+  getPort: () => port,
   onSaveConfig: (cfg) => {
     welcome.closeWelcomeWindow();
-    finalizeStartup(cfg);
+    finalizeStartup(cfg).catch((e) => { log("首次配置启动失败:", e.message); dialog.showErrorBox("MemoryOS 启动失败", e.message); });
   },
 });
 

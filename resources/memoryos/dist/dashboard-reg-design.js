@@ -67,6 +67,11 @@ function validateUrl(raw) {
     let u;
     try { u = new URL(String(raw ?? "").trim()); }
     catch { return { status: 400, error: "URL 无法解析（请带 http:// https:// 或 file:/// 前缀）" }; }
+    // ★ 2026-11-16 安全加固（M-4）：file:// 默认拒绝 —— 该通道会在目标页注入脚本
+    //   （Page.addScriptToEvaluateOnNewDocument）并回传 DOM/截图，等于把本机任意 HTML/文本
+    //   变成可读内容（本地文件读取）。确需本地原型调试时显式设 MEMORY_DESIGN_FILE=1 才放行。
+    if (u.protocol === "file:" && process.env.MEMORY_DESIGN_FILE !== "1")
+        return { status: 400, error: "file:// 已被安全策略拒绝（如需本地原型调试，显式设置 MEMORY_DESIGN_FILE=1 后重启内核）" };
     if (!["http:", "https:", "file:"].includes(u.protocol))
         return { status: 400, error: `不支持的协议 ${u.protocol}（仅 http/https/file）` };
     if (u.protocol === "file:" && !/^file:\/\/\//.test(u.href))
@@ -194,7 +199,7 @@ const PICKER_SOURCE = String.raw`
 `;
 
 export function registerDesign(app, ctx) {
-    const { db, RESTRICTED } = ctx;
+    const { db, RESTRICTED, execSurfaceEnabled } = ctx;
     /** 全局单会话：{child, client, port, tmpDir, url, picks, lastCap, closed} */
     let S = null;
 
@@ -235,6 +240,9 @@ export function registerDesign(app, ctx) {
     // ── POST /api/design/open {url}：起 Chrome + CDP 拾取器（单会话，重复 → 409） ──
     app.post("/api/design/open", async (req, reply) => {
         if (RESTRICTED) return reply.code(403).send({ ok: false, error: "受限模式：由系统统一派发" });
+        // ★ 2026-11-16（H-2）：执行面总开关 —— 该通道会拉起 Chrome 进程。
+        if (typeof execSurfaceEnabled === "function" && !execSurfaceEnabled())
+            return reply.code(403).send({ ok: false, error: "执行面已关闭（设置 → 安全 → Agent 执行能力）：开启后才能使用设计模式" });
         if (S) return reply.code(409).send({ ok: false, error: "已有设计会话，请先关闭（POST /api/design/close）", url: S.url });
         const uv = validateUrl(req.body?.url);
         if (uv.status) return reply.code(uv.status).send({ ok: false, error: uv.error });

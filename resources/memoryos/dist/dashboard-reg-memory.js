@@ -1,54 +1,94 @@
+import { registerMemoryBatch } from "./dashboard-memory-batch.mjs";
 /** T8（P2-3）：buildApp 路由域拆分 —— memory 域。
  * handler 自 dashboard.js 原行 500-669 逐字搬移，注册顺序不变；响应体逐字节一致。
- * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, updateMemory, queryByType, rejectMemory, SECTOR_KEYS } from "./db.js";
+ * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。
+ *
+ * ★ 2026-10-15（架构收敛第 2 条 · 批次 C）：memory 域 **6 条路由改为薄适配** ——
+ *   领域逻辑收进 memory-domain.js，经统一注册表（ops-registry.js 的 `memory.create` / `memory.update` /
+ *   `memory.delete` / `rules.list` / `embed.vectors` / `embed.recompute`）派发。
+ *   状态码 / body 结构 / 字段顺序 / 错误文案 / RESTRICTED 逐字节不变；**零新增路由**。
+ *   领域层不静态 import ML / 进程层（getEmbedder / reembedStale / syncRules 经 ctx 注入），
+ *   故此处仅注册调度 + 保留 HTTP 协议校验（400/404/500/502/503 与文案例）。
+ *   另两条 task 路由（`GET /api/tasks`、`POST /api/task`）见批次 A/B 注释，本批**一行未动**。 */
+// `SECTOR_KEYS` 供 PUT 的 sector 枚举校验（传输层）；`writeMemory/logUsage/logDaemon` 供 `POST /api/task`
+// （批次 B 的 task 域薄适配）经 ctx 注入 task-domain.js —— 本批 memory 域的领域逻辑已不再直接调用它们。
+import { SECTOR_KEYS, writeMemory, readMemory, logUsage, logDaemon } from "./db.js";
+import { memoryFields, ALL_PROJECTS } from "./memory-fields.js";
+import { metadataForMemory } from "./memory-metadata.js";
+import { hybridSearch, archivedSearch } from "./search.js";
 import { reembedStale } from "./daemon.js";
 import { syncRules } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
-import { TASK_HEAD_RE_STATES, TASK_HEAD_RE, TASK_NORMALIZE, TASK_DEP_RE, TASK_BUCKETS } from "./dashboard-task-util.js";
-/** ★ 批次⑦X2（2026-09-23）：规则增删改后自动刷新注入段（幂等替换，5 个目标文件，毫秒级）。
- *  失败绝不阻断业务请求 —— 记审计留痕，下次规则变更或手动同步再自愈。 */
-function autoSyncRules(db, reason) {
-    try {
-        syncRules(db);
-        logDaemon(db, { task: "sync-rules", op: "auto-resync", operator: "system:auto", detail: `规则变更自动同步（${reason}）` });
-    }
-    catch (e) {
-        try {
-            logDaemon(db, { task: "sync-rules", op: "auto-resync-failed", operator: "system:auto", detail: String(e?.message ?? e) });
-        }
-        catch { /* 审计失败也不阻断 */ }
-    }
-}
+// ★ 2026-10-14（架构重构第 2 条 · 批次 A）：任务看板的领域逻辑（头解析/归一/依赖/结论/blocked/分桶）
+//   已抽到 task-domain.js —— 领域逻辑单一真相源（MCP task_next 后续批次再收敛）。
+import { taskBoard } from "./task-domain.js";
+// ★ 2026-10-15（批次 B/C）：task 域与 memory 域均经注册表派发（invokeOp → 裸领域值 → 按各自协议包装）
+import { invokeOp } from "./ops-registry.js";
 export function registerMemory(app, ctx) {
+    registerMemoryBatch(app, ctx, { syncRules });
     const { db, restricted, RESTRICTED, clampLimit, ALLOWED_TYPES } = ctx;
+    /** ★ 批次 C：memory 域领域层依赖（**最小集**，按各领域函数实际用到者给）——
+     *  `getEmbedder`（embed.js：会拉起 543MB ONNX 模型面）、`reembedStale`（daemon.js）、
+     *  `syncRules`（sync-rules.js：会写 `os.homedir()` 下的用户真实规则文件）三者一律经 ctx 注入，
+     *  领域层不静态 import；`ALLOWED_TYPES` 复用 dashboard.js 顶层常量（不在领域层另造白名单）。
+     *  本域 6 条均不使用调用方身份（写入方恒为 `human:dashboard`），故无「调用时解析身份」的 accessor。 */
+    const MEMORY_CTX = { db, getEmbedder, ALLOWED_TYPES, syncRules };  // memory.create / memory.update / memory.delete / rules.list
+    const EMBED_CTX = { getEmbedder };                                  // embed.vectors
+    const EMBED_RECOMPUTE_CTX = { db, reembedStale };                   // embed.recompute
+    const withMetadata = row => {
+        const metadata=metadataForMemory(db,row.id);
+        return {...row,fields:memoryFields(row.content),metadata,keywords:metadata.keywords.map(t=>t.term),tags:metadata.tags.map(t=>t.term)};
+    };
+    app.get("/api/memory/search", async (req,reply) => {
+        const q=req.query??{}, query=String(q.query??'').trim();
+        if(!query || query.length>2000)return reply.code(400).send({ok:false,error:'query 须为1～2000字'});
+        const project=String(q.project??ALL_PROJECTS).trim()||ALL_PROJECTS;
+        if(project.length>160)return reply.code(400).send({ok:false,error:'project 过长'});
+        const limit=q.limit===undefined?20:Number(q.limit);
+        if(!Number.isInteger(limit)||limit<1||limit>100)return reply.code(400).send({ok:false,error:'limit 须为1～100整数'});
+        const status=String(q.status??'').trim();
+        if(status&&!['active','trial','archived'].includes(status))return reply.code(400).send({ok:false,error:'仅可检索 active、trial、archived 状态'});
+        const type=q.type?String(q.type):undefined, sector=q.sector?String(q.sector):undefined;
+        if(type&&!ALLOWED_TYPES.includes(type))return reply.code(400).send({ok:false,error:'type 非法'});
+        if(sector&&!SECTOR_KEYS.includes(sector))return reply.code(400).send({ok:false,error:'sector 非法'});
+        const embedder=await getEmbedder();
+        const params={query,project,limit:limit+1,type,sector,simFloor:0.76,relRatio:0.5};
+        const hot=status==='archived'?[]:await hybridSearch(db,embedder,{...params,statuses:status?[status]:['active','trial']});
+        const cold=status&&status!=='archived'?[]:await archivedSearch(db,embedder,params);
+        const ids=new Set(),combined=[...hot,...cold].filter(r=>!ids.has(r.id)&&ids.add(r.id));
+        // 综合搜索与MCP首页同样为归档保留名额；显式归档筛选仍按完整limit分页展示。
+        const coldPage=!status&&hot.length?cold.filter(c=>!hot.some(h=>h.id===c.id)).slice(0,Math.min(3,Math.max(0,limit-1))):[];
+        const page=coldPage.length?[...hot.slice(0,limit-coldPage.length),...coldPage]:combined.slice(0,limit);
+        const rows=page.map(withMetadata);
+        return {ok:true,query,project,total:rows.length,returned:rows.length,rows,stats:hot._searchStats??null,
+            truncated:combined.length>limit||Boolean(hot._searchStats?.limitSliced),searchable_statuses:status?[status]:['active','trial','archived']};
+    });
+    app.get("/api/memory/:id", async(req,reply)=>{
+        const id=Number(req.params.id);
+        if(!Number.isSafeInteger(id)||id<1)return reply.code(400).send({ok:false,error:'id 非法'});
+        const row=readMemory(db,id);
+        if(!row)return reply.code(404).send({ok:false,error:'记忆不存在'});
+        return {ok:true,...withMetadata(row)};
+    });
+    // ── 人工新建记忆（P1-1：新建即嵌入向量；embed 失败降级不阻塞建库）──
+    // ★ 批次 C：领域计算已收进 memory-domain.js::createManualMemory（op `memory.create`）；
+    //   content 非空 / sensitivity 枚举两条 400 属 HTTP 协议校验，留在传输层，**顺序与改前一致**。
     app.post("/api/memory", async (req, reply) => {
-        const content = String(req.body?.content ?? "").trim();
-        if (!content)
+        const b = req.body ?? {};
+        const content = String(b.content ?? "");
+        if (!content.trim())
             return reply.code(400).send({ ok: false, error: "content 不能为空" });
-        const type = ALLOWED_TYPES.includes(req.body?.type) ? req.body.type : "experience";
-        const project = String(req.body?.project ?? "global").trim() || "global";
-        const sector = String(req.body?.sector ?? "").trim() || undefined;
-        const sensitivity = String(req.body?.sensitivity ?? "normal").trim() || "normal";
+        const sensitivity = String(b.sensitivity ?? "normal").trim() || "normal";
         if (!["normal", "private", "secret"].includes(sensitivity))
             return reply.code(400).send({ ok: false, error: "sensitivity 非法" });
-        // P1-1: 人工沉淀必须进语义路——新建即嵌入向量；embed 失败降级 null 不阻塞建库
-        let embedding = null;
-        try {
-            const [v] = await (await getEmbedder()).embedTexts([content]);
-            embedding = v ?? null;
-        }
-        catch {
-            embedding = null; // 嵌入暂不可用 → 建库照常，语义路下次 backfill 兜底
-        }
-        const row = writeMemory(db, { content, type, agent: "human:dashboard", agent_fpath: null, project, embedding, confidence: 0.8, sector, sensitivity });
-        logUsage(db, { memory_id: row.id, event: "write", reader_agent: "human:dashboard", writer_agent: "human:dashboard", project: row.project });
-        logDaemon(db, { task: "manual-write", op: "write", memory_id: row.id, operator: "human:dashboard", detail: `Dashboard 手动新建记忆（${type}）${embedding ? "（已嵌入）" : "（未嵌入）"}` });
-        if (type === "rule")
-            autoSyncRules(db, `新建规则 #${row.id}`); // ★ 批次⑦X2：新建规则即自动注入刷新
-        return { ok: true, id: row.id };
+        const r = await invokeOp("memory.create", b, MEMORY_CTX);
+        return { ok: true, id: r.id };
     });
     // —— 编辑记忆：content/type 更新，同步 FTS（embedding 保持原值，v0.3 约定） ——
+    // ★ 批次 C：领域计算已收进 memory-domain.js::updateMemoryRow（op `memory.update`）；
+    //   id → type → sector 三条 400 属协议校验，留在传输层（**顺序与改前一致**）；
+    //   db 层写被拒（如 `sector:""` 写 NULL 撞 memories.sector NOT NULL）由领域层以 `{ error }` 哨兵回传，
+    //   此处映射 400 且文案逐字同改前（原实现直接把 `String(e)` 当 400 文案回给前端）。
     app.put("/api/memory/:id", async (req, reply) => {
         const id = Number(req.params.id);
         if (!Number.isFinite(id) || id <= 0)
@@ -59,26 +99,30 @@ export function registerMemory(app, ctx) {
         const sector = req.body?.sector !== undefined ? String(req.body.sector).trim() : undefined;
         if (sector !== undefined && sector !== "" && !SECTOR_KEYS.includes(sector))
             return reply.code(400).send({ ok: false, error: "sector 非法" });
-        let row;
-        try {
-            row = updateMemory(db, id, { content: req.body?.content, type, sector });
+        // ★ 2026-11-14（个人版并发编辑）：可选版本校验。不带 expectedVersion → 老行为不变；
+        //   带 → 版本漂移返回 409 + 当前版本与正文，供前端提示「别人改过了」并对照。
+        const rawExpected = req.body?.expectedVersion;
+        let expectedVersion;
+        if (rawExpected !== undefined && rawExpected !== null) {
+            expectedVersion = Number(rawExpected);
+            if (!Number.isInteger(expectedVersion) || expectedVersion < 1)
+                return reply.code(400).send({ ok: false, error: "expectedVersion 必须是正整数" });
         }
-        catch (e) {
-            return reply.code(400).send({ ok: false, error: String(e) });
-        }
-        if (!row)
+        const r = await invokeOp("memory.update", { id, content: req.body?.content, type, sector, inject: req.body?.inject, expectedVersion, keywords:req.body?.keywords, tags:req.body?.tags }, MEMORY_CTX);
+        if (r?.conflict)
+            return reply.code(409).send({
+                ok: false,
+                error: `这条记忆已被其他窗口改过（当前第 ${r.currentVersion} 版），你的修改没有保存`,
+                currentVersion: r.currentVersion,
+                currentContent: r.currentContent,
+                currentType: r.currentType,
+                currentSector: r.currentSector,
+            });
+        if (r?.error)
+            return reply.code(400).send({ ok: false, error: r.error });
+        if (!r)
             return reply.code(404).send({ ok: false, error: "记忆不存在" });
-        // ★ 批次⑦X2：inject 开关写入（规则强制注入）——只动本列，不碰 FTS/向量
-        const injectChanged = req.body?.inject !== undefined;
-        if (injectChanged) {
-            const inj = req.body.inject ? 1 : 0;
-            db.prepare(`UPDATE memories SET inject=? WHERE id=?`).run(inj, row.id);
-        }
-        logDaemon(db, { task: "manual-edit", op: "edit", memory_id: row.id, operator: "human:dashboard", detail: "Dashboard 手动编辑记忆" });
-        // ★ 批次⑦X2：规则内容/类型/注入开关变更 → 自动刷新注入段
-        if (row.type === "rule" || type !== undefined || injectChanged)
-            autoSyncRules(db, `编辑 #${row.id}${injectChanged ? `（inject=${req.body.inject ? 1 : 0}）` : ""}`);
-        return { ok: true, id: row.id };
+        return { ok: true, id: r.id };
     });
     /* ★ 一致性⑥（2026-09-19）：OpenAI 兼容 /v1/embeddings 共享嵌入端点 —— 内核侧常驻真向量嵌入
      *  （Electron 注入 EMBED_MODE=local，bge-m3 已在本进程加载）。MCP 侧 agent 配
@@ -86,34 +130,30 @@ export function registerMemory(app, ctx) {
      *  即共享同一份真向量语义：一份模型全端共享，agent 不必各载各的模型（省 N×GB 内存与启动耗时），
      *  并从此杜绝 MCP 侧 fake 向量混入真向量语料（半真半假比全假更糟）。
      *  鉴权：全局访问控制钩子已覆盖（?token= / x-memory-token / cookie / Bearer 任一）。
-     *  响应与 OpenAI /v1/embeddings 同形（{object:"list", data:[{index, embedding}]}），embed.js ApiEmbedder 直读。 */
+     *  响应与 OpenAI /v1/embeddings 同形（{object:"list", data:[{index, embedding}]}），embed.js ApiEmbedder 直读。
+     * ★ 批次 C：领域计算已收进 memory-domain.js::serveEmbeddings（op `embed.vectors`）；
+     *  input 校验（400）与 502/503 的**文案**属传输层协议行为，此处按领域哨兵 `{ fail }` 映射状态码。 */
     app.post("/v1/embeddings", async (req, reply) => {
         const body = req.body ?? {};
         const input = (Array.isArray(body.input) ? body.input : [body.input ?? ""]).map((t) => String(t ?? ""));
         if (!input.length || input.some((t) => !t.trim()))
             return reply.code(400).send({ ok: false, error: "input-required", hint: "body.input 须为非空字符串或非空字符串数组" });
-        try {
-            const embedder = await getEmbedder();
-            if (embedder.mode === "fake")
-                return reply.code(503).send({ ok: false, error: "embedder-fake", hint: "内核未以 EMBED_MODE=local/api 运行：宁可不服务，也不产出伪向量污染真向量语料（⑥纪律）" });
-            const vectors = await embedder.embedTexts(input);
-            return {
-                object: "list",
-                model: String(body.model ?? embedder.modelName ?? embedder.mode),
-                data: vectors.map((v, i) => ({ object: "embedding", index: i, embedding: Array.from(v) })),
-            };
-        }
-        catch (e) {
-            return reply.code(502).send({ ok: false, error: `embed-failed: ${e instanceof Error ? e.message : String(e)}` });
-        }
+        const r = await invokeOp("embed.vectors", { input, model: body.model }, EMBED_CTX);
+        if (r?.fail === "fake")
+            return reply.code(503).send({ ok: false, error: "embedder-fake", hint: "内核未以 EMBED_MODE=local/api 运行：宁可不服务，也不产出伪向量污染真向量语料（⑥纪律）" });
+        if (r?.fail === "error")
+            return reply.code(502).send({ ok: false, error: `embed-failed: ${r.message}` });
+        return r;
     });
     // ★ P0-2：手动触发单条记忆向量重算
+    // ★ 批次 C：领域计算已收进 memory-domain.js::recomputeEmbeddings（op `embed.recompute`）；
+    //   id 校验（400）与「reembedStale 抛错 → 500」两条属传输层协议行为。
     app.post("/api/embed/recompute/:id", async (req, reply) => {
         const id = Number(req.params.id);
         if (!Number.isFinite(id) || id <= 0)
             return reply.code(400).send({ ok: false, error: "id 非法" });
         try {
-            const r = await reembedStale(db, 1);
+            const r = await invokeOp("embed.recompute", { id }, EMBED_RECOMPUTE_CTX);
             return { ok: true, done: r.done, failed: r.failed, pending: r.pending };
         }
         catch (e) {
@@ -121,69 +161,32 @@ export function registerMemory(app, ctx) {
         }
     });
     // —— 删除记忆/规则：软删 status='rejected'，审计留痕 ——
+    // ★ 批次 C：领域计算已收进 memory-domain.js::rejectMemoryRow（op `memory.delete`）；id 校验（400）留传输层。
     app.delete("/api/memory/:id", async (req, reply) => {
         const id = Number(req.params.id);
         if (!Number.isFinite(id) || id <= 0)
             return reply.code(400).send({ ok: false, error: "id 非法" });
-        const old = db.prepare(`SELECT id, type FROM memories WHERE id=?`).get(id);
-        if (!old)
+        const r = await invokeOp("memory.delete", { id }, MEMORY_CTX);
+        if (!r)
             return reply.code(404).send({ ok: false, error: "记忆不存在" });
-        rejectMemory(db, id, "human:dashboard");
-        if (old.type === "rule")
-            autoSyncRules(db, `删除规则 #${id}`); // ★ 批次⑦X2：删规则即从注入段移除
-        return { ok: true, id };
+        return { ok: true, id: r.id };
     });
     // —— 规则列表：type='rule'，默认只列 active（删除即消失，审计留痕另查） ——
+    // ★ 批次 C：领域计算已收进 memory-domain.js::listRules（op `rules.list`）；
+    //   limit 的 `clampLimit(query.limit, 500, 2000)` 属**传输口径**（与改前同一函数、同一默认值、同一上限）。
     app.get("/api/rules", async (req) => {
         const limit = clampLimit(req.query.limit, 500, 2000);
-        const status = (req.query.status ?? "").trim() || "active"; // 默认 active
-        const rows = queryByType(db, "rule", { limit, status }).map((r) => ({
-            id: r.id,
-            content: r.content,
-            type: r.type,
-            agent: r.agent,
-            project: r.project,
-            status: r.status,
-            confidence: r.confidence,
-            eff: r.eff_confidence ?? r.confidence,
-            hits: r.hit_count,
-            created_at: r.created_at,
-            inject: r.inject ? 1 : 0,   // ★ 批次⑦X2：强制注入开关（规则页展示）
-        }));
-        return { total: rows.length, rows };
+        return await invokeOp("rules.list", { limit, status: req.query.status }, MEMORY_CTX);
     });
     // —— 任务看板：解码 type='task' 记忆约定头 → 结构化七态（v1.1 状态机：多 Agent 协同可视化）——
     // 解码与 server.js taskHead 同源：`[task][assignee:X][status:<七态>]`；存量 open/claimed/done 归一
+    // ★ 2026-10-14（架构重构第 2 条 · 批次 A）：解析/归一/依赖/结论/blocked/分桶 已抽到 task-domain.js ——
+    //   领域逻辑单一真相源；本路由只保留 limit 入参 clamp（传输适配），行为逐字节不变。
     app.get("/api/tasks", async (req) => {
         const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500);
-        const raw = queryByType(db, "task", { limit: limit * 3, status: "active" });
-        const rows = raw.map((r) => {
-            const m = r.content.match(TASK_HEAD_RE);
-            const am = r.content.match(/\[assignee:([^\]]*)\]/);
-            const cm = r.content.match(/→ 结论\(([^)]*)\)：([\s\S]*)$/);
-            const dm = r.content.match(TASK_DEP_RE);
-            const rawStatus = m ? m[1] : "unknown";
-            const status = rawStatus === "unknown" ? "unknown" : (TASK_NORMALIZE[rawStatus] ?? rawStatus);
-            const assignee = am ? am[1] : null;
-            const deps = dm ? dm[1].split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)) : [];
-            const body = r.content
-                .replace(TASK_HEAD_RE, "")
-                .replace(/\[plan:[^\]]+\]\[taskid:[^\]]+\]/g, "")
-                .replace(TASK_DEP_RE, "")
-                .replace(/→ 结论\(.*$/s, "")
-                .trim();
-            return { id: r.id, status, assignee, submittedBy: r.agent, deps, blocked: false, body: body.slice(0, 200), conclusion: cm ? cm[2].trim().slice(0, 200) : null, concludedBy: cm ? cm[1] : null, confidence: r.confidence, created_at: r.created_at };
-        });
-        const doneIds = new Set(rows.filter((t) => t.status === "done").map((t) => t.id));
-        // 补 blocked 标记：pending 但依赖未全 done
-        rows.forEach((t) => { t.blocked = t.status === "pending" && t.deps.some((d) => !doneIds.has(d) && rows.some((x) => x.id === d)); });
-        const buckets = {};
-        TASK_BUCKETS.forEach((b) => { buckets[b] = []; });
-        for (const t of rows) {
-            if (buckets[t.status])
-                buckets[t.status].push(t);
-        }
-        return { total: rows.length, ...buckets };
+        // ★ 2026-11-14（个人版第 4 项）：原先 limit*3 取数窗口把超出部分静默吞掉，total 只等于窗口内行数。
+        //   现由 taskBoard 额外下发 totalAll / shown / truncated / missing / hint，老字段（total 与七桶）不变。
+        return taskBoard(db, { limit, status: "active" });
     });
     // —— 任务看板：人工创建任务（约定头由服务端拼装，避免前端拼错导致任务不显示）——
     app.post("/api/task", async (req, reply) => {
@@ -193,40 +196,9 @@ export function registerMemory(app, ctx) {
         const title = String(b.title ?? "").trim();
         if (!title)
             return reply.code(400).send({ ok: false, error: "任务标题不能为空" });
-        const statusRaw = String(b.status ?? "pending").trim();
-        const status = TASK_BUCKETS.includes(statusRaw) ? statusRaw : "pending";
-        const assignee = String(b.assignee ?? "").trim() || "unassigned";
-        const deps = Array.isArray(b.depends)
-            ? b.depends.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
-            : [];
-        const summary = String(b.summary ?? "").trim();
-        const depTag = deps.length ? `[depends:${deps.join(",")}]` : "";
-        const content = `[task][assignee:${assignee}][status:${status}]${depTag} ${title}${summary ? "\n\n" + summary : ""}`;
-        let embedding = null;
-        try {
-            const [v] = await (await getEmbedder()).embedTexts([content]);
-            embedding = v ?? null;
-        }
-        catch {
-            embedding = null; // 嵌入暂不可用 → 建任务照常
-        }
-        const row = writeMemory(db, {
-            content,
-            type: "task",
-            agent: "human:dashboard",
-            agent_fpath: null,
-            project: String(b.project ?? "global").trim() || "global",
-            embedding,
-            confidence: 0.8,
-        });
-        logUsage(db, { memory_id: row.id, event: "write", reader_agent: "human:dashboard", writer_agent: "human:dashboard", project: row.project });
-        logDaemon(db, {
-            task: "manual-task",
-            op: "create",
-            memory_id: row.id,
-            operator: "human:dashboard",
-            detail: `看板新建任务 #${row.id}（${status} · ${assignee}）：${title.slice(0, 60)}`,
-        });
-        return { ok: true, id: row.id, status, assignee, deps };
+        // ★ 2026-10-15（架构重构第 2 条 · 批次 B）：入参校验之后的领域逻辑（content 拼装 / embedding / 写库）
+        //   已收进 task-domain.js::createTaskMemory（逐字搬出）；本路由只做**薄适配** —— 经注册表派发后原样返回领域值，
+        //   响应形状 / 文案 / 状态码逐字节不变。RESTRICTED 门禁与「标题非空」400 属 HTTP 协议行为，留在传输层。
+        return await invokeOp("task.create", b, { db, writeMemory, logUsage, logDaemon, getEmbedder });
     });
 }

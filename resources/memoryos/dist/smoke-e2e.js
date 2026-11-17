@@ -1,7 +1,7 @@
 import { openDb, writeMemory, readMemory, applyArbitration, undoLastArbitration, } from "./db.js";
 import { buildPlan, applyPlan } from "./daemon.js";
 import { recordRegression, readRecords, replayDecision } from "./regress.js";
-import { hybridSearch } from "./search.js";
+import { hybridSearch, archivedSearch } from "./search.js";
 import { getEmbedder } from "./embed.js";
 import { buildApp } from "./dashboard.js";
 import os from "node:os";
@@ -122,6 +122,21 @@ try {
     ok("E6 jsonl 有裁决记录", recs.length === 1, `rec=${recs.length}`);
     const rep = await replayDecision(recs[0], emb);
     ok("E6 jsonl 可回放（重算判定通过）", rep.pass, `sim=${rep.sim.toFixed(3)} auto=${rep.auto_action}`);
+    /* ================= E7 冷层兜底（归档区可搜）：archivedSearch 召回 archived；hybridSearch 契约不变 ================= */
+    // 用户红线「旧记忆不清掉、后续可能用到」的落地：归档条不再"搜不到"，但仍**不改** hybridSearch 默认契约。
+    const a1 = await w("冷层样本：归档区旧部署脚本要点 alpha-deploy-001");
+    db.prepare(`UPDATE memories SET status='archived' WHERE id=?`).run(a1.id);
+    const cold1 = await archivedSearch(db, emb, { query: "冷层样本 归档区 旧部署脚本 alpha-deploy-001", project: "global", limit: 5 });
+    ok("E7 archivedSearch 可召回 archived 条并带 archived 标记", cold1.some((h) => h.id === a1.id && h.archived === true), `冷层召回 ${cold1.length} 条`);
+    ok("E7 冷层结果只认 archived（不会漏过滤）", cold1.every((h) => h.status === "archived"));
+    const hotIds2 = (await hybridSearch(db, emb, { query: "冷层样本 归档区 旧部署脚本 alpha-deploy-001", project: "global", limit: 10 })).map((h) => h.id);
+    ok("E7 hybridSearch 契约不变（默认只认 active/trial，不召回 archived）", !hotIds2.includes(a1.id), `在库召回 ${hotIds2.length} 条`);
+    // 冷层不召回 rejected/superseded：用 s1/s2 正文可命中的查询，若状态过滤失效就会命中
+    const coldNeg = (await archivedSearch(db, emb, { query: "旧版本构建说明 被否的模块方案", project: "global", limit: 5 })).map((h) => h.id);
+    ok("E7 冷层不召回 superseded/rejected", !coldNeg.includes(s1.id) && !coldNeg.includes(s2.id), `冷层召回 ${coldNeg.length} 条`);
+    // 冷层是"回忆"行为：不 bump hit_count（不改归档条治理基准，避免与 daemon 耦合）
+    const a1hits = db.prepare(`SELECT hit_count FROM memories WHERE id=?`).get(a1.id).hit_count;
+    ok("E7 冷层不 bump hit_count/last_seen_at", Number(a1hits) === 0, `hit_count=${a1hits}`);
     db.close();
     fs.rmSync(tmp, { force: true });
     fs.rmSync(jsonl, { force: true });

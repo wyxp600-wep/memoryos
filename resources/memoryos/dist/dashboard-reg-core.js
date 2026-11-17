@@ -1,3 +1,4 @@
+import { storageStatus } from './storage.js';
 /** T8（P2-3）：buildApp 路由域拆分 —— core 域。
  * handler 自 dashboard.js 原行 230-499 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
@@ -7,23 +8,25 @@ import { buildPlan, loadHygieneConfig } from "./daemon.js";
 import { resolveLlm } from "./agent-core.js";
 import { protectSecret, forgetSecret } from "./secret-store.js";
 import { probeEndpoint, normalizeLlmEndpoint, llmConf } from "./llm.js";
+import { checkEgressUrl } from "./net-guard.js"; // ★ 2026-11-16（M-7）：出站 URL 守卫
 import path from "node:path";
 export function registerCore(app, ctx) {
     const { db, restricted, RESTRICTED, clampLimit, dataDirOf, readDiskConfig, writeDiskConfig, DEFAULT_PORT } = ctx;
+    app.get('/api/storage', async () => ({ok:true,...storageStatus(db)}));
     // —— 概览：status 分布 + 总条数 + 类别分布 + secret 计数（R4：H4 仅计数不含内容）——
     app.get("/api/summary", async () => {
         const statusRows = db
-            .prepare(`SELECT status, COUNT(*) c FROM memories GROUP BY status ORDER BY c DESC`)
+            .prepare(`SELECT status, COUNT(*) c FROM knowledge_records GROUP BY status ORDER BY c DESC`)
             .all();
         const total = statusRows.reduce((s, r) => s + r.c, 0);
-        const effMin = db.prepare(`SELECT MIN(eff_confidence) m FROM memories WHERE status='active'`).get().m;
+        const effMin = db.prepare(`SELECT MIN(eff_confidence) m FROM knowledge_records WHERE status='active'`).get().m;
         // ★ P3：类别分布（9 类，缺省补 0）+ secret 计数（仅计数）
         const sectorRows = db
-            .prepare(`SELECT sector, COUNT(*) c FROM memories GROUP BY sector`)
+            .prepare(`SELECT sector, COUNT(*) c FROM knowledge_records GROUP BY sector`)
             .all();
         const sectorMap = new Map(sectorRows.map((r) => [r.sector, r.c]));
         const sector_distribution = SECTOR_KEYS.map((k) => ({ sector: k, count: sectorMap.get(k) ?? 0 }));
-        const secret_count = Number(db.prepare(`SELECT COUNT(*) c FROM memories WHERE sensitivity='secret'`).get().c);
+        const secret_count = Number(db.prepare(`SELECT COUNT(*) c FROM knowledge_records WHERE sensitivity='secret'`).get().c);
         return {
             total,
             statusRows,
@@ -67,6 +70,8 @@ export function registerCore(app, ctx) {
             })(),
             restricted: cfg.restricted === true,
             restrictedActive: RESTRICTED,
+            // ★ 2026-10-14（架构重构 1b 收口）：MCP 模式（direct=直连 / shim=薄转发）；缺省（字段不存在）= direct
+            mcpMode: cfg.mcpMode === "shim" ? "shim" : "direct",
             port,
             dataDir: dataDirOf(),
             dbPath,
@@ -115,6 +120,17 @@ export function registerCore(app, ctx) {
         const restrictedChanged = typeof b.restricted === "boolean" && b.restricted !== (cfg.restricted === true);
         if (typeof b.restricted === "boolean")
             cfg.restricted = b.restricted;
+        // ★ 2026-10-14（架构重构 1b 收口）：MCP 模式（direct/shim）—— 只落 config.json 的 `mcpMode`；
+        //   ★ 生效时机：模式由 **MCP 客户端进程**在启动时读取（server.js::readMcpMode），故切换**只对
+        //     新开的 MCP 客户端会话生效** —— 已连接的 Agent 需重开会话。缺省（字段不存在）= direct，不写 null。
+        let mcpModeTouched = false;
+        if (b.mcpMode !== undefined) {
+            const v = String(b.mcpMode ?? "").trim().toLowerCase();
+            if (v !== "direct" && v !== "shim")
+                return reply.code(400).send({ ok: false, error: "mcpMode 须为 direct|shim" });
+            cfg.mcpMode = v;
+            mcpModeTouched = true;
+        }
         try {
             writeDiskConfig(cfg);
             // LLM 配置现已「现读」（llm.js llmConf / agent-core resolveLlm 都每次读 config.json）→ 即时生效
@@ -123,9 +139,11 @@ export function registerCore(app, ctx) {
                 ok: true,
                 restartRequired: restrictedChanged,
                 llmEffective: llmTouched ? "saved" : undefined,
-                note: restrictedChanged
-                    ? "已保存：LLM 配置即时生效；受限模式切换需重启内核"
-                    : "已保存，即时生效（无需重启内核）",
+                note: mcpModeTouched
+                    ? "已保存：MCP 模式切换只对新开的 MCP 客户端会话生效——已连接的 Agent 需重开会话"
+                    : restrictedChanged
+                        ? "已保存：LLM 配置即时生效；受限模式切换需重启内核"
+                        : "已保存，即时生效（无需重启内核）",
             };
         }
         catch (e) {
@@ -138,12 +156,16 @@ export function registerCore(app, ctx) {
         const cfg = readDiskConfig();
         const saved = await llmConf();
         const url = normalizeLlmEndpoint(String(b.llmUrl ?? "").trim() || cfg.llmUrl || saved.url);
+        // ★ 2026-11-16（M-7）：防 SSRF —— 拒绝云元数据/链路本地，私网默认拒绝（环回放行给本地 LLM）
+        const guard = checkEgressUrl(url);
+        if (!guard.ok)
+            return { ok: false, guarded: true, error: `拒绝出站探测：${guard.error}` };
         const model = String(b.llmModel ?? "").trim() || cfg.llmModel || saved.model;
         // 表单没填密钥 → 用已保存的（env 或解密）
         let key = String(b.llmKey ?? "").trim();
         if (!key)
             key = saved.key;
-        return probeEndpoint({ url, model, key }, Number(b.timeoutMs) || 15000);
+        return probeEndpoint({ url: guard.url, model, key }, Number(b.timeoutMs) || 15000);
     });
     // —— 记忆卫生建议（只读，不落库）：治理阈值 + 去重/归档候选，供前端"建议→人工确认"环 ——
     app.get("/api/hygiene/suggestions", async () => {
@@ -156,7 +178,7 @@ export function registerCore(app, ctx) {
         if (ids.length) {
             const ph = ids.map(() => "?").join(",");
             const rows = db
-                .prepare(`SELECT id, content, type FROM memories WHERE id IN (${ph})`)
+                .prepare(`SELECT id, content, type FROM main.knowledge_records WHERE id IN (${ph})`)
                 .all(...ids);
             rows.forEach((r) => contentMap.set(Number(r.id), { content: r.content, type: r.type }));
         }
@@ -193,7 +215,7 @@ export function registerCore(app, ctx) {
             withTx(db, () => {
                 for (const id of archiveIds) {
                     // 归档前检：仅 active 才动，避免重复/已不存在项
-                    const row = db.prepare(`SELECT status FROM memories WHERE id=?`).get(id);
+                    const row = db.prepare(`SELECT status FROM main.knowledge_records WHERE id=?`).get(id);
                     if (!row || row.status !== "active")
                         continue;
                     archiveMemory(db, id);
@@ -201,7 +223,7 @@ export function registerCore(app, ctx) {
                     archived++;
                 }
                 for (const m of merges) {
-                    const lr = db.prepare(`SELECT status FROM memories WHERE id=?`).get(m.loser);
+                    const lr = db.prepare(`SELECT status FROM main.knowledge_records WHERE id=?`).get(m.loser);
                     if (!lr || lr.status !== "active")
                         continue;
                     markMerged(db, m.loser, m.winner);
@@ -219,9 +241,12 @@ export function registerCore(app, ctx) {
     app.get("/api/funnel", async () => funnel(db, {}));
     app.get("/api/trend", async (req) => trend(db, { days: req.query.days ? Number(req.query.days) : 14 }));
     app.get("/api/top", async (req) => topMemories(db, { limit: clampLimit(req.query.limit, 10, 500) }));
+    // ★ 2026-10-18（用户报障「记忆显示的数量不对」）：limit 上限 500 → 2000。
+    //   前端徽标取的是返回数组长度，上限 500 会重演「假数字」（实测真实僵尸 622 条，徽标却显示 50）。
+    //   排序/口径不变，只放宽传输上限；调用方不传 limit 时默认值仍为 20（行为不变）。
     app.get("/api/zombies", async (req) => zombies(db, {
         days: req.query.days ? Number(req.query.days) : 30,
-        limit: clampLimit(req.query.limit, 20, 500),
+        limit: clampLimit(req.query.limit, 20, 2000),
     }));
     app.get("/api/cross-tool", async (req) => crossTool(db, { limit: clampLimit(req.query.limit, 20, 500) }));
     // —— 仲裁队列：pending-conflict 列表（含旧记忆内容） ——

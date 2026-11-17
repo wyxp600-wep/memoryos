@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "./db.js";
 import { hybridSearch } from "./search.js";
 import { getEmbedder, embedMode } from "./embed.js";
+import { recordsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MEMORY_ROOT = process.env.MEMORY_ROOT ?? "c:/Users/WYX/.trae-cn/memory";
 const DEFAULT_DB = path.join(ROOT, "data/memory.db");
@@ -77,7 +78,7 @@ function checkHitEnhanced(db, hitsText, keywords, mode) {
     // fake模式：二次扫描确认answer是否入库
     if (mode === "fake") {
         const inDb = keywords.some((kw) => {
-            const r = db.prepare("SELECT COUNT(*) c FROM memories WHERE status='active' AND content LIKE ?").get("%" + kw + "%");
+            const r = db.prepare(`SELECT COUNT(*) c FROM ${recordsFrom(db)} WHERE status='active' AND content LIKE ?`).get("%" + kw + "%");
             return r.c > 0;
         });
         if (inDb)
@@ -111,7 +112,7 @@ function lexSearchFuzzy(db, query, limit = 5) {
     if (terms.length === 0) {
         const rows = db
             .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at
-         FROM memories m WHERE m.status='active' AND m.content LIKE ? ORDER BY m.created_at DESC LIMIT ?`)
+         FROM ${recordsFrom(db, { alias: "m" })} WHERE m.status='active' AND m.content LIKE ? ORDER BY m.created_at DESC LIMIT ?`)
             .all("%" + query + "%", limit);
         return rows;
     }
@@ -121,7 +122,7 @@ function lexSearchFuzzy(db, query, limit = 5) {
     const params = [...topTerms.map((t) => "%" + t + "%"), limit];
     const rows = db
         .prepare(`SELECT m.id, m.content, m.type, m.agent, m.project, m.status, m.confidence, m.created_at
-       FROM memories m WHERE m.status='active' AND (${conditions}) ORDER BY m.created_at DESC LIMIT ?`)
+       FROM ${recordsFrom(db, { alias: "m" })} WHERE m.status='active' AND (${conditions}) ORDER BY m.created_at DESC LIMIT ?`)
         .all(...params);
     return rows;
 }

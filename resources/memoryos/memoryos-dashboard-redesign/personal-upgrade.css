@@ -1,0 +1,108 @@
+/* Personal edition: surfaces inherit the selected skin, including reduced motion. */
+:root{--mos-ease:cubic-bezier(.16,1,.3,1)}
+#settingsModal.mos-settings .modal{width:min(1100px,calc(100vw - 40px));height:min(810px,calc(100dvh - 48px));max-height:calc(100dvh - 48px);display:flex;flex-direction:column;overflow:hidden}
+#settingsModal.mos-settings .settings-layout{display:flex;flex:1;min-height:0;overflow:hidden}
+#settingsModal.mos-settings .settings-nav{width:194px;flex:0 0 194px;overflow:auto;padding:20px 12px;border-right:1px solid var(--border-glass);background:var(--bg-base);display:flex;flex-direction:column;gap:5px}
+#settingsModal.mos-settings .settings-nav button{font:inherit;text-align:left;white-space:normal;min-height:42px;padding:10px 14px;border-radius:var(--radius-sm,8px);border:1px solid transparent;background:transparent;color:var(--text-secondary);cursor:pointer}
+#settingsModal.mos-settings .settings-nav button.active{background:var(--c-primary-soft);color:var(--c-primary);font-weight:650}
+#settingsModal.mos-settings .settings-content{flex:1;overflow:auto;padding:24px 32px;min-width:0;scrollbar-gutter:stable}
+#settingsModal.mos-settings .settings-pane{max-width:760px}
+html[data-skin] #settingsModal.mos-settings .settings-desc,#settingsModal.mos-settings .settings-desc{display:block!important;font-size:13px;line-height:1.65;color:var(--text-muted);margin-top:5px;max-width:52ch}
+#settingsModal.mos-settings .settings-item{padding:17px 0;grid-template-columns:minmax(0,1fr) minmax(150px,40%);gap:12px 24px}
+#settingsModal.mos-settings .settings-section-title{font-size:18px;font-weight:650;line-height:1.4;margin-bottom:6px}
+.mos-settings .settings-section+.settings-section{padding-top:20px!important}
+.mos-settings .settings-name{font-size:14px;font-weight:550;line-height:1.6}
+.mos-settings input:not([type=checkbox]),.mos-settings select,.mos-settings textarea,.mos-dialog input,.mos-dialog select{font:inherit;width:100%;min-width:0;min-height:40px;border:1px solid var(--border-glass);background:var(--input-bg,var(--bg-elevated));color:var(--text-primary);border-radius:var(--radius-sm,8px);padding:9px 11px;box-sizing:border-box}
+.mos-settings input[type=checkbox]{width:36px;height:20px;accent-color:var(--c-primary);cursor:pointer;flex:none}
+.mos-settings textarea{resize:vertical;min-height:110px;line-height:1.65}
+.mos-settings .mos-full{grid-column:1/-1;justify-content:stretch!important}
+.mos-settings .mos-search{position:relative;max-width:320px;flex:1;margin:0 20px}
+.mos-settings .mos-search input{min-height:38px;font-size:13px;padding-left:12px}
+.mos-settings .modal-header{display:flex;align-items:center;gap:12px;padding:18px 24px!important;min-height:68px;box-sizing:border-box;flex:none}
+.mos-settings .modal-title{white-space:nowrap}
+.mos-settings .modal-close{order:3;flex:none}
+.mos-settings input[data-pref][type=checkbox],.mos-settings input[data-tuning][type=checkbox],.mos-settings #mosReflectOn{appearance:none;width:38px;height:22px;border-radius:20px;border:1px solid var(--border-glass);background:var(--bg-base);position:relative;transition:background-color 160ms ease;flex:none}
+.mos-settings input[data-pref][type=checkbox]::before,.mos-settings input[data-tuning][type=checkbox]::before,.mos-settings #mosReflectOn::before{content:'';position:absolute;width:16px;height:16px;top:2px;left:2px;border-radius:50%;background:var(--text-muted);transition:transform 160ms var(--mos-ease),background-color 160ms ease}
+.mos-settings input[data-pref][type=checkbox]:checked,.mos-settings input[data-tuning][type=checkbox]:checked,.mos-settings #mosReflectOn:checked{background:var(--c-primary);border-color:var(--c-primary)}
+.mos-settings input[data-pref][type=checkbox]:checked::before,.mos-settings input[data-tuning][type=checkbox]:checked::before,.mos-settings #mosReflectOn:checked::before{transform:translateX(16px);background:var(--primary-ink,#fff)}
+.mos-settings [data-source]{width:16px!important;height:16px!important}
+#settingsModal.mos-settings .settings-control input[data-pref][type=checkbox],#settingsModal.mos-settings .settings-control input[data-tuning][type=checkbox],#settingsModal.mos-settings #mosReflectOn{height:22px!important;min-height:22px!important;max-height:22px!important;min-width:38px!important;max-width:38px!important;flex-basis:38px!important;border-radius:20px!important}
+#settingsModal.mos-settings .settings-control input[data-pref][type=checkbox]:checked,#settingsModal.mos-settings .settings-control input[data-tuning][type=checkbox]:checked,#settingsModal.mos-settings #mosReflectOn:checked{background:var(--c-primary)!important;border-color:var(--c-primary)!important}
+.mos-settings .mos-savebar>button{flex:none;min-width:94px;white-space:nowrap}
+#settingsModal.mos-settings{transition:none!important}
+#settingsModal.mos-settings.mos-closing{opacity:0;transition:opacity 160ms ease!important}
+.mos-settings .mos-savebar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;border-top:1px solid var(--border-glass);background:var(--bg-card);flex:none;min-height:60px;box-sizing:border-box}
+.mos-status{font-size:13px;line-height:1.6;color:var(--text-muted);overflow-wrap:anywhere}
+.mos-status[data-error=true]{color:var(--danger)}
+.mos-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.mos-settings button,.mos-guide button,.mos-dialog button{font-family:inherit;cursor:pointer}
+.mos-section-intro{font-size:13px;color:var(--text-secondary);line-height:1.8;margin:4px 0 12px}
+.mos-inline-note{padding:12px 14px;border-left:3px solid var(--c-primary);background:var(--c-primary-soft);color:var(--text-primary);font-size:13px;line-height:1.75;margin:12px 0;overflow-wrap:anywhere}
+.mos-list{padding:0;margin:12px 0;list-style:none}
+.mos-list>li{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--border-glass);font-size:13px}
+.mos-list strong{font-size:14px;font-weight:600;display:block;line-height:1.5}
+.mos-list small{display:block;color:var(--text-muted);margin-top:4px;overflow-wrap:anywhere}
+.mos-source-row{display:flex;gap:12px;align-items:center;padding:9px 0;font-size:13px}
+.mos-source-row input{order:-1}
+.mos-empty{padding:18px 0;color:var(--text-muted);line-height:1.8;font-size:13px}
+.mos-filter-empty{padding:36px 0;line-height:1.8;color:var(--text-secondary)}
+.mos-dialog{width:min(540px,calc(100vw - 32px));max-height:calc(100dvh - 48px);padding:0;border:1px solid var(--border-glass);border-radius:var(--radius-lg,14px);color:var(--text-primary);background:var(--bg-card);box-shadow:0 24px 70px #0004;overflow:auto}
+.mos-dialog::backdrop{background:var(--surface-overlay,#10131b88)}
+.mos-dialog>header{padding:22px 26px;border-bottom:1px solid var(--border-glass);font-size:20px;font-weight:600}
+.mos-dialog .mos-dialog-body{padding:20px 26px;line-height:1.8}
+.mos-dialog footer{padding:16px 26px;border-top:1px solid var(--border-glass);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.mos-dialog label{display:block;font-size:13px;margin:0 0 16px}
+.mos-dialog label input,.mos-dialog label select{margin-top:6px}
+.mos-dialog p{margin:0;white-space:pre-line}
+.mos-guide{max-width:1120px;margin:0 auto;padding:8px 0 32px;color:var(--text-primary)}
+.mos-guide-header{max-width:720px;margin-bottom:30px}
+.mos-guide-header h2{font-family:var(--font-display,inherit);font-size:clamp(26px,3vw,40px);font-weight:700;letter-spacing:-.035em;line-height:1.3;margin:0 0 12px}
+.mos-guide-header p{font-size:15px;line-height:1.8;color:var(--text-secondary);margin:0;max-width:58ch}
+.mos-guide-layout{display:grid;grid-template-columns:216px minmax(0,1fr);border:1px solid var(--border-glass);border-radius:var(--radius-lg,14px);background:var(--bg-card);overflow:hidden;min-height:340px;height:var(--guide-available,520px);max-height:660px}
+.mos-guide-steps{background:var(--bg-base);padding:24px 14px;border-right:1px solid var(--border-glass);display:flex;flex-direction:column;gap:9px}
+.mos-guide-steps button{display:flex;align-items:center;gap:12px;text-align:left;background:transparent;border:1px solid transparent;border-radius:var(--radius-sm,8px);color:var(--text-secondary);font:inherit;padding:12px;min-height:56px;line-height:1.5}
+.mos-guide-steps button[aria-current=step]{background:var(--c-primary-soft);color:var(--c-primary);border-color:var(--border-glass);font-weight:650}
+.mos-step-number{display:grid;place-items:center;width:26px;height:26px;border:1px solid currentColor;border-radius:50%;font-size:12px;flex:none}
+.mos-guide-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.mos-guide-stage{padding:32px 36px;flex:1;min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable}
+.mos-guide-stage h3{font-size:24px;line-height:1.4;margin:0 0 12px;letter-spacing:-.02em}
+.mos-guide-stage p{font-size:14px;line-height:1.85;color:var(--text-secondary);max-width:64ch;margin:0 0 18px}
+.mos-guide-stage .mos-primary-copy{min-height:46px;padding:11px 22px;font-size:15px;font-weight:650}
+.mos-guide-stage select{display:block;width:min(100%,320px);padding:11px;border:1px solid var(--border-glass);border-radius:var(--radius-sm,8px);background:var(--bg-elevated);color:var(--text-primary);font:inherit;margin:16px 0}
+.mos-guide-stage pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.85 var(--font-body,inherit);background:var(--bg-base);padding:18px;border-radius:var(--radius-sm,8px);border:1px solid var(--border-glass);max-height:290px;overflow:auto;margin:14px 0}
+.mos-guide-stage details{margin-top:20px}.mos-guide-stage summary{font-size:13px;color:var(--text-secondary);cursor:pointer;padding:8px 0}
+.mos-guide-stage .mos-checks{display:flex;flex-direction:column;gap:12px;margin:22px 0}
+.mos-checks label{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.7;color:var(--text-secondary)}
+.mos-checks input{margin-top:4px;accent-color:var(--c-primary)}
+.mos-guide-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 36px;border-top:1px solid var(--border-glass);flex-wrap:wrap;flex:none}
+.mos-guide-links{display:grid;grid-template-columns:1fr 1fr;gap:0 24px;margin-top:20px}.mos-guide-links a{color:var(--c-primary);padding:16px 0;border-bottom:1px solid var(--border-glass);font-size:14px;text-decoration:none}
+.mos-guide-links small{display:block;margin-top:6px;color:var(--text-muted);line-height:1.7}
+.mos-settings :focus-visible,.mos-guide :focus-visible,.mos-dialog :focus-visible{outline:2px solid var(--c-primary);outline-offset:3px}
+@keyframes mos-enter{from{opacity:0;transform:translateY(10px) scale(.992)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes mos-content{from{opacity:.3;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes mos-exit{to{opacity:0;transform:translateY(6px) scale(.995)}}
+#settingsModal.mos-settings.show .modal,.mos-dialog[open]{animation:mos-enter 220ms var(--mos-ease)}
+#settingsModal.mos-settings.mos-closing .modal{animation:mos-exit 160ms ease-in forwards}
+.mos-guide-stage,.mos-settings .settings-pane:not([hidden]){animation:mos-content 140ms var(--mos-ease)}
+@media(max-width:760px){
+ #settingsModal.mos-settings .modal{width:calc(100vw - 20px);height:calc(100dvh - 20px);max-height:calc(100dvh - 20px)}
+ #settingsModal.mos-settings .settings-layout{flex-direction:column}
+ #settingsModal.mos-settings .settings-nav{width:auto;flex:0 0 auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border-glass);padding:8px;gap:4px;max-height:100px}
+ #settingsModal.mos-settings .settings-nav button{flex:none;white-space:nowrap;padding:8px 12px}
+ #settingsModal.mos-settings .settings-content{padding:20px}
+ #settingsModal.mos-settings .settings-item{grid-template-columns:minmax(0,1fr);gap:10px}
+ #settingsModal.mos-settings .settings-control{justify-content:flex-start;width:100%}
+ #settingsModal.mos-settings .modal-header{flex-wrap:wrap;padding:14px 18px!important;gap:8px}
+ .mos-settings .mos-search{order:3;flex-basis:100%;max-width:none;margin:0}
+ .mos-settings .modal-close{margin-left:auto;order:2}
+ .mos-guide-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+ .mos-guide-steps{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border-glass);padding:10px}
+ .mos-guide-steps button{flex:none;font-size:12px;padding:8px;min-height:40px;gap:8px}
+ .mos-step-number{width:22px;height:22px}
+ .mos-guide-stage{padding:24px 20px}.mos-guide-footer{padding:16px 20px}.mos-guide-links{grid-template-columns:1fr}
+ .mos-list>li{align-items:flex-start;flex-direction:column;gap:10px}
+}
+@media(prefers-reduced-motion:reduce){.mos-dialog,#settingsModal.mos-settings .modal,.mos-guide-stage,.mos-settings .settings-pane{animation:none!important;transition:none!important}}
+html[data-reduce-motion=true] :is(.mos-dialog,#settingsModal.mos-settings .modal,.mos-guide-stage,.mos-settings .settings-pane){animation:none!important;transition:none!important}
+@media(prefers-reduced-motion:reduce){#settingsModal.mos-settings.mos-closing{transition:none!important}}
+html[data-reduce-motion=true] #settingsModal.mos-settings.mos-closing{transition:none!important}

@@ -44,6 +44,16 @@ const NEEDS_LOCAL_EMBED = new Set(["smoke-local.js"]);
 /** LLM 类单项含多轮真实推理，比常规项更慢：给不低于 180s，避免误判成超时 FAIL */
 const LLM_MIN_TIMEOUT_S = 180;
 const hasLocalEmbed = () => String(process.env.EMBED_MODE || "").toLowerCase() === "local";
+/** 六字段 DB 兜底触发器（★ 2026-11-03 起新库默认安装）的历史夹具豁免：
+ *  下列套件的夹具是「规则生效前的散文记忆」，仍以 source=agent 落库，会撞上新触发器；
+ *  只对这些套件在子进程里设 MEMORYOS_BODY_GUARD=0。触发器本身由 smoke-memory-body /
+ *  smoke-sixfields 在**生产默认值**下专测，不会被这层豁免遮住。 */
+const LEGACY_FIXTURE_SUITES = new Set([
+    "smoke-arbitrate.js", "smoke-cite.js", "smoke-daemon.js", "smoke-dashboard.js", "smoke-doctor.js",
+    "smoke-e2e-orthogonal.js", "smoke-e2e.js", "smoke-knowledge-workflows.js", "smoke-macp.js",
+    "smoke-memory-quality.js", "smoke-ops.js", "smoke-reflect.js", "smoke-regress.js", "smoke-shim.js",
+    "smoke-v02.js",
+]);
 
 function llmReachable() {
     const base = String(process.env.LLM_BASE_URL || process.env.MIMOS_URL || "http://127.0.0.1:11434/v1")
@@ -88,6 +98,11 @@ function runOne(item, skipReason) {
             //   冒烟必须显式打开，否则执行面本身无法被验证（生产默认值不受影响）。
             MEMORYOS_EXEC_ON: "1",
             MEMORYOS_EXEC_OFF: "",
+            // ★ 2026-11-16（R02-04）：A1 凭据门禁已改为**默认 fail-closed**（生产默认值）。
+            //   既有套件的历史夹具未携带凭据，故在此**显式**声明灰度软模式（与 MEMORYOS_EXEC_ON 同款做法）；
+            //   硬模式矩阵由 smoke-a1-hard.js 在 MEMORYOS_A1_ENFORCE=1 下单独覆盖，不被这层声明遮住。
+            MEMORYOS_A1_ENFORCE: process.env.MEMORYOS_A1_ENFORCE ?? "0",
+            ...(LEGACY_FIXTURE_SUITES.has(item.label) ? { MEMORYOS_BODY_GUARD: "0" } : {}),
         },
     });
     const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;

@@ -34,6 +34,8 @@ _p1-backup-*/
 node_modules/
 resources/memoryos/models/
 resources/memoryos/runtime/
+# 本机 Python 运行时（pythoncore 发行版，2330 文件 / 136MB，非源码；2026-10-14 仓库卫生）
+Python/
 
 # ---- 5. 数据库与凭据（WAL 快照 / 令牌绝不入库）----
 *.db
@@ -68,6 +70,7 @@ _db_patch*
 .mimosa/
 .v2c/
 .zcode/
+.zcodeignore
 .dsh/
 .zwork/
 
@@ -83,8 +86,11 @@ android/MemoryOSMobile/release.keystore
 # 原则：含 >100MB 单文件（GitHub 硬限）或纯产物者一律排除；源码仍跟踪。
 # 手机版（未完成版本，2026-10-11 用户指示撤出仓库；文件保留在磁盘）
 android/
-# 托盘原生模块（未完成版本，2026-10-11 用户指示撤出仓库；文件保留在磁盘）
-window/tray-native/
+# 托盘原生模块：*源码已纳管*（2026-10-16 托盘根治 T4——改为独立 WinForms 宿主，
+# window/tray.js 运行时读取 tray-native.cs 编译出 bridge/MemoryOS-Tray.exe）；
+# 只忽略本地编译产物，源码必须入库，否则打包后宿主编译失败只能回退低配通道。
+window/tray-native/*.exe
+window/tray-native/*.pdb
 # 诊断快照：含整个 Electron 运行时（et/runtime/electron.exe 235MB）
 outputs/diag-*/
 outputs/db-backup-*/
@@ -105,3 +111,19 @@ resources/memoryos/outputs/daily/
 # 与项目无关的临时文件
 monkey-unicycle-juggle.html
 .vscode/
+
+# Distribution boundaries
+android/
+window/tray-native/
+**/data/
+**/install.json
+**/secrets.env
+**/*.credential.xml
+**/.env
+**/.env.*
+.archify/
+.claude/
+.commandcode/
+.trae/
+.trae-html-share-packages/
+**/_zipped/

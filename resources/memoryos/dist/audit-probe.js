@@ -104,11 +104,14 @@ try {
     proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
 
     fs.writeFileSync(path.join(WS, "probe.txt"), "audit-probe\n", "utf8");
+    // ★ 2026-10-14：命令成功路径改用「文件方式」——`node -e` 已被命令形态守卫拦下（execDenyReason），
+    //   若仍用 -e，本探针的「命令成功」审计分支会退化为「被拒」分支，反而丢掉一半覆盖。
+    fs.writeFileSync(path.join(WS, "audit-ok.js"), "console.log('audit-ok')\n", "utf8");
     console.log("→ 触发被审计的调用序列（1 成功读 / 1 成功写 / 1 越界拒 / 1 命令成功 / 1 非白名单拒）\n");
     await call("file_read", { path: "probe.txt" });
     await call("file_write", { path: "probe.txt", content: "audit-probe-v2\n" });
     await call("file_read", { path: "../../Windows/win.ini" });                  // 越界 → 失败也须留痕
-    await call("exec_run", { cmd: ["node", "-e", "console.log('audit-ok')"] });
+    await call("exec_run", { cmd: ["node", "audit-ok.js"] });
     await call("exec_run", { cmd: ["curl", "http://127.0.0.1:9/"] });            // 非白名单 → 留痕
 
     // MCP 端写入是本进程外的另一个连接；等 DDL/INSERT 落盘后再读

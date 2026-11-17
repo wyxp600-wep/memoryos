@@ -8,7 +8,8 @@
  * 隔离：全部动作发生在 mkdtemp 临时工作区 + 临时库内，退出即自清理，**绝不触碰生产库**。
  * 覆盖：① 单元级（needsGate / pickTools / truncateToolResult / resolveInside）
  *       ② 无头门禁语义（F7 用户决策 c）③ MCP 真调用三工具的正常与安全拒绝路径
- *       ④ exec_audit 落行与脱敏
+ *       ④ exec_audit 落行与脱敏 ⑤ 命令形态守卫（★ 2026-10-14 方案 A：node -e / npx / npm install /
+ *       git -c alias 等「单次调用即任意代码」形态必须被拒）
  * 退出码：0 全绿 / 1 有失败
  */
 import { spawn } from "node:child_process";
@@ -16,10 +17,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import { StorageConnection as DatabaseSync } from './storage.js';
 import { needsGate, pickTools, truncateToolResult, parseRiskPrefix } from "./agent-core.js";
 import { makeHeadlessGate, makeAutoWriteGate } from "./agent.js";
 import { resolveInside } from "./exec-tools.js";
+import { decideApproval, listApprovals } from "./exec-approval.js"; // ★ 方案 B：审批闸数据层（验收直接用真实现）
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));      // …/resources/memoryos/dist
 const WS = fs.mkdtempSync(path.join(os.tmpdir(), "memoryos-exec-smoke-"));
@@ -45,6 +47,7 @@ const proc = spawn(process.execPath, [path.join(HERE, "server.js")], {
         MEMORYOS_WORKSPACE: WS,          // ← 执行面工作区锁定到临时目录
         MEMORYOS_EXEC_ON: "1",          // ★ P0-2 后执行面默认关闭，验收须显式开启
         MEMORYOS_EXEC_OFF: "",          // 显式确保熔断开关未置 1
+        MEMORYOS_EXEC_APPROVAL_TIMEOUT_MS: "8000", // ★ 方案 B：把「等人审」上限压到 8s，便于验收超时路径
     },
     windowsHide: true,
 });
@@ -95,6 +98,15 @@ try {
     check("resolveInside 拒绝越界路径", threw);
     threw = false; try { resolveInside(WS, "\\\\server\\share\\x"); } catch { threw = true; }
     check("resolveInside 拒绝 UNC 路径", threw);
+    // ★ 2026-10-14：Windows 路径形态加固（ADS 备用数据流 / 保留设备名）
+    threw = false; try { resolveInside(WS, "sub/a.txt:evil"); } catch { threw = true; }
+    check("resolveInside 拒绝 ADS 备用数据流（盘符后含 ':'）", threw);
+    threw = false; try { resolveInside(WS, "NUL"); } catch { threw = true; }
+    check("resolveInside 拒绝保留设备名 NUL", threw);
+    threw = false; try { resolveInside(WS, "con.txt"); } catch { threw = true; }
+    check("resolveInside 拒绝保留设备名 con.txt（带扩展名同样命中）", threw);
+    threw = false; try { resolveInside(WS, "sub/ok-name.txt"); } catch { threw = true; }
+    check("resolveInside 正常路径不被误拒（防误伤）", threw === false);
 
     /* ── ② 无头门禁语义（★ P0 修 F7，用户决策「方案 c」）────── */
     const hg = makeHeadlessGate();
@@ -104,7 +116,7 @@ try {
     const hMemWrite = await hg("memory_write", {});
     const hFileWrite = await hg("file_write", {});
     const hExec = await hg("exec_run", {});
-    const hObsidian = await hg("obsidian_write_note", {});
+    const hObsidian = await hg("obsidian", { action: "write_note" });
     const ag = await makeAutoWriteGate()("file_write", {});
     console.error = _err;
     check("F7① --work 预授权 task_done（否则无人值守无法结项）", hTaskDone === true);
@@ -112,7 +124,7 @@ try {
     check("F7③ --work 预授权 memory_write", hMemWrite === true);
     check("F7④ --work 拒绝执行类 file_write（旧行为=全放行）", hFileWrite === false);
     check("F7⑤ --work 拒绝 exec_run", hExec === false);
-    check("F7⑥ --work 拒绝 obsidian_write_note（写工作区外 vault）", hObsidian === false);
+    check("F7⑥ --work 拒绝 obsidian(action=write_note)（写工作区外 vault）", hObsidian === false);
     check("F7⑦ --auto-write 显式全放行", ag === true);
 
     /* ── ③ MCP 级：真调三个工具 ───────────────────────────── */
@@ -131,12 +143,22 @@ try {
 
     fs.mkdirSync(path.join(WS, "sub"), { recursive: true });
     fs.writeFileSync(path.join(WS, "sub", "a.txt"), "第一行\n第二行\n第三行\n", "utf8");
+    // ★ 2026-10-14：执行面用例改用「工作区内脚本文件」方式 —— `node -e`（命令行内联代码）现被
+    //   命令形态守卫拦下（那是单次调用即任意代码的执行通道），脚本文件方式更贴近真实用法，
+    //   且仍需先 file_write（保留「写操作必审」这道闸的信号）。
+    fs.writeFileSync(path.join(WS, "exec-ok.js"), "console.log('EXEC_OK_42')\n", "utf8");
+    fs.writeFileSync(path.join(WS, "hang.js"), "setTimeout(()=>{},60000)\n", "utf8");
+    fs.writeFileSync(path.join(WS, "spam.js"), "for(let i=0;i<900;i++)console.log('LINE_'+i)\n", "utf8");
 
     const r1 = await call("file_read", { path: "sub/a.txt" });
     check("file_read 正常读取", r1.includes("第一行") && r1.includes("第三行"), r1.split("\n")[0]);
 
     const r2 = await call("file_read", { path: "../../Windows/win.ini" });
     check("file_read 越界被拒", r2.includes("越界") || r2.includes("执行失败"), r2.slice(0, 80));
+
+    // ★ 2026-10-14：ADS 形态经真实 MCP 调用链也要被拒（不只是在单元层）
+    const r2b = await call("file_read", { path: "sub/a.txt:evil" });
+    check("file_read 拒绝 ADS 备用数据流路径", r2b.includes("备用数据流") || r2b.includes("执行失败"), r2b.slice(0, 80));
 
     const r3 = await call("file_write", { path: "sub/new.txt", content: "hello-p0" });
     check("file_write 新建成功", fs.existsSync(path.join(WS, "sub", "new.txt")) && r3.includes("新建"), r3.split("\n")[0]);
@@ -145,22 +167,75 @@ try {
     const bak = fs.readdirSync(path.join(WS, "sub")).filter((f) => f.includes(".bak-p0exec-"));
     check("file_write 覆盖前自动备份（B2 纪律工具化）", bak.length === 1 && r4.includes("改前备份"), `backups=${bak.join(",")}`);
 
-    const r5 = await call("exec_run", { cmd: ["node", "-e", "console.log('EXEC_OK_42')"] });
+    const r5 = await call("exec_run", { cmd: ["node", "exec-ok.js"] });
     check("exec_run 正常执行", r5.includes("EXEC_OK_42") && r5.includes("exit=0"), r5.split("\n")[1]);
 
     const r6 = await call("exec_run", { cmd: ["curl", "http://127.0.0.1:9/"] });
     check("exec_run 非白名单命令被拒", r6.includes("不在允许清单") || r6.includes("执行失败"), r6.slice(0, 80));
 
-    const r7 = await call("exec_run", { cmd: ["node", "-e", "setTimeout(()=>{},60000)"], timeout_ms: 1500 });
+    /* ── ⑤ ★ 2026-10-14（方案 A）命令形态守卫：默认安全 ─────────────────── */
+    const g1 = await call("exec_run", { cmd: ["node", "-e", "console.log('RCE')"] });
+    check("守卫① node -e 被拒（单次调用即任意代码，无需先写文件）", g1.includes("命令形态被拒"), g1.slice(0, 90));
+    const g2 = await call("exec_run", { cmd: ["npx", "--version"] });
+    check("守卫② npx 不在默认清单（拉远程包直接跑）", g2.includes("不在允许清单"), g2.slice(0, 90));
+    const g3 = await call("exec_run", { cmd: ["git", "-c", "alias.pwn=!echo x", "pwn"] });
+    check("守卫③ git -c alias 逃逸被拒", g3.includes("命令形态被拒"), g3.slice(0, 90));
+    const g4 = await call("exec_run", { cmd: ["npm", "install", "--no-save"] });
+    check("守卫④ npm install 被拒（第三方包 postinstall 生命周期脚本）", g4.includes("命令形态被拒"), g4.slice(0, 90));
+    const g5 = await call("exec_run", { cmd: ["node", "exec-ok.js"] });
+    check("守卫⑤ 文件方式仍放行（守卫只拦内联/远程执行形态，不误伤正常用法）", g5.includes("EXEC_OK_42"), g5.slice(0, 90));
+
+    const r7 = await call("exec_run", { cmd: ["node", "hang.js"], timeout_ms: 1500 });
     check("exec_run 超时①标记 TIMEOUT", r7.includes("TIMEOUT"), r7.split("\n")[1]);
     check("exec_run 超时②提示进程树已终止", r7.includes("进程树已终止"));
 
-    const r8 = await call("exec_run", { cmd: ["node", "-e", "console.log(1)"], cwd: "../.." });
+    const r8 = await call("exec_run", { cmd: ["node", "exec-ok.js"], cwd: "../.." });
     check("exec_run cwd 越界被拒", r8.includes("越界") || r8.includes("执行失败"), r8.slice(0, 80));
 
-    const r9 = await call("exec_run", { cmd: ["node", "-e", "for(let i=0;i<900;i++)console.log('LINE_'+i)"] });
+    const r9 = await call("exec_run", { cmd: ["node", "spam.js"] });
     check("大输出落 artifact 并回传路径（修 F3）", /完整输出：.*artifacts/.test(r9) && fs.existsSync((r9.match(/完整输出：(.+)/) ?? [])[1]?.trim() ?? ""));
     check("大输出仍保留尾部（LINE_8xx 可见）", /LINE_8\d\d/.test(r9));
+
+    /* ── ⑥ ★ 2026-10-14（方案 B）服务端挂起审批：高风险 → 人批才执行 ────────────
+       要证的核心：「人未表态 = 命令不执行」；只有同意/拒绝/超时三种裁决之一到达后才推进。
+       用读写句柄直连同一临时库（与服务端 WAL 并发安全）扮演"人"，验收后再关闭。 */
+    const rw = new DatabaseSync(DB);
+    const apprCount = () => rw.prepare(`SELECT COUNT(*) AS c FROM exec_approvals`).get().c;
+    const lastPending = () => rw.prepare(`SELECT * FROM exec_approvals WHERE status='pending' ORDER BY id DESC LIMIT 1`).get() ?? null;
+    const waitPending = async () => { for (let i = 0; i < 80; i++) { await new Promise((r) => setTimeout(r, 100)); const p = lastPending(); if (p) return p; } return null; };
+
+    const before = apprCount();
+    const lowRisk = await call("exec_run", { cmd: ["node", "exec-ok.js"] });
+    check("B1.低风险命令零打扰直放（不产生待批行）", lowRisk.includes("EXEC_OK_42") && apprCount() === before, `approvals=${apprCount()}`);
+
+    const inflightOK = call("exec_run", { cmd: ["git", "clean", "-nd"] });  // 高危形态（非白名单子命令）；在临时目录执行无害
+    const p1 = await waitPending();
+    check("B2.高风险命令落 pending 并挂起（人未表态 = 未执行）", !!p1 && String(p1.cmd).includes("git clean") && !!p1.reason, `#${p1?.id} ${String(p1?.cmd).slice(0, 42)}`);
+    check("B2b.待批项对人可见（看板数据源 listApprovals 命中）", !!p1 && listApprovals(rw, 60).pending.some((x) => x.id === p1.id && x.seconds_left >= 0), `pending=${listApprovals(rw, 60).pending.length}`);
+    decideApproval(rw, p1.id, "approve", "human:smoke");
+    const rOk = await inflightOK;
+    check("B3.人工批准后，原调用继续执行并回传结果", rOk.includes("【exec_run】") && /exit=/.test(rOk), rOk.split("\n")[1] ?? rOk.slice(0, 80));
+    check("B4.审批链闭环：待批项回填 executed + 结果摘要", rw.prepare(`SELECT status,result FROM exec_approvals WHERE id=?`).get(p1.id)?.status === "executed", JSON.stringify(rw.prepare(`SELECT status,result FROM exec_approvals WHERE id=?`).get(p1.id)));
+
+    const inflightDeny = call("exec_run", { cmd: ["git", "clean", "-nd"] });
+    const p2 = await waitPending();
+    decideApproval(rw, p2.id, "deny", "human:smoke");
+    const rDeny = await inflightDeny;
+    check("B5.人工拒绝 → 命令不执行，回告原因与审批编号", rDeny.includes("人工拒绝") && !rDeny.includes("【exec_run】") && rDeny.includes(`#${p2.id}`), rDeny.slice(0, 100));
+
+    const inflightTo = call("exec_run", { cmd: ["git", "clean", "-nd"] });
+    const p3 = await waitPending();
+    const rTo = await inflightTo; // 无人处理 → 到期按拒绝
+    check("B6.无人处理超时 → 按拒绝处理（绝不默认放行）", rTo.includes("超时") && !rTo.includes("【exec_run】"), rTo.slice(0, 100));
+    check("B7.超时项落 status=expired + decided_by=system:timeout", rw.prepare(`SELECT status,decided_by FROM exec_approvals WHERE id=?`).get(p3.id)?.status === "expired", JSON.stringify(rw.prepare(`SELECT status,decided_by FROM exec_approvals WHERE id=?`).get(p3.id)));
+
+    const dupFlight = call("exec_run", { cmd: ["git", "clean", "-nd"] });
+    const p4 = await waitPending();
+    decideApproval(rw, p4.id, "deny", "human:smoke");
+    const second = decideApproval(rw, p4.id, "approve", "human:smoke2");
+    await dupFlight;
+    check("B8.二次裁决被拒（CAS：人的决定不被后来的点击覆盖）", second.ok === false && rw.prepare(`SELECT decided_by FROM exec_approvals WHERE id=?`).get(p4.id)?.decided_by === "human:smoke", `second=${second.ok} by=${rw.prepare(`SELECT decided_by FROM exec_approvals WHERE id=?`).get(p4.id)?.decided_by}`);
+    rw.close();
 
     proc.kill();
     await new Promise((r) => setTimeout(r, 700));
@@ -173,6 +248,14 @@ try {
     check("exec_audit 覆盖三工具", byTool("file_read") > 0 && byTool("file_write") > 0 && byTool("exec_run") > 0, `file_read=${byTool("file_read")} file_write=${byTool("file_write")} exec_run=${byTool("exec_run")}`);
     check("exec_audit 记录了风险级", rows.every((r) => /^L[0-4]$/.test(r.risk)));
     check("exec_audit 参数摘要已隐去敏感键", !JSON.stringify(rows).includes("Bearer "));
+    // ★ 方案 B：审批结论必须在审计流水里可查（人是被谁批的、有没有放行过）
+    check("exec_audit 留痕：高风险命令经人工批准（human-approved）", rows.some((r) => r.approval === "human-approved"), `n=${rows.filter((r) => r.approval === "human-approved").length}`);
+    check("exec_audit 留痕：拒绝与超时路径（human-denied / approval-expired）", rows.some((r) => r.approval === "human-denied") && rows.some((r) => r.approval === "approval-expired"));
+    const apprRows = db.prepare("SELECT status, result, decided_by FROM exec_approvals ORDER BY id").all();
+    const hasState = (s) => apprRows.some((r) => r.status === s);
+    check("exec_approvals 状态机留痕：pending/approved→executed/denied/expired 全覆盖",
+        apprRows.length >= 4 && hasState("executed") && hasState("denied") && hasState("expired"),
+        apprRows.map((r) => r.status).join(","));
     db.close();
 } catch (e) {
     failed++;

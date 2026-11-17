@@ -13,19 +13,31 @@
  *   · 只处理 Float32Array，不感知向量语义。
  */
 
-/** n < IVF_MIN_N 时跳过建索引，直接全量 cosine（建索引成本 > 收益） */
-const IVF_MIN_N = 400;
+/**
+ * ★ 2026-10-13（检索优化）：召回优先的参数整定。
+ *   实证（dist/bench-retrieval.js，n=1664）：原参数（FRAC=0.15 / MIN_CANDS=100）只勘察
+ *   15%~25% 的向量，15 道转述题里 6 道的正确答案被直接挡在候选外 —— 其中一道正确答案
+ *   本为全量第 1 名（cos=0.81）也丢了。近似省下的时间（vec 阶段 0.4ms）远抵不上丢掉的召回。
+ *   取向：**小库一律精确比对**（n < IVF_MIN_N 直接不建索引，调用方降级全量 scan），
+ *   大库才启用 ANN，且勘察面显著放大 + 候选不足自动继续扩 probe。
+ */
+/** n < IVF_MIN_N 时跳过建索引，直接全量 cosine。
+ *  1664 条规模下全量 cosine ≈ 2ms，比 ANN 多花约 1.5ms，但召回 100% —— 净赚。 */
+const IVF_MIN_N = 6000;
 /** K = max(IVF_K_MIN, ceil(sqrt(n) × IVF_K_SCALE)) */
 const IVF_K_SCALE = 0.8;
 const IVF_K_MIN = 8;
 /** k-means 迭代次数（少量迭代，构建速度优先） */
 const IVF_ITERS = 2;
 /** 默认 probe 比例：nProbe = max(IVF_NPROBE_MIN, ceil(k × IVF_NPROBE_FRAC)) */
-const IVF_NPROBE_FRAC = 0.15;
-const IVF_NPROBE_MIN = 3;
-const IVF_NPROBE_MAX = 30;
-/** 自适应 probe：候选不足此数时继续扩展（保证 topK 召回） */
-const IVF_MIN_CANDS = 100;
+const IVF_NPROBE_FRAC = 0.45;
+const IVF_NPROBE_MIN = 8;
+/** probe 上限按簇数放开（原 30 会在 k 大时把 45% 的目标卡回 ~21%） */
+const IVF_NPROBE_MAX = 4096;
+/** 自适应 probe：候选绝对下限 */
+const IVF_MIN_CANDS = 300;
+/** 自适应 probe：候选数低于 n × TARGET_FRAC 时继续扩 probe（直到探完所有簇） */
+const IVF_TARGET_FRAC = 0.35;
 
 /** L2 范数 */
 function l2norm(v) {
@@ -141,6 +153,9 @@ export class IvfAnnIndex {
         const nProbeBase = Math.min(
             IVF_NPROBE_MAX,
             Math.max(IVF_NPROBE_MIN, Math.ceil(k * IVF_NPROBE_FRAC)));
+        /* 自适应目标：候选既不能少于绝对下限，也不能少于全量的 TARGET_FRAC ——
+         * 不足则继续探下一近簇，直到「两个条件都满足」或「所有簇探完」（不会死循环）。 */
+        const target = Math.min(this._n, Math.max(IVF_MIN_CANDS, Math.ceil(this._n * IVF_TARGET_FRAC)));
 
         const seen = new Set();
         const cands = [];
@@ -148,8 +163,7 @@ export class IvfAnnIndex {
             for (const v of this._lists[order[p]]) {
                 if (!seen.has(v.id)) { seen.add(v.id); cands.push(v); }
             }
-            if (p + 1 >= nProbeBase && cands.length >= IVF_MIN_CANDS) break;
-            if (p + 1 >= IVF_NPROBE_MAX) break;
+            if (p + 1 >= nProbeBase && cands.length >= target) break;
         }
         return cands;
     }

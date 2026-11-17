@@ -44,7 +44,7 @@ if (!fs.existsSync(CHROME)) { console.error(`✗ 未找到 Chrome：${CHROME}（
 const URL = `http://127.0.0.1:${DASH_PORT}/?token=${TOKEN}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const R = [];
-const rec = (name, pass, extra = '') => { R.push({ name, pass, extra }); console.log(`${pass ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`); };
+const rec = (name, pass, extra = '') => { R.push({ name, pass, extra }); console.log(`${pass === 'skip' ? 'SKIP' : pass ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`); };
 
 const chrome = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage',
   `--remote-debugging-port=${PORT}`, `--user-data-dir=${DIR}`, 'about:blank'], { stdio: 'ignore' });
@@ -116,10 +116,15 @@ try {
     rec('点击导航 → Agent 页激活', clicked === true && activeOk === true, `title=${title}`);
 
     // 3) 状态行（模型 + 工具面）：证明鉴权 cookie + fetch /api/agent/status 通
-    //    断言不用魔数（原为 /qwen3:8b|dashboard|18/，「18」是过期工具数且会随模型名漂移）：
-    //    只要离开初始占位文案即证明接口已返回。
-    const statusText = await ev(`document.querySelector('#agentStatusLine').textContent`);
-    rec('状态行拉到模型/工具面', !!statusText && !String(statusText).includes('正在读取'), String(statusText).slice(0, 120));
+    //    断言不用魔数（原为 /qwen3:8b|dashboard|18/，「18」是过期工具数且会随模型名漂移）。
+    //    ★ 2026-11-17：现版正常时**刻意隐藏**状态行（app.js initAgent：line.textContent=issue; line.hidden=!issue），
+    //    旧断言「文本必须非空」必然误报 → 拆成「接口可达」+「元素状态自洽」两条，不削弱对接口的验证。
+    const statusApi = await ev(`fetch('/api/agent/status').then(r=>r.json()).then(j=>({http:'ok',hasMcp:!!(j&&j.mcp)})).catch(e=>({http:'err',msg:String(e&&e.message||e)}))`);
+    rec('鉴权 cookie + /api/agent/status 可达', statusApi && statusApi.http === 'ok', JSON.stringify(statusApi).slice(0, 120));
+    const statusLine = await ev(`(function(){var e=document.querySelector('#agentStatusLine');return e?{hidden:!!e.hidden,text:String(e.textContent||'')}:null})()`);
+    rec('状态行渲染自洽（有提示必可见 / 无提示必隐藏）',
+        !!statusLine && (statusLine.text ? !statusLine.hidden : statusLine.hidden),
+        JSON.stringify(statusLine).slice(0, 120));
     const writeDisabled = await ev(`(function(){var c=document.querySelector('#agentAllowWrites');return c?(c.disabled?'disabled':'enabled'):'missing'})()`);
     // ★ 2026-09-21：原断言写死 `=== 'disabled'`（假定受限模式开启），而受限模式实际由
     //   config.json 的 restricted 决定（core-process.js:128 `cfg.restricted === true ? "1" : "0"`），
@@ -137,13 +142,20 @@ try {
     const question = '只调用一次 task_next(project="global", as="")，然后用一句话说有没有可做的任务。';
     await ev(`(function(){var t=document.querySelector('#agentInput');t.value=${JSON.stringify(question)};t.dispatchEvent(new Event('input',{bubbles:true}));return true})()`);
     const before = await ev(`document.querySelectorAll('#agentChat > div').length`);
+    // ★ 2026-11-17：run 结束（SSE 终态）时前端会把内联过程块 detach/清空，结束时再数 .run-card 必然为 0。
+    //   改为在整个 run 期间用 MutationObserver 记录卡片数量峰值，验证「运行中确实渲染过轨迹」。
+    await ev(`(function(){window.__maxRunCards=0;var t=document.querySelector('#agentRunLiveTimeline');if(!t)return false;
+      var upd=function(){var n=t.querySelectorAll('.run-card').length;if(n>window.__maxRunCards)window.__maxRunCards=n;};upd();
+      new MutationObserver(upd).observe(t,{childList:true,subtree:true});return true;})()`);
     await ev(`document.querySelector('#agentSendBtn').click()`);
-    let answered = false, bubbles = 0, tail = '';
+    let answered = false, bubbles = 0, tail = '', pollMax = 0;
     for (let i = 0; i < 60; i++) { // 最多等 240s
         await sleep(4000);
         bubbles = await ev(`document.querySelectorAll('#agentChat > div').length`);
         const busy = await ev(`document.querySelector('#agentSendBtn').disabled`);
         tail = String(await ev(`(function(){var d=document.querySelectorAll('#agentChat > div');return d.length?d[d.length-1].textContent:''})()`));
+        const cards = Number(await ev(`document.querySelectorAll('#agentRunLiveTimeline .run-card').length`)) || 0;
+        if (cards > pollMax) pollMax = cards;
         // ★ 2026-09-21：原判定 `bubbles > before && busy === false` 会在「运行中…」占位气泡
         //   仍在时判为完成（假绿灯——实测曾据此报「作答成功」而尾条仍是运行中文案）。
         //   改为额外要求占位文案已消失。
@@ -154,8 +166,14 @@ try {
     // ★ 2026-09-21：原断言查 `#agentChat details` 已失效 —— 前端 2026-09-20 把执行记录/步骤
     //   时间线统一渲染到「执行过程」区 `#agentRunLive`，不再写入聊天区（见 app.js:5712）。
     //   工具轨迹现为 `#agentRunLiveTimeline .run-card`（app.js:5172 / index.html:4587）。
-    const toolSteps = await ev(`document.querySelectorAll('#agentRunLiveTimeline .run-card').length`);
-    rec('工具调用轨迹（执行过程时间线）出现', Number(toolSteps) >= 1, `run-card=${toolSteps}`);
+    const observed = Number(await ev(`window.__maxRunCards || 0`)) || 0;
+    const toolSteps = Number(await ev(`document.querySelectorAll('#agentRunLiveTimeline .run-card').length`)) || 0;
+    const peak = Math.max(observed, pollMax, toolSteps);
+    // ★ 2026-11-17：上游模型不可用（401/403/429/5xx）时 run 在工具调用前就失败，时间线必然为空。
+    //   这种「没步骤」是环境缺凭据/被限流，不是渲染回归 → 判 SKIP 并写明原因；run 正常但无卡片仍判 FAIL。
+    const llmDown = /LLM HTTP (?:401|403|429|5\d\d)/.test(String(answerText));
+    rec('工具调用轨迹（执行过程时间线）出现', llmDown ? 'skip' : peak >= 1,
+        llmDown ? `上游模型不可用，本轮无工具步骤（peak=${peak}）` : `峰值卡片=${peak}（结束时 ${toolSteps}）`);
 
     // 5) 错误收集
     const errs = await ev(`JSON.stringify(window.__errs)`);
@@ -173,6 +191,8 @@ finally {
     await sleep(300);
     fs.rmSync(DIR, { recursive: true, force: true });
 }
-const bad = R.filter((r) => !r.pass).length;
-console.log(bad ? `\n${bad}/${R.length} 项失败` : `\n全部通过（${R.length} 项）`);
+const bad = R.filter((r) => r.pass === false).length;
+const skipped = R.filter((r) => r.pass === 'skip').length;
+const skipNote = skipped ? `，${skipped} 项 SKIP` : '';
+console.log(bad ? `\n${bad}/${R.length} 项失败${skipNote}` : `\n全部通过（${R.length} 项${skipNote}）`);
 process.exit(bad ? 1 : 0);

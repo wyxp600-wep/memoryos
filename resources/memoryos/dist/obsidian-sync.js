@@ -1,3 +1,4 @@
+const MEMORIES = "main.knowledge_records"; // ★ 2026-11-17（B4 组7）：导入导出/规则反思直连记忆物理表（merge-db 保持视图，它能读旧单库）
 /**
  * MemoryOS — Obsidian 连接模块（obsidian-sync）
  * 双向同步：Obsidian vault（本地 Markdown）↔ 共享记忆库
@@ -15,7 +16,8 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { openDb, writeMemory, updateMemory, getVectorsOnProject, dedupeDecision, bumpConfidence, logUsage, upsertVector, } from "./db.js";
+import { openDb, updateMemory, getVectorsOnProject, dedupeDecision, logUsage, upsertVector, } from "./db.js";
+import { createMemoryRow } from "./memory-writer.js"; // ★ 2026-11-17（B8 前置）：写入直连物理表，不再经 temp.memories 视图
 import { getEmbedder, embedMode } from "./embed.js";
 /** 导出目录名（walk 时排除，防循环导入自身产物） */
 export const EXPORT_DIR = "MemoryOS 导出";
@@ -48,6 +50,21 @@ function ensureMetaTable(db) {
     }
 }
 /** 读取 Obsidian 配置（%APPDATA%/obsidian/obsidian.json）探测本机 vault 列表 */
+/** ★ 2026-11-16 安全加固（M-6）：vault 落点闸。
+ *  vault 路径由请求方指定（/api/obsidian/*、POST /api/notes），原实现只校验"存在且是目录"，
+ *  等于可在任意目录落 .md（投毒其他应用读取的 Markdown）。这里拒绝系统/凭据目录与盘符根。
+ *  用户正常笔记目录（Documents、桌面、自定义目录）不受影响；确需放宽设 MEMORYOS_VAULT_ALLOW_ANY=1。 */
+const VAULT_DENY_RE = /(^|[\\/])(windows|program files|program files \(x86\)|appdata|\.ssh|\.aws|\.gnupg|\.kube)([\\/]|$)/i;
+function assertVaultRootAllowed(vaultRoot) {
+    if (process.env.MEMORYOS_VAULT_ALLOW_ANY === "1")
+        return;
+    const s = String(vaultRoot ?? "").replace(/\\/g, "/");
+    if (VAULT_DENY_RE.test(s))
+        throw new Error(`vault 路径属于系统/凭据目录，已拒绝：${vaultRoot}`);
+    if (/^[a-zA-Z]:\/?$/.test(s) || s === "/" || s === "")
+        throw new Error(`vault 不能是盘符根目录：${vaultRoot}`);
+}
+
 export function detectVaults() {
     const cfg = path.join(os.homedir(), "AppData", "Roaming", "obsidian", "obsidian.json");
     try {
@@ -169,6 +186,7 @@ export function noteHash(note) {
  */
 export async function importVault(db, embedder, opts) {
     const vaultRoot = path.resolve(opts.vaultPath);
+    assertVaultRootAllowed(vaultRoot);
     if (!fs.existsSync(vaultRoot) || !fs.statSync(vaultRoot).isDirectory()) {
         throw new Error(`vault 路径不存在或不是目录: ${vaultRoot}`);
     }
@@ -213,6 +231,8 @@ export async function importVault(db, embedder, opts) {
     // 批量 embed（真实模式）；fake 模式不产出向量
     const texts = pend.map((p) => `${p.note.title}\n${p.note.content}`);
     const vecs = realEmbed && pend.length ? await embedder.embedTexts(texts) : [];
+    // ★ 2026-10-15 向量带出处：按当前嵌入器实例自声明 model/dim（各嵌入器已实现 provenance()）
+    const prov = embedder.provenance?.() ?? { model: "unknown", dim: 0 };
     for (let i = 0; i < pend.length; i++) {
         const p = pend[i];
         const emb = realEmbed && vecs.length ? vecs[i] : null;
@@ -222,7 +242,7 @@ export async function importVault(db, embedder, opts) {
                 updateMemory(db, p.existing.memoryId, { content: p.note.content, type: p.note.type });
                 if (emb) {
                     // ★ P1-2.2：向量写入独立表（原为直接 UPDATE memories.embedding）
-                    upsertVector(db, p.existing.memoryId, emb);
+                    upsertVector(db, p.existing.memoryId, emb, prov);
                 }
                 db.prepare(`UPDATE obsidian_sync SET note_hash=?, mtime_ms=? WHERE vault_root=? AND note_path=?`).run(p.hash, p.mtimeMs, vaultRoot, p.file);
                 stats.updated++;
@@ -233,13 +253,14 @@ export async function importVault(db, embedder, opts) {
                 const existingVecs = getVectorsOnProject(db, project);
                 const d = existingVecs.length ? dedupeDecision(existingVecs, emb, -1) : null;
                 if (d?.action === "merge" && d.targetId) {
-                    bumpConfidence(db, d.targetId, 0.1);
+
+                    // 重复导入不构成独立验证，不增加置信度。
                     db.prepare(`INSERT OR REPLACE INTO obsidian_sync(vault_root, note_path, note_hash, memory_id, mtime_ms) VALUES (?,?,?,?,?)`).run(vaultRoot, p.file, p.hash, d.targetId, p.mtimeMs);
                     stats.merged++;
                     continue;
                 }
                 if (d?.action === "conflict" && d.targetId) {
-                    const row = writeMemory(db, {
+                    const row = createMemoryRow(db, {
                         content: p.note.content,
                         type: p.note.type,
                         agent,
@@ -247,8 +268,10 @@ export async function importVault(db, embedder, opts) {
                         project,
                         embedding: emb,
                         confidence: 0.5,
+                        // ★ 2026-10-14（③）：笔记镜像属外部采集来源 —— 不进规则反思候选（见 rule-reflection.js）
+                        source: "ingest",
                     });
-                    db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(d.targetId, row.id);
+                    db.prepare(`UPDATE ${MEMORIES} SET conflict_with=? WHERE id=?`).run(d.targetId, row.id);
                     db.prepare(`INSERT INTO obsidian_sync(vault_root, note_path, note_hash, memory_id, mtime_ms) VALUES (?,?,?,?,?)`).run(vaultRoot, p.file, p.hash, row.id, p.mtimeMs);
                     stats.added++;
                     continue;
@@ -257,22 +280,25 @@ export async function importVault(db, embedder, opts) {
             else {
                 // fake-embed 降级：无向量不做语义去重 → 退回内容 hash 粗查（同 hash active 记忆视为重复，merge 而非裸放行；防 #39 降级裸灌）
                 const dup = db
-                    .prepare(`SELECT id FROM memories WHERE content = ? AND status = 'active' AND project IN (?, 'global') LIMIT 1`)
+                    .prepare(`SELECT id FROM ${MEMORIES} WHERE content = ? AND status = 'active' AND project IN (?, 'global') LIMIT 1`)
                     .get(p.note.content, project);
                 if (dup) {
-                    bumpConfidence(db, dup.id, 0.1);
+
+                    // 重复导入不构成独立验证，不增加置信度。
                     db.prepare(`INSERT OR REPLACE INTO obsidian_sync(vault_root, note_path, note_hash, memory_id, mtime_ms) VALUES (?,?,?,?,?)`).run(vaultRoot, p.file, p.hash, dup.id, p.mtimeMs);
                     stats.merged++;
                     continue;
                 }
             }
-            const row = writeMemory(db, {
+            const row = createMemoryRow(db, {
                 content: p.note.content,
                 type: p.note.type,
                 agent,
                 agent_fpath: vaultRoot,
                 project,
                 embedding: emb ?? undefined,
+                // ★ 2026-10-14（③）：同上，采集来源
+                source: "ingest",
             });
             db.prepare(`INSERT OR REPLACE INTO obsidian_sync(vault_root, note_path, note_hash, memory_id, mtime_ms) VALUES (?,?,?,?,?)`).run(vaultRoot, p.file, p.hash, row.id, p.mtimeMs);
             logUsage(db, { memory_id: row.id, event: "write", reader_agent: agent, writer_agent: agent, project });
@@ -485,6 +511,7 @@ function slugOf(content) {
 /** 把 active 记忆导出为 Markdown 笔记（幂等：同 id 文件已存在则跳过）。outDir 缺省 = <vault>/MemoryOS 导出 */
 export function exportMemories(db, opts = {}) {
     const outDir = path.resolve(opts.outDir ?? (opts.vaultPath ? path.join(opts.vaultPath, EXPORT_DIR) : EXPORT_DIR));
+    assertVaultRootAllowed(outDir);
     fs.mkdirSync(outDir, { recursive: true });
     const where = ["status='active'"];
     const params = [];
@@ -498,13 +525,13 @@ export function exportMemories(db, opts = {}) {
     }
     // ★ H4（R4 裁决）：secret 记忆不出本机 —— 导出通道一律静默跳过（计数留痕，前端展示"已跳过 N 条私密"）
     where.push(`sensitivity != 'secret'`);
-    let sql = `SELECT id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, salience, valid_until, source_ref, sensitivity FROM memories WHERE ${where.join(" AND ")} ORDER BY id`;
+    let sql = `SELECT id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, last_hit_at, created_at, sector, salience, valid_until, source_ref, sensitivity FROM ${MEMORIES} WHERE ${where.join(" AND ")} ORDER BY id`;
     if (opts.limit && opts.limit > 0)
         sql += ` LIMIT ${Math.floor(opts.limit)}`;
     const rows = db.prepare(sql).all(...params);
     // H4：统计被静默跳过的 secret 数量（同一 SQL 不带过滤跑一次计数）
     const secretCount = Number(db
-        .prepare(`SELECT COUNT(*) AS c FROM memories WHERE status='active' AND sensitivity='secret'${opts.project ? " AND project=?" : ""}`)
+        .prepare(`SELECT COUNT(*) AS c FROM ${MEMORIES} WHERE status='active' AND sensitivity='secret'${opts.project ? " AND project=?" : ""}`)
         .get(...(opts.project ? [opts.project] : [])).c);
     const stats = { written: 0, skipped: 0, failed: 0, dir: outDir };
     stats.skipped += secretCount; // 计入 skipped，前端可读"已跳过 N 条（含私密）"
@@ -559,6 +586,7 @@ export function sanitizeFolder(folder) {
 }
 export async function writeNoteToVault(db, embedder, opts) {
     const vaultRoot = path.resolve(opts.vaultPath);
+    assertVaultRootAllowed(vaultRoot);
     if (!fs.existsSync(vaultRoot) || !fs.statSync(vaultRoot).isDirectory()) {
         throw new Error(`vault 路径不存在或不是目录: ${vaultRoot}`);
     }
@@ -607,18 +635,21 @@ export async function writeNoteToVault(db, embedder, opts) {
         const existing = getVectorsOnProject(db, project);
         const d = existing.length ? dedupeDecision(existing, emb, -1) : null;
         if (d?.action === "merge" && d.targetId) {
-            bumpConfidence(db, d.targetId, 0.1);
+
+                    // 重复导入不构成独立验证，不增加置信度。
             memoryId = d.targetId;
         }
     }
     if (memoryId === null) {
-        const row = writeMemory(db, {
+        const row = createMemoryRow(db, {
             content: opts.content,
             type,
             agent,
             agent_fpath,
             project,
             embedding: emb ?? undefined,
+            // ★ 2026-10-14（③）：同上，采集来源
+            source: "ingest",
         });
         memoryId = row.id;
         logUsage(db, { memory_id: row.id, event: "write", reader_agent: agent, writer_agent: agent, project });
@@ -651,7 +682,7 @@ export function vaultStatus(db, vaultPath) {
     ensureMetaTable(db);
     const files = walkMarkdown(vaultRoot);
     const imported = Number(db.prepare(`SELECT COUNT(*) AS c FROM obsidian_sync WHERE vault_root=?`).get(vaultRoot).c);
-    const memoriesFromObsidian = Number(db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE agent='obsidian'`).get().c);
+    const memoriesFromObsidian = Number(db.prepare(`SELECT COUNT(*) AS c FROM ${MEMORIES} WHERE agent='obsidian'`).get().c);
     return {
         vaultName: path.basename(vaultRoot),
         noteFiles: files.length,

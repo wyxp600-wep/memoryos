@@ -1,0 +1,82 @@
+  const _toastQueue = [], _visibleToasts = new Set();
+  function toast(msg, ms = 3500, kind = 'info', options = {}) {
+    kind = ({ok:'success',err:'error'})[kind] || kind;
+    if (!['info','success','warn','error'].includes(kind)) kind='info';
+    const item = { msg:String(msg), ms:ms>0?ms:3500, kind, ...options };
+    if(item.action)showToast(item); else { _toastQueue.push(item); drainToasts(); }
+  }
+  function drainToasts() {
+    while(_visibleToasts.size<3 && _toastQueue.length)showToast(_toastQueue.shift());
+  }
+  function showToast(item) {
+    const host=$('#toast'); if(!host)return;
+    const el=document.createElement('div'); el.className='toast-entry'; el.dataset.kind=item.kind;
+    el.setAttribute('role',item.kind==='error'?'alert':'status');
+    const message=document.createElement('span');message.className='toast-message';message.textContent=item.msg;el.append(message);
+    let timer, interval, removed=false, paused=false, remaining=item.ms, started=Date.now();
+    const close=()=>{
+      if(removed)return; removed=true;clearTimeout(timer);clearInterval(interval);_visibleToasts.delete(el);
+      el.classList.add('leaving');setTimeout(()=>el.remove(),180);drainToasts();
+    };
+    let action;
+    if(item.action){
+      action=document.createElement('button');action.type='button';action.textContent=item.actionLabel||'撤销';
+      action.onclick=async()=>{if(action.disabled)return;action.disabled=true;try{await item.action();close();}catch(e){action.disabled=false;toast(e.message,6000,'error');}};
+      el.append(action);
+      const expiry=document.createElement('span');expiry.className='toast-expiry';el.append(expiry);
+      const tick=()=>{const left=Math.max(0,(item.expiresAt||started+item.ms)-Date.now());expiry.textContent=Math.ceil(left/1000)+'秒';if(left<=0){action.disabled=true;close();}};
+      interval=setInterval(tick,200);
+    }
+    const dismiss=document.createElement('button');dismiss.type='button';dismiss.className='toast-dismiss';dismiss.setAttribute('aria-label','关闭通知');dismiss.textContent='×';dismiss.onclick=close;el.append(dismiss);
+    _visibleToasts.add(el);host.append(el);
+    const arm=()=>{started=Date.now();timer=setTimeout(close,remaining);};arm();
+    if(!item.action){
+      const pause=()=>{if(paused)return;paused=true;clearTimeout(timer);remaining=Math.max(0,remaining-(Date.now()-started));};
+      const resume=()=>{if(!paused)return;if(!el.matches(':hover')&&!el.contains(document.activeElement)){paused=false;arm();}};
+      el.addEventListener('mouseenter',pause);el.addEventListener('mouseleave',resume);
+      el.addEventListener('focusin',pause);el.addEventListener('focusout',resume);
+    }
+  }
+  async function runMemoryBatch(ids,status,control,selection) {
+    if(!ids.length)return toast('请先选择记忆',3000,'warn');
+    if(control?.disabled)return;
+    if(control)control.disabled=true;
+    try {
+      const r=await fetch('/api/memory/batch-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,status})});
+      const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'批量操作失败');
+      for(const id of ids)selection.delete(id);
+      const label={rejected:'删除',archived:'归档',active:'恢复活跃',superseded:'标记取代'}[status];
+      if(j.undoId)toast('已'+label+' '+j.changed+' 条记忆',Math.max(1,j.expiresAt-Date.now()),'success',{
+        actionLabel:'撤销',expiresAt:j.expiresAt,
+        action:async()=>{
+          const r=await fetch('/api/memory/batch-undo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({undoId:j.undoId})});
+          const result=await r.json();if(!r.ok||!result.ok)throw new Error(result.error||'撤销失败');
+          toast('已恢复 '+result.restored+' 条记忆',3500,'success');if(result.warning)toast(result.warning,6000,'warn');await load();renderAllTable();updateBatchBar();
+        }
+      });else toast('所选记忆已是目标状态');
+      if(j.warning)toast(j.warning,6000,'warn');
+      await load();renderAllTable();updateBatchBar();
+      const count=$('#selectedCount');if(count)count.textContent=selected.size;
+    }catch(e){toast(e.message,6000,'error');}
+    finally{if(control)control.disabled=false;}
+  }
+  function initP1Ui() {
+    const search=$('#memoryQuickSearch');let searchTimer;
+    if(search)search.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{allPage=1;renderAllTable();},120);};
+    const updateFilters=()=>{
+      const active=$$('#memoryFilters .filter-btn.active');
+      const labels=[...active].filter(x=>!Object.values(x.dataset).includes('all')).map(x=>x.textContent.trim());
+      const count=$('#memoryFilterCount');if(count)count.textContent=labels.length?'('+labels.length+')':'';
+      const summary=$('#memoryFilters > summary');if(summary)summary.title=labels.join(' · ')||'全部记忆';
+      $$('#memoryFilters .filter-btn').forEach(x=>x.setAttribute('aria-pressed',String(x.classList.contains('active'))));
+    };
+    $('#memoryFilters')?.addEventListener('click',()=>queueMicrotask(updateFilters));
+    const reset=$('#memoryFiltersReset');if(reset)reset.onclick=()=>{$$('#memoryFilters .filter-group').forEach(g=>g.querySelector('[data-status="all"],[data-type="all"],[data-sector="all"]')?.click());if(search){search.value='';search.dispatchEvent(new Event('input'));}updateFilters();};
+    updateFilters();
+    document.addEventListener('click',e=>{
+      const suggestion=e.target.closest('.agent-suggestion');
+      if(suggestion){const input=$('#agentInput');input.value=suggestion.dataset.prompt;input.focus();input.dispatchEvent(new Event('input',{bubbles:true}));}
+      ['systemNav','memoryFilters'].forEach(id=>{const el=$('#'+id);if(el?.open&&!el.contains(e.target))el.open=false;});
+    });
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')['systemNav','memoryFilters'].forEach(id=>{const el=$('#'+id);if(el?.open){el.open=false;el.querySelector('summary')?.focus();}});});
+  }

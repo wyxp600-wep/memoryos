@@ -1,5 +1,7 @@
 # MemoryOS
 
+Windows 下载包与安装说明：[0.1.4 发行说明](RELEASE-20261117.md)。源码和下载包均在当前私有仓库内发布。
+
 本机共享记忆库 + 多 Agent 协同工作台。SQLite（FTS5 + 向量）落盘，**MCP 工具面**供 AI 读写，**Electron 桌面壳** + **8787 看板**提供人机界面。
 
 > 本文件是仓库唯一入口。文件归属分区见 [CLAIM.md](CLAIM.md)；多 AI 协作细则见 [docs/通用任务协作规则-v3.0.md](docs/通用任务协作规则-v3.0.md)。
@@ -23,7 +25,7 @@
 |---|---|---|
 | **壳层** | 根目录：`main.js`、`window/`、`services/`、`security/`、`app/` | 窗口与托盘、端口分配、访问令牌、进程自愈、热更新、IPC |
 | **内核** | `resources/memoryos/dist/` | MCP 服务、HTTP 看板、治理守护、LLM agent、采集、Obsidian/技能同步 |
-| **前端** | `resources/memoryos/memoryos-dashboard-redesign/` | `index.html` + `app.js`，**可直接改并热生效** |
+| **前端** | `resources/memoryos/memoryos-dashboard-redesign/` | `index.html` + `app.js`，**可直接改并热生效**；侧栏「新手教程」（`#guide`，深链 `#guide/cN`）是 10 章手把手引导页，进度存 `localStorage['memoryos-guide-progress']` |
 | **运行时** | `resources/memoryos/runtime/node.exe` | 内置 Node（随包分发，不依赖系统 Node） |
 | **模型** | `resources/memoryos/models/` | BGE-M3 ONNX，本地嵌入 |
 

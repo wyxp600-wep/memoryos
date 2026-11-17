@@ -1,13 +1,18 @@
+import {feedbackReport} from './feedback-report.js';
+import { installConnectionState, saveConnectionPulse, runtimeFor, databaseFile } from './connection-runtime.js';
+import { probeConnection, probeStatus } from './connection-probe.js';
+import { annotateConflicts } from "./knowledge-quality.js";
 /** T8（P2-3）：buildApp 路由域拆分 —— plans 域。
  * handler 自 dashboard.js 原行 670-999 逐字搬移，注册顺序不变；响应体逐字节一致。
  * 门禁：node dist/snapshot-routes.js --check 必须 0 差异。共享顶层名经 ctx 注入。 */
-import { logUsage, logDaemon, writeMemory, queryByType, logExecAudit } from "./db.js";
+import { logUsage, logDaemon, queryByType, logExecAudit } from "./db.js";
+import { createMemoryRow } from "./memory-writer.js"; // ★ 2026-11-17（B8 前置）：写入直连物理表，不再经 temp.memories 视图
 import { spawnSync } from "node:child_process";
 /** ★20261005 test-connection 握手用：内核 server.js 路径（与 scan.js MEMORYOS_SERVER 同源推导） */
 import { fileURLToPath } from "node:url";
 const MEMORYOS_SERVER_PATH = fileURLToPath(new URL("./server.js", import.meta.url));
 import { aiViews, aiVisible } from "./format.js";
-import { scanAgents, connectGuideFor, applyConnectWrite, loadCustomAgents, saveCustomAgents, readCarrierFacts, probeCarrier, MEMORYOS_DB_PATH } from "./scan.js";
+import { scanAgents, connectGuideFor, applyConnectWrite, loadCustomAgents, saveCustomAgents, readCarrierFacts, probeCarrier, MEMORYOS_DB_PATH, scanAgentsAsync, getScanCachedShared, clearScanCache } from "./scan.js";
 import { syncRules, syncProjectRules, getSyncTargets } from "./sync-rules.js";
 import { getEmbedder } from "./embed.js";
 import os from "node:os";
@@ -175,7 +180,7 @@ export function registerPlans(app, ctx) {
                 catch {
                     embedding = null;
                 }
-                const row = writeMemory(db, {
+                const row = createMemoryRow(db, {
                     content,
                     type: "task",
                     agent: "human:dashboard",
@@ -276,14 +281,31 @@ export function registerPlans(app, ctx) {
             return reply.code(500).send({ ok: false, error: String(e) });
         }
     });
+    // ★ 2026-10-18（用户报障「记忆显示的数量不对」根治 / 方案A）：
+    //   旧实现两处缺陷合起来构成「假总数 + 静默丢数据」：
+    //     ① limit 上限写死 2000（库内真实 2949 条 → 只能取到 2000）；
+    //     ② 响应 `total: rows.length` —— 把「本次返回行数」当**总数**对外宣告，前端直接显示「共 2000 条」。
+    //   因排序为 created_at DESC，截断掉的恰好是**最老的 949 条**（最早可见 2026-09-10，库内最早 2026-05-08），
+    //   它们在列表/搜索/筛选/批量里完全不存在且无任何提示。
+    //   → 上限放宽到 20000（与 /api/export/memories 同量级），`total` 改为真实 COUNT(*)，
+    //     另给 `returned`（实际返回行数）供前端「已加载 / 库内」对账；行结构、排序、字段一律不变。
+    // ★ 2026-11-07（#700051）：服务端分页。旧实现只能「一次拉全量」，前端拿到 13MB 再自己切页。
+    //   传 offset 或 limit 任一即进入分页口径（此时 limit 缺省 100）；两者都不传时走旧口径
+    //   （limit 缺省 500、响应字段 {total,returned,rows} 不变），保证既有调用方零改动。
     app.get("/api/all", async (req) => {
-        const limit = Math.min(Math.max(Number(req.query.limit ?? 500) || 500, 1), 2000);
+        const paging = req.query.offset !== undefined || req.query.limit !== undefined;
+        const limit = Math.min(Math.max(Number(req.query.limit ?? (paging ? 100 : 500)) || (paging ? 100 : 500), 1), 20000);
+        const offset = paging ? Math.min(Math.max(Number(req.query.offset ?? 0) || 0, 0), 1000000) : 0;
         const status = (req.query.status ?? "").trim();
         const where = status ? `WHERE status=?` : "";
-        const rows = db
-            .prepare(`SELECT id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, created_at
-           FROM memories ${where} ORDER BY julianday(created_at) DESC, id DESC LIMIT ?`)
-            .all(...(status ? [status, limit] : [limit])).map((r) => {
+        const total = db.prepare(`SELECT COUNT(*) c FROM knowledge_records ${where}`).get(...(status ? [status] : [])).c;
+        const records = db
+            .prepare(`SELECT id, content, type, agent, agent_fpath, project, status, confidence, eff_confidence, conflict_with, superseded_by, derived_from, hit_count, version, created_at
+           FROM knowledge_records ${where} ORDER BY julianday(created_at) DESC, id DESC LIMIT ? OFFSET ?`)
+            .all(...(status ? [status, limit, offset] : [limit, offset]));
+        // 全量列表只构建一次冲突映射；annotateConflicts 内部按 300 个 ID 分块。
+        // 逐行调用会把约 3800 行放大为上万条 SQL，同步堵塞所有首屏请求。
+        const rows = annotateConflicts(db, records).map((r) => {
             const row = {
             id: r.id,
             content: r.content,
@@ -298,109 +320,79 @@ export function registerPlans(app, ctx) {
             superseded_by: r.superseded_by,
             derived_from: r.derived_from,
             hits: r.hit_count,
+            version: r.version, // ★ 2026-11-14：编辑框打开时记版本、保存时回传做乐观锁
             created_at: r.created_at,
             };
             // ★ WYSIWYG（format.js 单一真源）：AI 侧三通道视图与可见性判据，只读派生不落库。
             //   /api/all 每行附带 ai.*（用户所见即 AI 所得）+ ai_visible（检索层过滤原因）
-            row.ai = aiViews({ ...r, eff: row.eff });
+            const annotated = r;
+            row.conflict_peers = annotated.conflict_peers;
+            row.ai = aiViews({ ...annotated, eff: row.eff });
             row.ai_visible = aiVisible(row);
             return row;
         });
-        return { total: rows.length, rows };
+        return paging
+            ? { total, returned: rows.length, offset, limit, rows }
+            : { total, returned: rows.length, rows };
     });
     // —— 工具连接：扫描本机已装 AI Agent（真实探测）+ 合并"最近连接心跳"（server 被拉起时 MEMORY_AGENT 留痕，可精确到谁真连过）——
     // ★ 2026-10-05：scanAgents() 基于 spawnSync 探测（最坏 ~90s 事件循环阻塞，交接文档坑8 明令「新代码不要裸调」），
     //   此处加 60s TTL 缓存（与 cards 域 scanKeysSafe 同口径）；心跳 SQL 保持每调重算（轻量）。
     //   custom 登记/注销成功后清缓存戳 → 新条目不等 TTL 窗口即现身（防「登记了但 60s 内选不到」）。
-    let scanCache = { at: 0, value: null };
-    const SCAN_TTL_MS = 60_000;
-    // ★20261005：抽为 getScanCached()，connect-guide/connect/agents/cards 一并复用（不再裸调 scanAgents，修 spawnSync 事件循环阻塞）
-    const getScanCached = () => {
-        const now = Date.now();
-        if (!scanCache.value || now - scanCache.at >= SCAN_TTL_MS)
-            scanCache = { at: now, value: scanAgents() };
-        return scanCache.value;
-    };
+    // ★ 2026-10-15（第三批）：本地 TTL 缓存收敛到 scan.js 的**共享缓存**（primeScanAgentsInWorker
+    //   预热 + scanAgentsAsync 并发合并）——此前 desktop/cards/plans 三处各自独立缓存，
+    //   冷启动首屏并发潮里各付一次 ~2s spawnSync（串行阻塞 load 事件）。
     /** ★20261005 库比对真源：生产库（scan.js 导出，与壳层 core-process.js 同源） */
-    const DB_PATH = MEMORYOS_DB_PATH;
-    app.get("/api/scan-agents", async () => {
-        try {
-            const scan = getScanCached();
-            // 最近连接心跳：近 10 分钟内 op=connect 的 memoryos server 实例，按 payload.agent 归类
-            const beats = db.prepare(`SELECT id, payload, operator FROM memory_events WHERE op='connect' AND created_at >= datetime('now','-10 minutes') ORDER BY id DESC`).all();
-            const beatAgents = {};
-            for (const b of beats) {
-                try {
-                    const p = JSON.parse(b.payload ?? "{}");
-                    const a = p.agent || b.operator.replace(/^agent:/, "");
-                    if (a && a !== "unknown" && !beatAgents[a])
-                        beatAgents[a] = b.id; // 只记每人最近一次
-                }
-                catch { /* ignore */ }
+    const DB_PATH=databaseFile(db);
+    installConnectionState(db);
+    app.post('/api/mcp/heartbeat',async(req,reply)=>{
+        try{const p=req.body??{};saveConnectionPulse(db,{...p,transport:'shim',dbPath:DB_PATH});return {ok:true};}
+        catch{return reply.code(400).send({ok:false,error:'连接回报格式无效'});}
+    });
+    const agentSnapshot=async(req)=>{
+        try{
+            if(req.query.refresh==='1')clearScanCache();
+            const scan=await scanAgentsAsync();
+            const agents=scan.agents.map(a=>{
+                const g=connectGuideFor(a,undefined,{dbPath:DB_PATH});
+                const runtime=runtimeFor(db,a),probe=probeStatus(a);
+                const configured=g.configured;
+                const state=g.parseError?'configuration_error':!g.canAutoWrite&&!g.configured?'unsupported':g.disabled?'disabled':runtime.online&&runtime.configChanged?'reload_required':runtime.online&&runtime.phase==='ready'?'online':runtime.online?'starting':probe?.ok?'verified':probe&&!probe.ok?'probe_failed':configured?(runtime.legacyActivity?'recent_activity':'configured'):'unconfigured';
+                const resolvedDb=runtime.dbPath??(probe?.protocolVerified?probe.dbPath:null)??g.resolvedDb;
+                const dbMatches=resolvedDb?path.resolve(resolvedDb).toLowerCase()===path.resolve(DB_PATH).toLowerCase():null;
+                return {...a,configured,connected:state==='online',connectionState:state,configFile:g.autoWriteFile||a.configFile,canAutoWrite:g.canAutoWrite,needsRepair:g.needsRepair,disabled:g.disabled,
+                    heartbeat:{at:runtime.lastSeen,live:runtime.online},runtime,probe,resolvedDb,configuredDb:g.carrierDb,dbSource:runtime.dbPath?'运行会话回报':probe?.protocolVerified?'协议实测回报':g.dbSource,dbMatches,
+                    staleServer:g.staleServer,connectionError:g.parseError??probe?.error??g.reason??null};
+            });
+            const carriers=agents.filter(a=>a.configFile).map(a=>({agentId:a.id,agentLabel:a.name,file:a.configFile,...readCarrierFacts(a.configFile),resolvedDb:a.resolvedDb,dbMatches:a.dbMatches}));
+            return {ok:true,agents,total:agents.length,installed:agents.filter(a=>a.installed).length,connected:agents.filter(a=>a.connected).length,configured:agents.filter(a=>a.configured).length,dbPath:DB_PATH,carriers,scannedAt:scan.scannedAt,updatedAt:new Date().toISOString(),errors:scan.errors??[]};
+        }catch{return {ok:false,error:'扫描失败；请保留当前清单并重试',agents:[],total:0,connected:0};}
+    };
+    app.get('/api/scan-agents',agentSnapshot);
+    app.get('/api/agent-feedback',async(req,reply)=>{
+        const q=req.query??{};
+        if((q.agent&&String(q.agent).length>120)||(q.kind&&!['read','write','cite','rules'].includes(q.kind))||(q.status&&!['success','failed','unverified'].includes(q.status)))return reply.code(400).send({ok:false,error:'反馈筛选参数无效'});
+        const offset=Number(q.offset??0),limit=Number(q.limit??30);
+        if(!Number.isSafeInteger(offset)||offset<0||offset>1000000||!Number.isSafeInteger(limit)||limit<1||limit>100)return reply.code(400).send({ok:false,error:'分页参数无效'});
+        const snapshot=await agentSnapshot({query:{}});if(!snapshot.ok)return reply.code(503).send({ok:false,error:'智能体扫描失败，请重试'});
+        return feedbackReport(db,snapshot,{agent:q.agent||'',kind:q.kind||'',status:q.status||'',offset,limit});
+    });
+    app.post('/api/agents/connect-auto',async(req,reply)=>{
+        if(RESTRICTED)return reply.code(403).send({ok:false,error:'受限模式不自动修改客户端配置'});
+        const scan=await scanAgentsAsync(),results=[];
+        for(const a of scan.agents){
+            if(!a.installed)continue;
+            const g=connectGuideFor(a,undefined,{dbPath:DB_PATH});
+            if(!g.canAutoWrite||g.disabled||g.needsDbFix){results.push({id:a.id,ok:false,skipped:true,reason:g.disabled?'用户已禁用':g.needsDbFix?'明确指向其他库，保留设置':g.reason});continue;}
+            if(!g.configured||g.needsRepair){
+                const r=applyConnectWrite(a,{automatic:true,dbPath:DB_PATH});results.push({id:a.id,...r});
+                if(r.ok)try{logExecAudit(db,{tool:'connect_write',agent:'dashboard-auto-connect',risk:'L2',approval:'user-authorized-auto-connect',argsDigest:a.id,detail:'已备份合并MemoryOS配置；未保存原配置内容'});}catch{}
             }
-            const agents = scan.agents.map((a) => ({
-                ...a,
-                // 探测 true → 已连接；探测 false 但有心跳 → 已连接（最近连接）；否则未连接
-                connected: a.connected || !!beatAgents[a.id],
-                heartbeat: beatAgents[a.id] ? true : false,
-            }));
-            // ★20261005 数据链补全：逐 agent 透出库比对字段（前端等这三个字段多时，之前后端从不返回 →「当前库」恒「未知」）
-            for (const a of agents) {
-                // 载体文件定位：显式 configFile > configDir 探测；都没有则跳过（无法判定，不臆测）
-                let cf = a.configFile || null;
-                if (!cf && a.configDir) {
-                    const probe = probeCarrier(a.configDir);
-                    cf = probe ? probe.file : null;
-                }
-                const facts = cf ? readCarrierFacts(cf) : null;
-                a.resolvedDb = facts?.carrierDb ?? null;
-                a.dbMatches = facts?.declares ? (facts.carrierDb != null ? path.resolve(facts.carrierDb) === path.resolve(DB_PATH) : null) : null;
-                a.staleServer = !!(facts?.declares && facts.serverPath && !fs.existsSync(facts.serverPath));
-            }
-            const connected = agents.filter((a) => a.connected).length;
-            // ★20261005 数据链补全：dbPath 真源 + carriers[]（已知载体文件逐个摊开，前端核验表从此有数据）
-            const carrierFiles = new Set();
-            const home = os.homedir();
-            for (const a of agents) {
-                if (a.configFile)
-                    carrierFiles.add(a.configFile);
-                else if (a.configDir)
-                    carrierFiles.add(a.configDir);
-            }
-            for (const rel of [".codex/config.toml", ".claude.json", ".workbuddy/mcp.json", ".workbuddy-ai/mcp.json", ".minimax/mcp.json", ".zcode/cli/config.json", "AppData/Roaming/Claude/claude_desktop_config.json"])
-                carrierFiles.add(path.join(home, ...rel.split("/")));
-            const carriers = [];
-            for (const f of carrierFiles) {
-                if (!f)
-                    continue;
-                // 目录（手动登记的 configDir）→ 先探内部载体；文件 → 直接读事实
-                const isDir = fs.existsSync(f) && fs.statSync(f).isDirectory();
-                const probe = isDir ? probeCarrier(f) : null;
-                const target = probe ? probe.file : (isDir ? null : f);
-                if (!target)
-                    continue;
-                const facts = readCarrierFacts(target);
-                if (!facts.exists)
-                    continue;
-                const owner = agents.find((x) => x.configFile === target);
-                carriers.push({
-                    agentId: owner?.id ?? null,
-                    agentLabel: owner?.name ?? path.basename(target),
-                    file: target,
-                    shape: facts.shape,
-                    declares: facts.declares,
-                    serverPath: facts.serverPath,
-                    resolvedDb: facts.carrierDb,
-                    dbMatches: facts.declares ? (facts.carrierDb != null ? path.resolve(facts.carrierDb) === path.resolve(DB_PATH) : null) : null,
-                });
-            }
-            return { agents, total: agents.length, connected, dbPath: DB_PATH, carriers };
         }
-        catch (e) {
-            // 异常不 500：返回空清单降级（前端 agentScanCache 语义=「取数失败保留旧清单」，形状变化可被识别）
-            console.error("[scan-agents] 扫描/心跳异常，降级返回空清单", e);
-            return { ok: false, agents: [], total: 0, connected: 0, error: String(e?.message ?? e) };
-        }
+        // 协议测试与真实客户端连接分开显示，不将探测进程记成在线。
+        const candidates=scan.agents.filter(a=>a.installed&&connectGuideFor(a,undefined,{dbPath:DB_PATH}).configured);
+        void (async()=>{for(let i=0;i<candidates.length;i+=2)await Promise.all(candidates.slice(i,i+2).map(a=>{const p=probeStatus(a);return p&&Date.now()-Date.parse(p.checkedAt)<60000?null:probeConnection(a,{expectedDb:DB_PATH});}));})().catch(()=>{});
+        return {ok:true,results,written:results.filter(r=>r.ok&&!r.unchanged).length,skipped:results.filter(r=>r.skipped).length,checkedAt:new Date().toISOString()};
     });
     /* ★ 批次⑦B（2026-09-23）：手动登记清单外的新智能体（扫描兜底）。
      * 落盘 %APPDATA%\MemoryOS\agents.custom.json，每次 /api/scan-agents 合并；
@@ -421,7 +413,7 @@ export function registerPlans(app, ctx) {
                 return reply.code(409).send({ ok: false, error: `「${name}」已登记过` });
             list.push(entry);
             saveCustomAgents(list);
-            scanCache = { at: 0, value: null }; // 登记成功清缓存戳：下次 /api/scan-agents 立即并入新条目（不等 TTL 窗口）
+            clearScanCache(); // 登记成功清缓存戳：下次 /api/scan-agents 立即并入新条目（不等 TTL 窗口）
             return { ok: true, entry, total: list.length };
         }
         catch (e) {
@@ -438,7 +430,7 @@ export function registerPlans(app, ctx) {
             if (next.length === list.length)
                 return reply.code(404).send({ ok: false, error: `未登记「${name}」` });
             saveCustomAgents(next);
-            scanCache = { at: 0, value: null }; // 注销同样清缓存戳（防已删条目残留在 60s 窗口内）
+            clearScanCache(); // 注销同样清缓存戳（防已删条目残留在 60s 窗口内）
             return { ok: true, remaining: next.length };
         }
         catch (e) {
@@ -450,7 +442,7 @@ export function registerPlans(app, ctx) {
     //   带确定性签名（SHA-256 over 规范 JSON），供对端做签名验证（协议层·Agent Card 签名验证）。
     app.get("/api/agents/cards", async () => {
         const crypto = await import("node:crypto");
-        const scan = scanAgents();
+        const scan = await scanAgentsAsync();
         // 本服务的工具面（MCP server memory-hub 的工具清单）
         let toolCount = 0;
         try {
@@ -484,27 +476,27 @@ export function registerPlans(app, ctx) {
         };
     });
     // —— 接入向导：查某 agent 的 connect guide（可否自动写/手动步骤/配置模板）——
-    // ★20261005：换用 getScanCached()（原裸调 scanAgents()，spawnSync 最坏 ~90s 冻结事件循环）；支持 ?refresh=1 强制重扫
+    // ★20261005：换用共享缓存 scanAgentsAsync()（原裸调 scanAgents()，spawnSync 最坏 ~90s 冻结事件循环）；支持 ?refresh=1 强制重扫
     app.get("/api/agent/:id/connect-guide", async (req, reply) => {
         if (req.query.refresh === "1")
-            scanCache = { at: 0, value: null };
-        const s = getScanCached();
+            clearScanCache();
+        const s = await scanAgentsAsync();
         const a = s.agents.find((x) => x.id === req.params.id);
         if (!a)
             return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
-        const g = connectGuideFor(a);
+        const g = connectGuideFor(a,undefined,{dbPath:DB_PATH});
         // guide 级库比对与写入目标（与 scan-agents 的 agent 级字段同源；targetDb 为当前生产库真源）
         return { ok: true, guide: { ...g, targetDb: DB_PATH } };
     });
     // —— 接入向导：一键自动写配置（仅 canAutoWrite；带备份）。dry_run=1 只预览不落盘 ——
     // ★20261005：换用缓存；返回 mode/target/dbPath；写类操作落 logExecAudit（与执行面同口径，append-only）
     app.post("/api/agent/:id/connect", async (req, reply) => {
-        const s = getScanCached();
+        const s = await scanAgentsAsync();
         const a = s.agents.find((x) => x.id === req.params.id);
         if (!a)
             return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
         const dryRun = req.query.dry_run === "1" || req.body?.dryRun === true;
-        const r = applyConnectWrite(a, { dryRun });
+        const r = applyConnectWrite(a, { dryRun, dbPath:DB_PATH });
         try {
             logExecAudit(db, {
                 tool: "connect_write", agent: "dashboard-connect", risk: dryRun ? "L1" : "L2",
@@ -526,34 +518,12 @@ export function registerPlans(app, ctx) {
             return reply.code(403).send({ ok: false, code: "RESTRICTED", error: "受限模式：由系统统一派发" });
         // 空 body / 无 content-type 容错：本端点不读 body；415 由内核 JSON parser 对无 content-type POST 报出，
         // dashboard.js 已有 content-typeOverride 全局容错（curl 空 POST 可达）；此处不再处理 body。
-        const s = getScanCached();
+        const s = await scanAgentsAsync();
         const a = s.agents.find((x) => x.id === req.params.id);
         if (!a)
             return reply.code(404).send({ ok: false, error: `agent '${req.params.id}' 未扫描到` });
-        const started = Date.now();
-        try {
-            const r = spawnSync(process.execPath, [MEMORYOS_SERVER_PATH, "--list-tools"], {
-                encoding: "utf8", timeout: 20_000, windowsHide: true,
-                env: { ...process.env, MEMORY_AGENT: a.id, MEMORY_DB: DB_PATH, MEMORYOS_EMBED_TEST: "1" },
-            });
-            const out = String(r.stdout || "");
-            const m = out.match(/##TOOLS##(\[[\s\S]*?\])/);
-            if (!m)
-                throw new Error(out.slice(0, 200) || r.stderr?.slice(0, 200) || "server 未返回工具清单");
-            const tools = JSON.parse(m[1]);
-            const durationMs = Date.now() - started;
-            try {
-                logExecAudit(db, { tool: "test_connection", agent: "dashboard-connect", risk: "L1", approval: "user-triggered", argsDigest: a.id, detail: `tools=${tools.length} ${durationMs}ms`, durationMs });
-            }
-            catch { /* 审计失败不阻断 */ }
-            return { ok: true, agentId: a.id, toolCount: tools.length, tools: tools.slice(0, 8), durationMs };
-        }
-        catch (e) {
-            try {
-                logExecAudit(db, { tool: "test_connection", agent: "dashboard-connect", risk: "L1", approval: "user-triggered", argsDigest: a.id, detail: "FAIL " + String(e?.message ?? e).slice(0, 160), durationMs: Date.now() - started });
-            }
-            catch { /* 审计失败不阻断 */ }
-            return { ok: false, agentId: a.id, error: String(e?.message ?? e), durationMs: Date.now() - started };
-        }
+        const result=await probeConnection(a,{expectedDb:DB_PATH});
+        try{logExecAudit(db,{tool:'test_connection',agent:'dashboard-connect',risk:'L1',approval:'user-triggered',argsDigest:a.id,detail:`stage=${result.stage} ok=${result.ok}`,durationMs:result.durationMs});}catch{}
+        return result;
     });
 }

@@ -1,22 +1,28 @@
+import { startClientReporting } from './connection-runtime.js';
 /**
  * MemoryOS v0.2 — MCP Server（fastmcp v3 / FastMCP）
  * Tools: memory_write（embed + 去重/冲突预检） / memory_search（混合检索 RRF）
- * ★ P2-④（2026-09-22）：常驻工具按域拆分到 server-reg-memory.js / -obsidian.js / -task.js（数量以 `--list-tools` 为准，勿手抄）；
- *   本文件保留内核（FastMCP 实例 + addTool 覆写 + 共享层）、执行面注册与 CLI 入口。
+ * ★ P2-④（2026-09-22）：常驻工具按域拆分到 server-reg-memory.js / -obsidian.js / -task.js（数量以 `--list-tools` 为准，勿手抄）。
+ * ★ 2026-10-14（架构重构 1a）：注册编排（addTool 覆写 + 共享层 ctx + 三域/guide/执行面注册）抽到
+ *   server-tools.js::registerAllTools —— 核心（dashboard）与 MCP server 共用同一份工具面。
+ *   本文件保留：内核（FastMCP 实例 + DB/身份/embed 引导）、--list-tools 与 stdio CLI 入口。
  *   注册顺序不变：memory → obsidian → task；`node dist/server.js --list-tools` 逐字节可证（数量勿手抄）。
+ * ★ 2026-10-14（架构重构 1b）：模式分支 —— `direct`（默认，本文件内建内核：openDb + 嵌入模型 + 直执行）
+ *   / `shim`（薄转发：工具面注册照旧，但执行改走核心的 HTTP /ops，**本进程不打开 DB、不加载模型**，
+ *   见 server-shim.js）。模式来源：`data/config.json` 的 `mcpMode`（缺省 direct）；
+ *   环境变量 `MEMORYOS_MCP_MODE` 仅作**测试覆盖**，优先级高于文件。
+ *   两条硬口径：① 工具面（名称/schema/描述/风险前缀/注册顺序）两种模式**逐字节不变**（同一份 registerAllTools）；
+ *   ② direct 分支保持原路径（openDb / 身份引导 / embed 缺省 local / 连接心跳），shim 分支一律不碰。
  * 启动：stdio（默认 transport），node dist/server.js
  */
 import { FastMCP } from "fastmcp";
-import { openDb, withTx, appendEvent, logExecAudit } from "./db.js";
-import { createExecTools, riskPrefix } from "./exec-tools.js";
+import { openDb, appendEvent } from "./db.js";
 import { embedMode } from "./embed.js";
 import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { registerMemoryTools } from "./server-reg-memory.js";
-import { registerObsidianTools } from "./server-reg-obsidian.js";
-import { registerTaskTools } from "./server-reg-task.js";
-import { registerGuideTool } from "./tool-guides.js";
+import { registerAllTools } from "./server-tools.js";
+import { createShimToolface } from "./server-shim.js"; // ★ 1b：shim 模式（薄转发；零 DB / 零模型）
 // —— 运行时身份读取（R3 分工：读写自动带 agent/agent_fpath）——
 const DB_PATH = process.env.MEMORY_DB ?? (process.env.APPDATA
   ? path.join(process.env.APPDATA, "MemoryOS", "data", "memory.db") // ★ 口径收口（2026-10-02 用户拍板）：缺省只用 %APPDATA% 生产库，不再落仓内 dev 库（防止无 MEMORY_DB 的接入面悄悄写错库）
@@ -33,170 +39,139 @@ function auditAgentIdentity() {
         console.error(`[warn] 配置路径指纹不存在: ${path.resolve(AGENT_FPATH)}（agent=${AGENT}）`);
     }
 }
-const db = openDb(DB_PATH);
-auditAgentIdentity();
-// ★ 2026-09-25 P0③：IDE 里以 stdio 起的 MCP 常不注入 EMBED_MODE —— 若沿用模块默认 fake，
-//   语义检索会静默退化成纯词法召回（库内向量是 bge-m3 真向量，query 造假向量必然对不上）。
-//   故此处补缺省 local（口径对齐 agent-core.js 的 `process.env.EMBED_MODE || "local"`）；
-//   embed.js 已改惰性解析，此刻设置即生效。显式设 api/fake 仍可覆盖。
-const _embedDefaulted = !process.env.EMBED_MODE;
-if (_embedDefaulted)
-    process.env.EMBED_MODE = "local";
-// P0① 启动自检：embed 模式兜底告警（存储向量已是 bge-m3 真实嵌入；检索若跑 fake 模式则 query 向量与库不匹配，召回必失效）
-const _embedMode = embedMode();
-console.error(`[embed] EMBED_MODE=${_embedMode}${_embedMode === "fake" ? "  ⚠ 无语义检索：生产使用需在客户端 MCP 配置注入 EMBED_MODE=local（见 deploy-mcp.mjs 或 dashboard 工具连接页配置示例）" : _embedDefaulted ? "（未注入 EMBED_MODE，已按缺省 local 启动；若本机无模型缓存，首次调用会加载/下载模型（约数百 MB）——可显式设 EMBED_MODE=api 或 fake 覆盖）" : ""}`);
+
+/* ── ★ 1b：模式开关（direct / shim）───────────────────────────────
+ *  口径：config.json(mcpMode) 为准；MEMORYOS_MCP_MODE 只作**测试覆盖**（优先级高于文件）。
+ *  容忍半写：解析失败（正在被写 / 被截断）→ 按 direct 处理 + 一条 warn，**绝不崩**
+ *  （崩掉的代价是 MCP 客户端整条工具面不可用，远大于"读不到一个配置项"）。
+ *  config.json 目录口径与 dashboard.js::dataDirOf 一致（尊重 MEMORYOS_DATA_DIR / MEMORY_DB）。 */
+const VALID_MCP_MODES = new Set(["direct", "shim"]);
+function dataDirOf() {
+    if (process.env.MEMORYOS_DATA_DIR)
+        return process.env.MEMORYOS_DATA_DIR;
+    const db = process.env.MEMORY_DB;
+    return db ? path.dirname(path.dirname(db)) : "";
+}
+function readMcpMode() {
+    const envMode = String(process.env.MEMORYOS_MCP_MODE ?? "").trim().toLowerCase();
+    if (envMode) {
+        if (VALID_MCP_MODES.has(envMode))
+            return envMode;
+        console.error(`[warn] MEMORYOS_MCP_MODE=${envMode} 不是合法模式（direct/shim）——按 direct 处理`);
+        return "direct";
+    }
+    const dir = dataDirOf();
+    const file = dir ? path.join(dir, "config.json") : "";
+    if (!file || !fs.existsSync(file))
+        return "direct";
+    let cfg;
+    try {
+        cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    }
+    catch (e) {
+        console.error(`[warn] data/config.json 解析失败（疑似半写/截断，按 direct 处理）: ${e instanceof Error ? e.message : String(e)}`);
+        return "direct";
+    }
+    const mode = String(cfg?.mcpMode ?? "").trim().toLowerCase();
+    if (!mode)
+        return "direct";
+    if (!VALID_MCP_MODES.has(mode)) {
+        console.error(`[warn] data/config.json 的 mcpMode=${mode} 不是合法模式（direct/shim）——按 direct 处理`);
+        return "direct";
+    }
+    return mode;
+}
+const MCP_MODE = readMcpMode();
+/* ★ 灰度开关（P0/P1 · 2026-10-18）：config.json → 本进程 env 回填（direct 模式本进程执行 task_* 工具，
+*   与 dashboard.js 核心侧同款同口径——config 显式 boolean 覆盖 env，未写走 env/缺省关）。
+*   保证 shim/direct 两种模式下四个开关行为一致（config.json 单一开关）。 */
+{
+    const _dir = dataDirOf();
+    const _file = _dir ? path.join(_dir, "config.json") : "";
+    if (_file && fs.existsSync(_file)) {
+        try {
+            const _c = JSON.parse(fs.readFileSync(_file, "utf8"));
+            const _flagMap = {
+                depValidate: "MEMORYOS_DEP_VALIDATE",
+                taskSettle: "MEMORYOS_TASK_SETTLE",
+                atomicClaim: "MEMORYOS_ATOMIC_CLAIM",
+                doneAutoreview: "MEMORYOS_DONE_AUTOREVIEW",
+                gateBreaker: "MEMORYOS_GATE_BREAKER", // ★ B3（P2）：门控连续失败熔断
+                prioViaDispatch: "MEMORYOS_PRIO_VIA_DISPATCH", // ★ P15：直派任务 priority 回退 dispatch 链接取数
+                reviewGuard: "MEMORYOS_REVIEW_GUARD", // ★ B1（P2）：agent 收口不得覆盖人工 review 卡
+            };
+            for (const [_k, _env] of Object.entries(_flagMap)) {
+                if (typeof _c[_k] === "boolean")
+                    process.env[_env] = _c[_k] ? "1" : "0";
+            }
+        }
+        catch { /* 半写/截断按无配置处理，开关走 env/缺省 */ }
+    }
+}
+
 const server = new FastMCP({
     name: "memory-hub",
     version: "0.2.0",
-    instructions: "共享记忆中心（语义检索）。【硬性·每条消息第一步】收到用户任何消息后，第一件事必须先调用 memory_context（可带 focus=当前任务主题）注入当前项目高价值记忆，之后才能回复或调用其他工具；随后按需 memory_search 精确检索，命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。若本机未安装或未连接 MemoryOS MCP，须先明确提示用户安装接入，不得跳过此步。提交修复结论/技术决策/隐藏约定/第三方坑时调用 memory_write；scope 不确定先 memory_projects。禁写：绝不写入敏感凭据。",
+    instructions: "共享记忆中心（语义检索）。【硬性·每条消息第一步】收到用户任何消息后，第一件事必须先调用 memory_context（可带 focus=当前任务主题）注入当前项目高价值记忆，之后才能回复或调用其他工具；随后按需 memory_search 精确检索，命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。若本机未安装或未连接 MemoryOS MCP，须先明确提示用户安装接入，不得跳过此步。提交修复结论/技术决策/隐藏约定/第三方坑时调用 memory_write；scope 不确定先 memory_context（自带 project 清单）。禁写：绝不写入敏感凭据。",
 });
 
-/**
- * 工具级错误兜底（P0-2.1）。
- * 现状：本覆写层覆盖 server-reg-*.js 注册的全部工具（常驻清单以 `--list-tools` 为准），注册点仅 9 处 try/catch —— 未捕获异常会以原始堆栈
- * 形式抛给 MCP 客户端，用户看到的是内部实现细节；涉及嵌入计算 / LLM 调用 / 文件 IO
- * 的工具异常面尤其大。
- * 本包装保证：任何工具异常都被转为结构化文本结果 + stderr 留痕，绝不抛裸异常。
- *
- * 实现方式：覆盖「实例上的 addTool 方法」（实例属性遮蔽原型方法），而非改写各处注册点 ——
- * 这样注册点的参数类型推断与可读性完全不变，只在运行时多包一层 try/catch。
- */
-// ★ 2026-09-19 单一事实源：所有经覆写层注册的工具名都记入 REGISTERED_TOOLS。
-//   `node dist/server.js --list-tools` 打印该清单后退出，冒烟（smoke-agent）用它派生期望工具面，
-//   根治「手抄清单第 5 次过期」（task_verify 落地后 smoke 的 REQUIRED 仍停在 25 → 必 FAIL）。
-const REGISTERED_TOOLS = [];
-const _origAddTool = server.addTool.bind(server);
-server.addTool = (def) => {
-    REGISTERED_TOOLS.push(def.name);
-    // ★ P0 执行面（修 F1）：把风险级/审批策略前缀注入工具描述 —— 单一真相源在 exec-tools.js 的 TOOL_RISK。
-    //   ★ 2026-09-22 fail-closed 兜底：riskPrefix 对不在 TOOL_RISK 的未知工具返回 L4/required（不再返回空串），
-    //     故本端注册的每个工具 100% 带前缀；agent-core 解析前缀决定是否过 writeGate，漏登记只会多审批、不会静默放行。
-    const _pfx = riskPrefix(def.name);
-    if (_pfx && !String(def.description || "").startsWith("⟨risk:")) {
-        def.description = _pfx + (def.description || "");
-    }
-    const orig = def.execute;
-    def.execute = async (...a) => {
-        try {
-            return await orig.apply(def, a);
-        }
-        catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            console.error(`[tool:${def.name}] 执行失败: ${msg}`);
-            // ★ 2026-09-25 P1-d：协议级可判定错误 —— 原返回纯文本，MCP 结果层 isError=false，
-            //   调用方只能靠字符串嗅探 "⚠" 才知道这是失败（agent-core.js:226 对 isError 的消费从未被触发）。
-            //   改为 ContentResult{content, isError:true}：文本原样保留（人类/纯文本解析器零变化），
-            //   符合 MCP 规范的客户端从此能正确判定失败（fastmcp 类型支持见 FastMCP.d.ts:168/606）。
-            return {
-                content: [{ type: "text", text: `⚠ ${def.name} 执行失败：${msg}\n（异常已捕获，会话未中断。若为 SQLite 锁竞争，可稍后重试一次。）` }],
-                isError: true,
-            };
-        }
-    };
-    _origAddTool(def);
-};
-
-/* ── 共享层（P2-④）：被 ≥2 个域模块使用的原语，经 ctx 注入 —— 避免 reg → server 的循环 import ──
- *   nowIso / plusHoursIso / isCredentialValid：memory_credential ↔ checkWriteCredential（任务域）
- *   stateReceipt：memory_write ↔ 任务域全部写工具（机器可读 ⟨state⟩ 终态行）
- *   TxAbort / runTaskTx：memory_write ↔ 任务域全链路（BEGIN IMMEDIATE 整段事务；业务中止转人话文案） */
-/**
- * ★ A1 身份与认证层：短生命周期凭据（动态凭据 + 最小权限 scope + 可撤销信任）。
- * 签发/吊销/校验三态。credential 为随机 hex（randomBytes），绝不存口令、绝不参与命令拼接。
- */
-function nowIso() { return new Date().toISOString(); }
-function plusHoursIso(h) { return new Date(Date.now() + h * 3600_000).toISOString(); }
-function isCredentialValid(row) {
-    if (!row) return false;
-    if (row.revoked_at) return false; // 已撤销（可撤销信任）
-    if (row.expires_at && row.expires_at <= nowIso()) return false; // 过期
-    return true;
+/* ── 工具注册编排（P2-④ 域拆分 + ★ 2026-10-14 架构重构 1a/1b）：全部经 server-tools.js::registerAllTools ——
+ *   addTool 覆写层（注册清单记录 + riskPrefix 风险前缀 + try/catch 结构化兜底）、共享层 ctx
+ *   （stateReceipt / TxAbort / runTaskTx / isCredentialValid / nowIso / plusHoursIso）、
+ *   三域注册（memory → obsidian → task）+ tool_guide + 执行面（MEMORYOS_EXEC_ON=1 时才注册）。
+ *   调用顺序 = 注册顺序，等价于原文件声明顺序；勿调整。
+ *   ★ 1a/1b 硬约束：工具名 / schema / 描述 / 响应文案 / 注册顺序**两种模式逐字不变** —— 由
+ *     `node dist/server.js --list-tools` 前后逐字节比对兜底（冒烟 smoke-agent 用它派生期望工具面）。 */
+let REGISTERED_TOOLS = [];
+/** ★ 1b：direct 分支才有 db（shim 分支把 db 留 null —— 不 openDb / 不读写 memory.db）。 */
+let db = null;
+if (MCP_MODE === "shim") {
+    // shim：工具面照旧注册，执行改走核心 HTTP /ops；不 openDb、不设 EMBED_MODE、不写连接心跳
+    const { tools } = createShimToolface(server, { AGENT, AGENT_FPATH, ENV_CRED, dbPath: DB_PATH });
+    REGISTERED_TOOLS = [...tools.keys()];
+    console.error(`[mcp] 模式=shim：工具面薄转发到核心（无 DB / 无嵌入模型）；端口取 MEMORY_PORT 或 data/core.json（须 pid 存活）`);
 }
-/** ★ 2026-09-19（实操问题 #10）：写工具回执追加机器可读终态行（⟨state⟩ 单行 JSON）。
- *  人话回执曾掩盖「成功回执 + 零副作用」缺陷（supersedes 静默丢弃、release 卡侧静默失效）；
- *  统一终态行让调用方/自动化可逐字校验副作用是否落地。undefined/null 字段不输出。 */
-function stateReceipt(o) {
-    const slim = {};
-    for (const [k, v] of Object.entries(o))
-        if (v !== undefined && v !== null)
-            slim[k] = v;
-    return `\n⟨state⟩ ${JSON.stringify(slim)}`;
-}
-/** ★ 一致性①（2026-09-19）「记账一笔成」：任务链路的多步写（CAS 状态头 + 事件 + 卡片投影 + 租约）此前为
- *  逐条自动提交 —— 中途崩溃/锁失败即头-卡-事件三方分裂，只能等 5min 对账；且「稍后重试」会因 version 已 +1
- *  被 CAS 拒绝（重试进不去）。现统一用 withTx（BEGIN IMMEDIATE）包整段：要么全成、要么全不算；
- *  锁竞争由 withTx 整段重试（fn 只做 DB 写，重跑安全）。事务纪律：
- *  - 事务内业务中止（并发冲突需把人话文案返回给 agent 而非抛 MCP 错误）→ 抛 TxAbort，runTaskTx 捕获转文案；
- *  - 慢活绝不进事务：runTaskGate 子进程验收保持在锁外（先跑门控、后开事务写结果）；
- *  - 卡片投影保持 best-effort catch（投影失败留日志，源头以任务头为准，对账兜底）——不因投影失败回滚事实。 */
-class TxAbort extends Error {
-    constructor(msg) { super(msg); this.name = "TxAbort"; }
-}
-function runTaskTx(db, fn) {
-    try {
-        withTx(db, fn);
-        return null;
-    }
-    catch (e) {
-        if (e instanceof TxAbort)
-            return e.message; // 业务中止：整体已回滚，把冲突文案交还调用方
-        throw e; // 非业务错误：向上抛（MCP 层兜底）
-    }
-}
-
-/* ── 工具注册：调用顺序 = REGISTERED_TOOLS 顺序，等价于原文件声明顺序；勿调整 ──
- *   memory → obsidian → task；执行面（file_read/file_write/exec_run）在其后按需追加。 */
-const ctx = { db, AGENT, AGENT_FPATH, ENV_CRED, stateReceipt, TxAbort, runTaskTx, isCredentialValid, nowIso, plusHoursIso };
-registerMemoryTools(server, ctx);
-registerObsidianTools(server, ctx);
-registerTaskTools(server, ctx);
-registerGuideTool(server); // ★ 批次F1（P2-2）：工具详规按需查询（description 已一行化，对标 Orca 分片加载）
-
-/* ── P0 执行工具面注册（方案 A：单 MCP 平面 + 模块分离）────────────
-   只有 3 个工具 P0 上线；均自动被上面的 addTool 覆写包裹（try/catch + 风险前缀）。
-   默认值（★ P0-2，用户拍板「决策1 (a)」）：**默认关闭执行面**，显式 MEMORYOS_EXEC_ON=1 才启用。
-   与方案「P0 上线默认关闭、逐工具 opt-in」一致，也同向 B1「写操作先获同意」。
-   既有 MEMORYOS_EXEC_OFF=1 作为显式熔断兜底，优先级最高（只要它=1 一律不启用）。 */
-const _KERNEL_DIR = path.dirname(fileURLToPath(import.meta.url));            // .../resources/memoryos/dist
-const _WORKSPACE_ROOT = path.resolve(process.env.MEMORYOS_WORKSPACE || path.join(_KERNEL_DIR, "..", "..", ".."));
-const _DATA_DIR = path.dirname(DB_PATH);
-const _EXEC_OFF = process.env.MEMORYOS_EXEC_OFF === "1";
-const _EXEC_ON = process.env.MEMORYOS_EXEC_ON === "1";
-if (_EXEC_OFF) {
-    console.error("[exec] MEMORYOS_EXEC_OFF=1 —— 执行面已显式熔断，本次仅暴露记忆/任务工具");
-} else if (!_EXEC_ON) {
-    console.error("[exec] 执行面默认关闭（未设 MEMORYOS_EXEC_ON=1）—— 本次仅暴露记忆/任务工具；显式置 MEMORYOS_EXEC_ON=1 以启用 file_read/file_write/exec_run");
-} else {
-    for (const t of createExecTools({
-        workspaceRoot: _WORKSPACE_ROOT,
-        dataDir: _DATA_DIR,
-        agent: AGENT,
-        logAudit: (row) => logExecAudit(db, row),
-    })) {
-        server.addTool(t);
-    }
-    console.error(`[exec] 执行面已启用：file_read / file_write / exec_run（工作区 ${_WORKSPACE_ROOT}；artifact 落 ${path.join(_DATA_DIR, "artifacts")}）`);
+else {
+    db = openDb(DB_PATH);
+    auditAgentIdentity();
+    // ★ 2026-09-25 P0③：IDE 里以 stdio 起的 MCP 常不注入 EMBED_MODE —— 若沿用模块默认 fake，
+    //   语义检索会静默退化成纯词法召回（库内向量是 bge-m3 真向量，query 造假向量必然对不上）。
+    //   故此处补缺省 local（口径对齐 agent-core.js 的 `process.env.EMBED_MODE || "local"`）；
+    //   embed.js 已改惰性解析，此刻设置即生效。显式设 api/fake 仍可覆盖。
+    const _embedDefaulted = !process.env.EMBED_MODE;
+    if (_embedDefaulted)
+        process.env.EMBED_MODE = "local";
+    // P0① 启动自检：embed 模式兜底告警（存储向量已是 bge-m3 真实嵌入；检索若跑 fake 模式则 query 向量与库不匹配，召回必失效）
+    const _embedMode = embedMode();
+    console.error(`[embed] EMBED_MODE=${_embedMode}${_embedMode === "fake" ? "  ⚠ 无语义检索：生产使用需在客户端 MCP 配置注入 EMBED_MODE=local（见 deploy-mcp.mjs 或 dashboard 工具连接页配置示例）" : _embedDefaulted ? "（未注入 EMBED_MODE，已按缺省 local 启动；若本机无模型缓存，首次调用会加载/下载模型（约数百 MB）——可显式设 EMBED_MODE=api 或 fake 覆盖）" : ""}`);
+    const { tools } = registerAllTools(server, { db, AGENT, AGENT_FPATH, ENV_CRED, dbPath: DB_PATH });
+    REGISTERED_TOOLS = [...tools.keys()];
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 // ★ 2026-09-19 --list-tools：单一事实源查询口——打印实际注册清单后退出。
-//   不启动 stdio transport、不写 connect 心跳（这不是一次客户端连接）；模块加载期的
-//   DB 打开/迁移与正常启动一致（幂等，无额外写）。stdout 走管道时 process.exit 可能截断缓冲，
-//   故用写回调解 exit；输出加 ##TOOLS## 前缀防未来 stdout 污染（本文件现无 console.log）。
+//   不启动 stdio transport、不写 connect 心跳（这不是一次客户端连接）；
+//   ★ 1b 结论：**两种模式都可用** —— direct 下模块加载期的 DB 打开/迁移与正常启动一致（幂等，无额外写），
+//   shim 下压根不打开 DB（更轻）。两条路径打印的都是同一份 Map 键序列（逐字节一致）。
+//   stdout 走管道时 process.exit 可能截断缓冲，故用写回调解 exit；输出加 ##TOOLS## 前缀防未来 stdout 污染。
 if (process.argv.includes("--list-tools")) {
     process.stdout.write("##TOOLS##" + JSON.stringify(REGISTERED_TOOLS) + "\n", () => process.exit(0));
 } else if (isMain) {
     // 连接心跳：每次 server 被某个客户端 stdio 拉起时留痕（op=connect）。MEMORY_AGENT 由 MCP 配置 env 注入 → 可精确到"哪个 agent 连上了"
-    try {
-        appendEvent(db, {
-            memory_id: null,
-            op: "connect",
-            payload: JSON.stringify({ agent: AGENT, agent_fpath: AGENT_FPATH, ts: new Date().toISOString() }),
-            operator: `agent:${AGENT}`,
-        });
+    // ★ 1b：shim 分支无 db（不写心跳）—— 心跳是「本进程直连库」的语义，shim 的连接事实由核心侧记录。
+    if (db && process.env.MEMORYOS_CONNECTION_PROBE !== '1') {
+        try {
+            appendEvent(db, {
+                memory_id: null,
+                op: "connect",
+                payload: JSON.stringify({ agent: AGENT, agent_fpath: AGENT_FPATH, ts: new Date().toISOString() }),
+                operator: `agent:${AGENT}`,
+            });
+        }
+        catch {
+            /* 心跳失败不阻断启动 */
+        }
     }
-    catch {
-        /* 心跳失败不阻断启动 */
-    }
+    startClientReporting(server,{db,agent:AGENT,agentFpath:AGENT_FPATH,dbPath:DB_PATH,mode:MCP_MODE});
     await server.start({ transportType: "stdio" });
 }

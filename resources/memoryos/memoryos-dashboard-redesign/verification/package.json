@@ -1,0 +1,15 @@
+{
+  "name": "memoryos-ui-p3-verification",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test-p0-verify.cjs && node verify-p1.cjs && node verify-p2.cjs && node verify-p3.cjs",
+    "baseline": "node verify-p3.cjs --update-baseline"
+  },
+  "devDependencies": {
+    "fastify": "5.12.3",
+    "playwright": "1.62.1",
+    "pngjs": "7.0.0",
+    "postcss": "8.5.6"
+  }
+}

@@ -1,0 +1,36 @@
+/* 规范页只定义编排，按钮、状态、表格与反馈复用产品组件。 */
+#page-styleguide{max-width:1200px;margin:auto;padding-bottom:48px}
+.sg-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:24px}
+.sg-eyebrow{color:var(--c-primary);font-size:var(--fs-sm);margin:0 0 12px}
+.sg-header h2{font-size:clamp(24px,3vw,34px);line-height:1.3;margin:0 0 12px;letter-spacing:-.5px}
+.sg-header p{line-height:1.7}.sg-header>a{flex:none}
+.sg-index{display:flex;gap:8px 20px;flex-wrap:wrap;border-bottom:1px solid var(--border-glass);padding-bottom:16px;margin-bottom:32px}
+.sg-index a{color:var(--text-secondary);padding:8px 0;text-decoration:none}
+.sg-index a:hover{color:var(--c-primary)}
+.sg-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px}
+.sg-section{min-width:0;border-top:2px solid var(--border-glass);padding:20px 0 0;scroll-margin-top:calc(var(--nav-height,64px) + 16px)}
+.sg-section h3{font-size:var(--fs-lg);margin:0 0 16px}.sg-section p{line-height:1.8}
+.sg-wide{grid-column:1/-1}.sg-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:16px 0}
+.sg-row button{min-height:44px}
+.sg-swatches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 12px}
+.sg-swatch{min-width:0;display:flex;flex-direction:column;gap:8px;font-size:var(--fs-sm)}
+.sg-swatch>span{display:block;background:var(--swatch);height:48px;border:1px solid var(--border-glass);border-radius:var(--radius-sm)}
+.sg-swatch code{overflow-wrap:anywhere}.sg-swatch small{color:var(--text-muted);font:inherit}
+.sg-title-demo{font-size:var(--fs-2xl);font-weight:600}.sg-code{font-family:var(--font-mono);overflow-wrap:anywhere}
+.sg-spacing{display:flex;align-items:flex-end;gap:16px;margin-top:24px}.sg-spacing span{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:var(--fs-sm)}
+.sg-spacing span::before{content:'';width:var(--space);height:var(--space);background:var(--c-primary);border-radius:2px}
+.sg-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:24px 0}
+.sg-form label{display:flex;flex-direction:column;gap:8px;min-width:0;font-size:var(--fs-md)}
+.sg-input{width:100%;min-height:44px;border:1px solid var(--border-glass);background:var(--input-bg);color:var(--text-primary);font:inherit;border-radius:var(--radius-sm);padding:10px 12px}
+.sg-input[aria-invalid=true]{border-color:var(--danger)}#sgInputError{color:var(--danger)}
+.sg-form .sg-check{flex-direction:row;align-items:center}.sg-check input{accent-color:var(--c-primary)}
+.sg-details{border-block:1px solid var(--border-glass);padding:12px 0}.sg-details summary{cursor:pointer;min-height:32px;align-content:center}
+.sg-feedback{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:24px 0}.sg-feedback .toast-entry{box-shadow:none;animation:none}
+.sg-states{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;border-block:1px solid var(--border-glass);padding:24px 0;margin-bottom:20px;align-items:center}
+.sg-states .empty-state{padding:20px}.sg-skeleton{height:16px;max-width:240px;border-radius:var(--radius-sm)}
+.sg-tokens{display:flex;flex-wrap:wrap;gap:24px;margin:24px 0}.sg-tokens dt{color:var(--text-secondary);font-size:var(--fs-sm);margin-bottom:8px}.sg-tokens dd{margin:0;font-family:var(--font-mono)}
+.sg-motion-demo{margin-top:16px;padding:16px;border-left:3px solid var(--c-primary);background:var(--c-primary-soft)}
+.sg-motion-demo.replay{animation:p1-enter var(--dur-enter) var(--ease-out)}
+.sg-dialog{position:fixed;margin:auto;padding:0;border:1px solid var(--border-glass);color:var(--text-primary);max-height:calc(100dvh - 32px);overflow:auto;width:min(520px,calc(100vw - 32px))}
+.sg-dialog::backdrop{background:var(--surface-overlay)}.sg-dialog:not([open]){display:none}
+@media(max-width:768px){.sg-header{flex-direction:column}.sg-grid,.sg-form,.sg-feedback,.sg-states{grid-template-columns:minmax(0,1fr)}.sg-header h2{font-size:26px}.sg-row button,.sg-index a,.sg-details summary{min-height:44px}.sg-swatches{grid-template-columns:repeat(2,minmax(0,1fr))}}

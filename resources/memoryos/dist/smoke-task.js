@@ -38,21 +38,23 @@ try {
         content: `${taskHead("open", "codex")} 排查 Ozon API scope 未开通导致 404`,
         type: "task", agent: "trae", agent_fpath: null, project: "global",
     });
-    // T1: 状态头正确 + FTS 可检索（LIKE 兜底）
+    // T1: 状态头正确 + FTS 可检索（★ A1：任务索引已搬进 task_store.task_fts）
     const st1 = readState(r.content);
     check("T1.open 状态头正确", st1?.status === "open" && st1?.assignee === "codex", JSON.stringify(st1));
-    const hit = db.prepare(`SELECT COUNT(*) c FROM memories_fts WHERE content LIKE '%Ozon%'`).get().c;
-    check("T1.FTS 可检索", hit >= 1, `fts=${hit}`);
+    const hit = db.prepare(`SELECT COUNT(*) c FROM task_store.task_fts WHERE content LIKE '%Ozon%'`).get().c;
+    check("T1.FTS 可检索（任务库）", hit >= 1, `fts=${hit}`);
+    const mainHit = db.prepare(`SELECT COUNT(*) c FROM memories_fts WHERE rowid=?`).get(r.id).c;
+    check("T1b.主库不残留任务 FTS", mainHit === 0, `main_fts=${mainHit}`);
     // T2: open→claimed（updateMemory 同步 FTS）
     const claimed = `${taskHead("claimed", "codex")} ${r.content.replace(TASK_HEAD_RE, "").trim()}`;
     db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(claimed, r.id);
-    db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(claimed, r.id);
+    db.prepare(`UPDATE task_store.task_fts SET content=? WHERE rowid=?`).run(claimed, r.id);
     const st2 = readState(readMemory(db, r.id).content);
     check("T2.claimed 状态头", st2?.status === "claimed", JSON.stringify(st2));
     // T3: claimed→done
     const done = `${taskHead("done", "codex")} ${claimed.replace(TASK_HEAD_RE, "").trim()}\n→ 结论：scope 未开通，需向平台申请权限`;
     db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(done, r.id);
-    db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(done, r.id);
+    db.prepare(`UPDATE task_store.task_fts SET content=? WHERE rowid=?`).run(done, r.id);
     const doneRow = readMemory(db, r.id);
     const st3 = readState(doneRow.content);
     check("T3.done 状态头 + 结论追加", st3?.status === "done" && doneRow.content.includes("结论"), `status=${st3?.status}`);
@@ -75,7 +77,7 @@ try {
     const b2 = writeMemory(db, { content: `${taskHead("open", "claude")} [depends:${a.id}] 写测试`, type: "task", agent: "trae", agent_fpath: null, project: "global" });
     const claimedB2 = `${taskHead("claimed", "claude")} [depends:${a.id}] 写测试`;
     db.prepare(`UPDATE memories SET content=? WHERE id=?`).run(claimedB2, b2.id);
-    db.prepare(`UPDATE memories_fts SET content=? WHERE rowid=?`).run(claimedB2, b2.id);
+    db.prepare(`UPDATE task_store.task_fts SET content=? WHERE rowid=?`).run(claimedB2, b2.id);
     const stB2 = readState(readMemory(db, b2.id).content);
     check("T7.状态流转保留 depends", stB2?.status === "claimed" && stB2.deps.includes(a.id), JSON.stringify(stB2));
     // ── ★ 2026-10-02 Dispatch 语义（对标 orca「one authoritative Task attempt」）──

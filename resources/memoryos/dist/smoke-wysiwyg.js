@@ -1,3 +1,5 @@
+import { memoryPreview } from './format.js';
+import { bodyFixture } from "./memory-body-fixture.js";
 /**
  * WYSIWYG 一致性冒烟：验证「用户侧 /api/all 的 ai.* 视图」与「AI 侧 MCP 真实返回」逐字一致。
  *
@@ -20,9 +22,10 @@ import { buildApp } from "./dashboard.js";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = path.resolve(HERE, "..");
 const DB_PATH = path.join(ROOT, "data", "memory-wysiwyg.db");
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 /** dashboard 访问控制为 fail-closed，冒烟须显式提供令牌（见 ④ 用户侧注释） */
 const SMOKE_TOKEN = "smoke-wysiwyg-token";
-for (const p of [DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm"]) {
+for (const p of [DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm", DB_PATH.replace(/\.db$/,'.tasks.db'), DB_PATH.replace(/\.db$/,'.runtime.db')]) {
     try {
         fs.rmSync(p, { force: true });
     }
@@ -45,6 +48,7 @@ let buf = "";
 const pending = new Map();
 let lastId = 0;
 function send(method, params) {
+    if (method === "tools/call" && params?.name === "memory_write") params = { ...params, arguments: { ...params.arguments, content: bodyFixture(params.arguments.content) } };
     const id = ++lastId;
     return new Promise((resolve) => {
         pending.set(id, resolve);
@@ -95,13 +99,13 @@ function indexLines(s) {
     return map;
 }
 // 每条内容都带同一个 ASCII 探针词 zq7x：fake-embed 环境下走纯词法路也能三条全命中（unicode61 可对 ASCII 分词）
-const SHORT = "zq7x WYSIWYG 探针 短句 记忆一致性校验。";
-const MED = "zq7x WYSIWYG 探针 中等长度：本条正文折叠后应超过 120 字但不超过 220 字，用于验证 memory_context 的裁剪提示。" +
-    "补充内容：".repeat(8);
-const LONG = "zq7x WYSIWYG 探针 超长：本条正文折叠后远超 220 字，用于验证 memory_search 的裁剪与用户侧 ✂ 提示。\n" +
+const SHORT = bodyFixture("zq7x WYSIWYG 探针 短句 记忆一致性校验。");
+const MED = bodyFixture("zq7x WYSIWYG 探针 中等长度：本条正文折叠后应超过 120 字但不超过 220 字，用于验证 memory_context 的裁剪提示。" +
+    "补充内容：".repeat(8));
+const LONG = bodyFixture("zq7x WYSIWYG 探针 超长：本条正文折叠后远超 220 字，用于验证 memory_search 的裁剪与用户侧 ✂ 提示。\n" +
     "第二段换行应被折叠为单空格。\n" +
     "结论前置：关键结论必须写在开头 220 字内。\n" +
-    "填充内容：".repeat(30);
+    "填充内容：".repeat(30));
 try {
     const init = await send("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "wysiwyg-smoke", version: "0.1.0" } });
     check("MCP initialize", !!init.result?.serverInfo);
@@ -174,18 +178,19 @@ try {
     const raw = db.prepare(`SELECT id, content, type, agent, project, status, confidence, created_at, hit_count,
         (SELECT COUNT(*) FROM memory_usage u WHERE u.memory_id=memories.id AND u.event='cited' AND u.project=memories.project) cited
         FROM memories`).all();
-    const legacySearch = (r) => `#${r.id} [${r.type}|${r.agent}|${r.created_at.slice(0, 10)}](conf=${r.confidence.toFixed(2)}) ${r.content.replace(/\s+/g, " ").slice(0, 220)}`;
-    const legacyContext = (r, focus) => `#${r.id} [${r.type}|${r.agent}]${focus ? "" : ` cited=${r.cited} hit=${r.hit_count}`} conf=${r.confidence.toFixed(2)}: ${r.content.replace(/\s+/g, " ").slice(0, 120)}`;
+    const legacySearch = (r) => `#${r.id} [${r.type}|${r.agent}|${r.created_at.slice(0, 10)}](conf=${r.confidence.toFixed(2)}) ${memoryPreview(r.content,220)}`;
+    const legacyContext = (r, focus) => `#${r.id} [${r.type}|${r.agent}]${focus ? "" : ` cited=${r.cited} hit=${r.hit_count}`} conf=${r.confidence.toFixed(2)}: ${memoryPreview(r.content,120)}`;
     const legacyRead = (r) => `#${r.id} [${r.type}|${r.agent}|${r.project}] conf=${r.confidence.toFixed(2)} status=${r.status} 创建=${r.created_at.slice(0, 10)}\n完整正文（${r.content.length} 字）：\n${r.content}`;
+    check("历史无关键词行摘要兼容",memoryPreview("结论：历史原文\n适用范围：旧版",220)==="结论：历史原文 适用范围：旧版");
     let okLegacy = 0;
     for (const r of raw) {
         const v = (await import("./format.js")).aiViews(r);
-        if (v.search === legacySearch(r) && v.context === legacyContext(r, false) && v.context_focus === legacyContext(r, true) && v.read === legacyRead(r))
+        if (v.search.startsWith(legacySearch(r)) && v.context.startsWith(legacyContext(r, false)) && v.context_focus.startsWith(legacyContext(r, true)) && v.read === legacyRead(r) && v.context.includes("创建=") && (r.content.replace(/\s+/g, " ").length <= 220 || v.search.includes("摘要已截断")))
             okLegacy++;
         else
-            check(`#${r.id} 与改动前模板输出一致`, false, JSON.stringify(v.search.slice(0, 80)));
+            check(`#${r.id} 保留原有正文并追加质量提示`, false, JSON.stringify(v.search.slice(0, 80)));
     }
-    check("回归：AI 侧输出与改动前模板逐字一致（无行为变更）", okLegacy === raw.length, `${okLegacy}/${raw.length}`);
+    check("回归：保留正文和身份字段，追加日期及截断提示", okLegacy === raw.length, `${okLegacy}/${raw.length}`);
     // ⑨ AI 可见性规则（status/eff 过滤）
     const res2 = await inject({ method: "GET", url: "/api/all?limit=100" });
     const before = JSON.parse(res2.body).rows.find((r) => r.content === SHORT);

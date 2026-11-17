@@ -13,18 +13,15 @@ let cfg = { port: 0, TOKEN: "", shell: null };
 let loadAttempts = 0;
 let loadTimer = null;
 let pageLoaded = false;
+let coreReady = false;
+let startupWatchdog = null;
 let attemptFailed = false; // 本轮加载是否已报过失败（Chromium 报错页也会触发 did-finish-load，不能当成功）
 const MAX_LOAD_RETRY = 30;   // 最多重试 30 次
 const LOAD_RETRY_MS = 2000;  // 每 2 秒一次（覆盖慢启动）
-const ERROR_PAGE =
-  "data:text/html;charset=utf-8," +
-  encodeURIComponent(
-    '<!doctype html><meta charset="utf-8">' +
-    '<body style="background:#0b1020;color:#e6edf7;font:14px/1.9 system-ui;padding:48px">' +
-    "<h2>MemoryOS 服务暂时没起来</h2>" +
-    "<p>已等待 60 秒仍未连上本地记忆内核。请退出后重新打开软件。</p>" +
-    "<p>如反复出现，可把日志发给维护者：%APPDATA%\\MemoryOS\\logs\\desktop.log</p></body>"
-  );
+function errorPage(){
+  const current=appearance.theme(),ink=current.skin==='radio'?current.ink:current.text||current.ink;
+  return 'data:text/html;charset=utf-8,'+encodeURIComponent('<!doctype html><meta charset="utf-8"><title>MemoryOS 启动未完成</title><body style="margin:0;background:'+current.background+';color:'+ink+';font:14px/1.9 system-ui;padding:76px 48px 48px"><header style="position:fixed;inset:0 0 auto;height:34px;padding-left:14px;font-size:12px;app-region:drag;-webkit-app-region:drag">MemoryOS</header><h2>暂时无法连接本地记忆内核</h2><p>已等待 60 秒，请退出后重新打开软件。</p><p>如反复出现，请查看 %APPDATA%\\MemoryOS\\logs\\desktop.log</p></body>');
+}
 
 function log(...a) {
   const line = `[MainWindow] ${new Date().toLocaleString("zh-CN")} ` +
@@ -40,16 +37,16 @@ function log(...a) {
 
 /** 加载主页面：令牌经 session cookie 注入后再加载裸 URL（失败由 did-fail-load 重试兜底） */
 function loadMainURL() {
-  if (!mainWin || mainWin.isDestroyed()) return;
+  if (!mainWin || mainWin.isDestroyed() || !coreReady) return;
   attemptFailed = false;
   const base = `http://127.0.0.1:${cfg.port}/`;
   if (!cfg.TOKEN) {
-    mainWin.loadURL(base);
+    mainWin.loadURL(base).catch(() => {});
   } else {
     session.defaultSession.cookies
       .set({ url: base, name: "memoryos_token", value: cfg.TOKEN, httpOnly: true, sameSite: "strict" })
-      .then(() => { if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(base); })
-      .catch(() => { if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(`${base}?token=${encodeURIComponent(cfg.TOKEN)}`); });
+      .then(() => { if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(base).catch(() => {}); })
+      .catch(() => { if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(`${base}?token=${encodeURIComponent(cfg.TOKEN)}`).catch(() => {}); });
   }
 }
 
@@ -61,17 +58,30 @@ function scheduleLoadRetry() {
 
 /** 内核就绪通知：立即补一次加载，不必等下一轮重试 */
 function notifyCoreReady() {
+  coreReady = true;
   if (!mainWin || mainWin.isDestroyed() || pageLoaded) return;
   if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
   log("内核就绪，立即加载主页面");
   loadMainURL();
 }
 
-ipcMain.on("main-window:set-theme", (event, theme) => {
-  if (!mainWin || mainWin.isDestroyed() || event.sender.id !== mainWin.webContents.id) return;
-  if (theme !== "dark" && theme !== "light") return;
-  nativeTheme.themeSource = theme;
+const appearance = require("./appearance-state");
+function trusted(event) {
+  if(!mainWin || mainWin.isDestroyed() || event.sender !== mainWin.webContents || event.senderFrame !== mainWin.webContents.mainFrame) return false;
+  const url=event.senderFrame.url;
+  return url.startsWith('http://127.0.0.1:'+cfg.port+'/') || url.startsWith('file://') && url.endsWith('/startup.html');
+}
+ipcMain.on("main-window:get-appearance", event => { event.returnValue=trusted(event)?appearance.theme():null; });
+ipcMain.on("main-window:set-appearance", (event, value) => {
+  if(!trusted(event) || !event.senderFrame.url.startsWith('http://127.0.0.1:'+cfg.port+'/')) return;
+  try {
+    const current=appearance.theme(appearance.save(value));
+    nativeTheme.themeSource=current.scheme;
+    mainWin.setBackgroundColor(current.background);
+    if(process.platform==='win32')mainWin.setTitleBarOverlay({color:current.background,symbolColor:current.skin==='radio'?current.ink:current.text||current.ink,height:34});
+  } catch(error) { log('保存外观失败:',error.message); }
 });
+
 
 /** 启动时注入端口/令牌（showMain 可能先于 createMainWindow 被触发，需要兜底配置） */
 function prepareMainWindow(o) {
@@ -80,11 +90,17 @@ function prepareMainWindow(o) {
 }
 
 function createMainWindow() {
+  if (mainWin && !mainWin.isDestroyed()) return;
   loadAttempts = 0;
   pageLoaded = false;
+  const startupAppearance=appearance.theme();
+  const hadAppearance=appearance.hasSaved();
+  nativeTheme.themeSource=startupAppearance.scheme;
   mainWin = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1080, minHeight: 680,
-    autoHideMenuBar: true, backgroundColor: "#0b1020", title: "MemoryOS", show: false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+    autoHideMenuBar: true, backgroundColor: startupAppearance.background, title: "MemoryOS", show: false,
+    ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:startupAppearance.background,symbolColor:startupAppearance.skin==='radio'?startupAppearance.ink:startupAppearance.text||startupAppearance.ink,height:34}}:{}),
     /* P0 加固：显式声明安全基线（与 Electron 20+ 默认一致，防未来默认漂移；对齐 welcome-window 风格） */
     webPreferences: {
       preload: path.join(__dirname, "..", "preload.js"),
@@ -93,16 +109,20 @@ function createMainWindow() {
       sandbox: true,
     },
   });
-  mainWin.once("ready-to-show", () => { log("ready-to-show：显示窗口"); mainWin.show(); });
+  mainWin.once("ready-to-show", () => { if(hadAppearance || pageLoaded){log("ready-to-show：显示窗口");if(!cfg.readPreferences?.().startHidden)mainWin.show();} });
   // 兜底：15 秒仍未显示（ready-to-show 未触发）则强制显示，避免窗口静默隐身
   setTimeout(() => {
     if (mainWin && !mainWin.isDestroyed() && !mainWin.isVisible()) {
       log("15s 未显示，强制显示窗口");
-      mainWin.show();
+      if(!cfg.readPreferences?.().startHidden)mainWin.show();
     }
   }, 15000);
-  mainWin.on("close", (e) => { if (!(cfg.isQuitting && cfg.isQuitting())) { e.preventDefault(); mainWin.hide(); } });
-  mainWin.on("closed", () => (mainWin = null));
+  mainWin.on("close", (e) => { if (!(cfg.isQuitting && cfg.isQuitting())) { e.preventDefault(); if(cfg.readPreferences?.().closeAction==='quit')cfg.onQuit();else mainWin.hide(); } });
+  mainWin.on("closed", () => {
+    if (loadTimer) clearTimeout(loadTimer);
+    if (startupWatchdog) clearTimeout(startupWatchdog);
+    loadTimer = null; startupWatchdog = null; mainWin = null;
+  });
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) cfg.shell.openExternal(url);
     return { action: "deny" };
@@ -123,13 +143,15 @@ function createMainWindow() {
       scheduleLoadRetry();
     } else {
       log("主页面重试耗尽，显示兜底错误页");
-      if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(ERROR_PAGE);
+      if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(errorPage());
     }
   });
   mainWin.webContents.on("did-finish-load", () => {
     if (attemptFailed) return; // 报错页的"加载完成"不算成功，等重试
     if (!mainWin.webContents.getURL().startsWith(`http://127.0.0.1:${cfg.port}`)) return; // 只认本机页面
+    if (startupWatchdog) { clearTimeout(startupWatchdog); startupWatchdog = null; }
     pageLoaded = true;
+    if(!mainWin.isVisible())if(!cfg.readPreferences?.().startHidden)mainWin.show();
     loadAttempts = 0;
     if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
     log("主页面加载完成 URL=" + mainWin.webContents.getURL() + " 标题=" + mainWin.getTitle());
@@ -137,7 +159,16 @@ function createMainWindow() {
   mainWin.webContents.on("console-message", (_e, level, message) => {
     if (level >= 2) log("页面报错:", String(message).slice(0, 300));
   });
-  loadMainURL();
+  // 本地启动页立即可见；真实内核就绪后才请求工作台。
+  mainWin.loadFile(path.join(__dirname, "..", "startup.html")).catch((e) => log("启动页加载失败:", e.message));
+  startupWatchdog = setTimeout(() => {
+    startupWatchdog = null;
+    if (!pageLoaded && mainWin && !mainWin.isDestroyed()) {
+      if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
+      mainWin.loadURL(errorPage()).catch((e) => log("错误页加载失败:", e.message));
+    }
+  }, 65000);
+  if (coreReady) loadMainURL();
 }
 
 function showMain() {

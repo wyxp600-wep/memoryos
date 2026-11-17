@@ -21,19 +21,24 @@ try {
     fs.rmSync(jsonl, { force: true });
     const db = openDb(tmp);
     const emb = await getEmbedder();
+    // ★ 2026-10-15：向量带出处——冒烟/测试场景按当前嵌入器自声明 model/dim（FakeEmbedder 等均已实现 provenance()）
+    const prov = emb.provenance?.() ?? { model: "unknown", dim: 0 };
+    // ★ 2026-11-14：写入层六字段校验已收紧（memory-body.js），冒烟夹具改用同义结论包成合法正文，
+    //   保持「两段结论相似度」的原测试语义（模板相同、结论句不同），不改任何判定逻辑。
+    const body6 = (conclusion, kw = "Ozon；offer_id；400") => `结论：\n${conclusion}\n\n关键词：\n${kw}\n\n适用范围：\n冒烟测试临时库\n\n依据：\n冒烟夹具自带内容，无外部来源\n\n行动：\n仅用于冒烟比对，不执行\n\n状态：\n待验证，最后核验日期：2026-11-14`;
     const w = async (content, type = "experience", agent = "codex") => {
         // ★ P1-2.2：向量已独立成表，写入需分两步（原为 INSERT 直接带 embedding 列）
         const r = db
             .prepare(`INSERT INTO memories(content,type,agent,project,status,confidence) VALUES (?,?,?,?,?,?)`)
             .run(content, type, agent, "global", "active", 0.8);
         const id = Number(r.lastInsertRowid);
-        upsertVector(db, id, (await emb.embedTexts([content]))[0]);
+        upsertVector(db, id, (await emb.embedTexts([content]))[0], prov);
         return id;
     };
     const setConflict = (pendingId, oldId) => db.prepare(`UPDATE memories SET conflict_with=? WHERE id=?`).run(oldId, pendingId);
     // —— R1 仲裁测绘 ——
-    const oldId = await w("Ozon /v3/product/info/list 报 400：请求体缺 offer_id");
-    const newId = await w("Ozon /v3/product/info/list 报 400：缺 offer_id 导致");
+    const oldId = await w(body6("Ozon /v3/product/info/list 报 400：请求体缺 offer_id"));
+    const newId = await w(body6("Ozon /v3/product/info/list 报 400：缺 offer_id 导致"));
     setConflict(newId, oldId);
     const msg = recordRegression(db, jsonl, newId, "1");
     const recs1 = readRecords(jsonl);
@@ -59,8 +64,8 @@ try {
     ok("R4 replayAll 空集 total=0 fail=0", e4.total === 0 && e4.fail === 0);
     // —— R5 端到端：真仲裁 → 落 jsonl → replay 通过 ——
     fs.rmSync(jsonl, { force: true });
-    const o5 = await w("端口 80 常被 IIS 占用：查 W3SVC 服务");
-    const n5 = await w("端口 80 被 IIS 霸占，先查 W3SVC 状态");
+    const o5 = await w(body6("端口 80 常被 IIS 占用：查 W3SVC 服务", "IIS；W3SVC；80 端口"));
+    const n5 = await w(body6("端口 80 被 IIS 霸占，先查 W3SVC 状态", "IIS；W3SVC；80 端口"));
     setConflict(n5, o5);
     // 模拟 arbitrate.js：key=1 保留新 —— 先 record 再 apply（读仲裁前快照）
     recordRegression(db, jsonl, n5, "1");

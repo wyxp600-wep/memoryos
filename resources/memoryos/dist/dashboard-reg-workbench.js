@@ -432,8 +432,16 @@ export function registerWorkbench(app, ctx) {
         try {
             const dir = path.join(dataDirOf() || "", "artifacts");
             fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(path.join(dir, name), buf, { mode: 0o600 });
-            return { ok: true, name, url: `/api/artifacts/${name}`, size: buf.length };
+            // ★ 2026-11-16（L-4）：同名不覆盖 —— 旧实现会静默盖掉同名产物（含他人刚上传的文件）。
+            //   冲突时追加时间戳后缀；返回值里的 name/url 用实际落盘名，下载路由照旧可用。
+            let finalName = name;
+            if (fs.existsSync(path.join(dir, finalName))) {
+                const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+                const ext = path.extname(name);
+                finalName = `${path.basename(name, ext)}-${ts}${ext}`;
+            }
+            fs.writeFileSync(path.join(dir, finalName), buf, { mode: 0o600 });
+            return { ok: true, name: finalName, url: `/api/artifacts/${finalName}`, size: buf.length };
         }
         catch (e) {
             console.error(`[workbench] 上传落盘失败（${name}）：${String(e?.message ?? e).slice(0, 200)}`);

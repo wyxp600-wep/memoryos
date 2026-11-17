@@ -92,7 +92,11 @@ function createScheduler(deps) {
 
   /* ---------- 自动增量采集 ---------- */
   async function runAutoIngest() {
+    if(deps.isMaintenance?.())return;
+    const cfg=readPrefs();
+    if(cfg.ingestEnabled===false||cfg.ingestPaused)return;
     if (!acquire("自动采集")) return;
+    saveStatus({running:true,startedAt:new Date().toISOString()});
     let holder = null;
     try {
       const KERNEL = getKernel();
@@ -104,6 +108,7 @@ function createScheduler(deps) {
         onDone: (code, timedOut) => {
           const out = holder?.output() ?? "";
           const brief = out.trimEnd().split("\n").filter((l) => l.includes("[ingest")).pop() || "";
+          saveStatus({running:false,finishedAt:new Date().toISOString(),ok:!timedOut&&code===0,note:brief});
           log("自动采集", timedOut ? "超时终止" : code === 0 ? "完成" : `退出码 ${code}`, brief);
         },
       });
@@ -113,11 +118,18 @@ function createScheduler(deps) {
       release("自动采集");
     }
   }
+  function readPrefs(){try{return JSON.parse(fs.readFileSync(path.join(dataDir(),'config.json'),'utf8')).preferences||{};}catch{return {};}}
+  function saveStatus(status){try{fs.writeFileSync(path.join(dataDir(),'ingest-status.json'),JSON.stringify(status));}catch(e){log('采集状态保存失败',e.message);}}
+  let nextIngestAt=Date.now()+90000,scheduled=false;
   function scheduleAutoIngest() {
-    const min = Math.max(1, Number(process.env.INGEST_INTERVAL_MIN ?? 5) || 5);
-    setTimeout(runAutoIngest, 90 * 1000);
-    setInterval(runAutoIngest, min * 60 * 1000);
-    log(`自动采集已调度：每 ${min} 分钟增量一次（INGEST_INTERVAL_MIN 可调）`);
+    if(scheduled)return;scheduled=true;
+    let previousInterval=null;
+    setInterval(()=>{const cfg=readPrefs(),min=Math.max(1,Math.min(60,Number(cfg.ingestInterval??process.env.INGEST_INTERVAL_MIN??5)||5));
+      if(previousInterval!==null&&previousInterval!==min)nextIngestAt=Date.now()+min*60000;
+      previousInterval=min;
+      if(Date.now()>=nextIngestAt){nextIngestAt=Date.now()+min*60000;void runAutoIngest();}
+    },1000);
+    log('自动采集已调度；开关、暂停和间隔从设置即时读取');
   }
 
   /** 观测/测试用 */

@@ -1,3 +1,4 @@
+import { executionOwned, watchExecution } from './exec-lifecycle.js';
 /* ═══════════════════════════════════════════════════════════════════════════
  * dashboard-reg-cliexec.js — 节点画布 P2：CLI 直控执行器（2026-10-04）
  * 能力：agent_profiles(channel='cli') 的卡片派发不走内部 agent run，而是以 headless
@@ -14,6 +15,7 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createCliRunHistory } from "./cli-run-history.js";
 import os from "node:os";
 import path from "node:path";
 import { renewCardLease } from "./db.js";
@@ -89,6 +91,31 @@ const CLI_PRESETS = {
 const HEARTBEAT_MS = 60000;
 const DEFAULT_TIMEOUT_MS = 30 * 60000;
 const MAX_BUFFER_LINES = 800;
+/** ★ 2026-11-16 安全加固：启动前校验（命令/参数/工作区）—— 与"一律加引号"共同构成
+ *  命令注入的纵深防御。引号消除分隔符语义，本函数挡住引号无法遮盖的 NUL/换行
+ *  以及超长/超量参数（防参数轰炸与解析截断）。 */
+const LAUNCH_BAD_CHAR_RE = /[\0\r\n]/;
+function assertLaunchableCli(cmd, args, cwd) {
+    if (typeof cmd !== "string" || !cmd.trim() || cmd.length > 4096 || /["\0\r\n]/.test(cmd))
+        throw new Error("启动命令含非法字符（空/引号/NUL/换行）或超长，已拒绝执行");
+    if (!Array.isArray(args) || args.length > 64)
+        throw new Error("启动参数数量非法（须为数组且 ≤64 项）");
+    for (const a of args) {
+        if (typeof a !== "string" || a.length > 8192)
+            throw new Error("启动参数必须是 ≤8192 字符的字符串");
+        if (LAUNCH_BAD_CHAR_RE.test(a))
+            throw new Error("启动参数含 NUL/换行，已拒绝执行（防命令串被截断拼接）");
+        // ★ 2026-11-16（复审加固）：双引号是唯一能破坏「全量引号」配对的字符。
+        //   配置型参数（launch_overrides.args）含引号一律 fail-closed；提示词侧在拼入前已
+        //   由 safeMessage() 把 " 换成 '，不会走到这里。
+        if (a.includes('"'))
+            throw new Error('启动参数含英文双引号（"），可能破坏 Windows 命令引号配对，已拒绝执行；配置型参数请改用不含双引号的写法');
+    }
+    let st;
+    try { st = fs.statSync(cwd); }
+    catch { throw new Error(`工作区不存在：${cwd}`); }
+    if (!st.isDirectory()) throw new Error(`工作区不是目录：${cwd}`);
+}
 
 /** 该载体预设是否接入模型旗标（批2）：`/api/agent-models` 与向导据此**如实告知**
  *  「填了模型会不会真传给 CLI」—— dsh/zcode 无 modelArgs，填了也不生效，不能假装能配。 */
@@ -114,6 +141,8 @@ export function registerCliExec(app, ctx) {
         }
     })();
 
+    const history = createCliRunHistory(logDir);
+
     function pushLine(job, stream, text) {
         // 全量原文独立累积（供 HANDOFF 解析与日志落盘，D7）；lines 只服务 SSE、可截断
         job.fullText = (job.fullText ?? "") + text + (text.endsWith("\n") ? "" : "\n");
@@ -121,9 +150,9 @@ export function registerCliExec(app, ctx) {
         //   否则会命中提示词里的模板本身（见 finish 注释）
         if (stream !== "sys")
             job.agentText = (job.agentText ?? "") + text + (text.endsWith("\n") ? "" : "\n");
-        for (const line of String(text).split(/\r?\n/)) {
-            job.lines.push({ stream, text: line, at: Date.now() });
-        }
+        const added = String(text).split(/\r?\n/).map(text => ({ stream, text, at: Date.now() }));
+        job.lines.push(...added);
+        history.append(job, added);
         if (job.lines.length > MAX_BUFFER_LINES * 2)
             job.lines.splice(0, job.lines.length - MAX_BUFFER_LINES);
         job.waiters?.forEach((w) => w());
@@ -137,19 +166,25 @@ export function registerCliExec(app, ctx) {
         const limit = Math.max(1, Number(q.concurrency) || 1);
         let running = [...jobs.values()].filter((j) => j.profileId === profileId && j.status === "running").length;
         while (running < limit && q.length) {
-            launch(q.shift());
-            running++;
+            const job=q.shift();
+            launch(job);
+            if(job.status==="running")running++;
         }
     }
 
     function launch(job) {
+        if(['done','failed'].includes(job.status))return;
+        if(!executionOwned(db,job)){job.stale=true;fail(job,'派发凭证已失效，拒绝启动');return;}
         job.status = "running";
         job.startedAt = Date.now();
+        job.queueWaitMs=job.startedAt-job.createdAt;
+        history.save(job);
         const p = job.profile;
         const ov = overridesOf(p); // ★ 批1：容忍双重编码存量（档案 #8），旧口径会把字符串当配置 → cmd 丢失
         const preset = CLI_PRESETS[String(p.agent_key ?? "")] ?? null;
         const cmd = ov?.cmd ?? preset?.cmd ?? String(p.agent_key ?? "");
         let args = ov?.args ?? (preset ? [...preset.args] : []);
+        if(!Array.isArray(args)||args.some(a=>typeof a!=="string")){fail(job,"启动参数 args 必须是字符串数组");return;}
         // ★ 2026-10-05 批2（用户「模型下拉要真生效」）：原实现是
         //   `args = ov?.args ?? [...preset.args, ...preset.modelArgs(p.model)]` —— 模型旗标被关在
         //   「没有 launch_overrides.args」这条分支里，而本机档案 #9-#12 全带自定义 args，
@@ -165,28 +200,35 @@ export function registerCliExec(app, ctx) {
         //   ① promptFlag（zcode -p <任务> 型）：[flag, 任务文本] 插入 args 末两位（文本紧跟旗标）；
         //   ② promptAsArg（dsh/opencode 位置参数型）：任务文本追加为 args 末位单参数。
         //   win32 shell:true 路径经 quote() 统一预引号，多词任务保持单个参数不被 cmd /s 拆散。
+        // ★ 2026-11-16（复审加固）：提示词走命令行时，先把英文双引号换成单引号——
+        //   cmd 只有双引号会破坏引号配对（引号内 & | < > ^ 都已是字面量），换掉即无注入面，
+        //   且不牺牲可读性（dsh/opencode 无 stdin 模式，必须走位置参数）。
+        const safeMessage = String(job.message ?? "").replace(/"/g, "'");
         const promptFlag = ov?.promptFlag ?? preset?.promptFlag;
         if (promptFlag)
-            args = [...args, String(promptFlag), String(job.message ?? "")];
+            args = [...args, String(promptFlag), safeMessage];
         else if (ov?.promptAsArg ?? preset?.promptAsArg ?? false)
-            args = [...args, String(job.message ?? "")];
+            args = [...args, safeMessage];
         const cwd = p.workspace || os.homedir();
         job.cwd = cwd;
         job.cmd = cmd;
         try {
             // ★ Windows：npm shim（codex.cmd 等）裸 spawn 必 ENOENT，而 .cmd 出于安全 Node 禁止直接 spawn。
-            //   方案：win32 统一 shell:true + 预引号整串 —— node 会把整串再包一层引号交给
-            //   cmd /d /s /c，/s 恰好剥掉 node 加的外层引号，我们预置的内层引号原样保留
-            //   （解决"C:\Program Files\..."带空格路径）；taskkill /T 仍可整树杀。
-            if (process.platform === "win32") {
-                const quote = (a) => (/[\s"]/.test(a) ? `"${a}"` : a);
+            //   方案：win32 统一 shell:true + **全量引号**（2026-11-16 安全加固）—— node 会把整串再包一层
+            //   引号交给 cmd /d /s /c，/s 恰好剥掉 node 加的外层引号，我们预置的内层引号原样保留。
+            //   ★ 关键：原实现只在含空格/引号时加引号，`a&calc` 会原样进 cmd 被解释成两条命令（命令注入）。
+            //   现在**每个参数一律用双引号包裹**（引号内 & | < > ^ 不再有分隔/转义语义），内部 " 转义为 \"；
+            //   另由 assertLaunchableCli 拦 NUL/换行与超长参数。.exe 仍走 shell:false 直连，减少解析面。
+            assertLaunchableCli(cmd, args, cwd);
+            if (process.platform === "win32" && cmd !== "node" && !/\.exe$/i.test(cmd)) {
+                const quote = (a) => `"${String(a).replace(/"/g, '\\"')}"`;
                 const commandString = `${quote(cmd)} ${args.map(quote).join(" ")}`;
                 job.proc = spawn(commandString, {
                     cwd, shell: true, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, detached: false,
                 });
             }
             else {
-                job.proc = spawn(cmd, args, {
+                job.proc = spawn(cmd === "node" ? process.execPath : cmd, args, {
                     cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, detached: false,
                 });
             }
@@ -199,12 +241,7 @@ export function registerCliExec(app, ctx) {
         job.proc.stdin?.on("error", () => { }); // ★ CLI 提前退出时 stdin EPIPE 不能炸 dashboard
         pushLine(job, "sys", `[执行器] ${cmd} ${args.join(" ")} ｜ 工作区 ${cwd} ｜ PID ${job.pid ?? "?"}`);
         // 心跳：续卡租约 + 工作证租约（防治理回收误杀长任务；SQL 单点在 db.js renewCardLease）
-        job.heartbeat = setInterval(() => {
-            try {
-                renewCardLease(db, job.cardId, job.dispatchId);
-            }
-            catch { /* 心跳失败不中断执行 */ }
-        }, HEARTBEAT_MS);
+
         // 超时杀树
         job.timer = setTimeout(() => {
             if (job.status === "running") {
@@ -213,7 +250,7 @@ export function registerCliExec(app, ctx) {
                 finish(job, false, "执行超时被终止");
             }
         }, ov?.timeoutMinutes ? ov.timeoutMinutes * 60000 : DEFAULT_TIMEOUT_MS);
-        job.proc.stdout?.on("data", (d) => pushLine(job, "out", d.toString("utf8")));
+        job.proc.stdout?.on("data", (d) => { job.firstOutputAt ??= Date.now(); pushLine(job, "out", d.toString("utf8")); });
         job.proc.stderr?.on("data", (d) => pushLine(job, "err", d.toString("utf8")));
         job.proc.on("error", (e) => { if (job.status === "running") fail(job, `进程错误：${e.message}`); });
         job.proc.on("close", (code) => {
@@ -275,7 +312,7 @@ export function registerCliExec(app, ctx) {
         }
         catch (e) { console.error("[cliexec] 全量日志落盘失败（不影响收口）", e); }
         try {
-            ctx.finalizeCardDispatch?.({
+            if(!job.stale && !job.settledByTask) ctx.finalizeCardDispatch?.({
                 cardId: job.cardId, dispatchId: job.dispatchId, ok, runId: job.runId,
                 // ★ actor 必须等于派发时写进 cards.assignee 的值：finalizeCardDispatch 以
                 //   `assignee===actor || assignee 为空` 决定是否翻状态+三清锁；缺省回退
@@ -289,8 +326,9 @@ export function registerCliExec(app, ctx) {
             pushLine(job, "sys", `[执行器] 收口异常：${e instanceof Error ? e.message : e}`);
         }
         job.waiters?.forEach((w) => w());
+        history.save(job);
         pruneFinishedJobs(jobs, 20);
-        pump(job.profileId);
+        queueMicrotask(()=>pump(job.profileId));
     }
 
     /** 启动时清理 14 天前的历史日志（防 cli-logs 无界吃磁盘） */
@@ -298,6 +336,7 @@ export function registerCliExec(app, ctx) {
         try {
             const cutoff = Date.now() - 14 * 86400000;
             for (const f of fs.readdirSync(logDir)) {
+                if (!/^cli_[a-z0-9]+_[a-z0-9]+\.(?:log|run\.json(?:\.tmp)?|events\.jsonl)$/.test(f)) continue;
                 const fp = path.join(logDir, f);
                 if (fs.statSync(fp).mtimeMs < cutoff)
                     fs.rmSync(fp, { force: true });
@@ -310,13 +349,19 @@ export function registerCliExec(app, ctx) {
 
     /** 派发入口（dispatch-agent 路由到本执行器）：入队并返回 runId */
     ctx.startCliRun = ({ cardId, agentCardId, profile, dispatchId, dispatchKey, taskId, message, agent }) => {
+        // ★ 2026-11-16（H-2）：执行面总开关。抛错由 cards 派发链回滚认领（不会留 running 卡）。
+        if (typeof ctx.execSurfaceEnabled === "function" && !ctx.execSurfaceEnabled())
+            throw new Error("执行面已关闭（设置 → 安全 → Agent 执行能力）：开启后才能派发 CLI 直控卡");
         const runId = `cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const job = {
             runId, cardId, agentCardId: agentCardId ?? null, profileId: profile.id, dispatchId: dispatchId ?? null, dispatchKey: dispatchKey ?? null,
             taskId: taskId ?? null, message, profile, status: "queued", lines: [], startedAt: null, finishedAt: null,
+            createdAt: Date.now(),
             agent: agent || "dispatch-agent", // ★ 收口比对用：须与卡上 assignee 同源（见 finish 的 actor）
         };
         jobs.set(runId, job);
+        job.heartbeat=watchExecution(db,job,finish);
+        history.save(job);
         if (!queues.has(profile.id))
             queues.set(profile.id, []);
         const q = queues.get(profile.id);
@@ -324,7 +369,7 @@ export function registerCliExec(app, ctx) {
         q.push(job);
         const queueAhead = q.indexOf(job); // 必须在 pump 前取（启动即出队会变 -1）
         pump(profile.id);
-        return { runId, queued: job.status === "queued", queueAhead };
+        return { runId, queued: job.status === "queued", queueAhead, timings:{acceptedAt:job.createdAt,startedAt:job.startedAt,queueWaitMs:job.queueWaitMs??null} };
     };
 
     // 实时执行流（SSE）：先重放缓冲，再持续推送；done/failed 即关闭（骨架在 exec-util 单点）
@@ -332,15 +377,22 @@ export function registerCliExec(app, ctx) {
         const cardId = Number(req.params.id);
         const runId = String(req.query.runId ?? "");
         const job = findJobByCard(jobs, cardId, { runId });
-        if (!job)
-            return reply.code(404).send({ ok: false, error: "该卡没有执行记录" });
+        if (!job) {
+            const record = runId ? history.read(cardId, runId) : history.read(cardId, history.list(cardId)[0]?.runId);
+            if (!record) return reply.code(404).send({ ok: false, error: "该卡没有执行记录" });
+            reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+            for (const line of record.lines)
+                reply.raw.write(`event: line\ndata: ${JSON.stringify(line)}\n\n`);
+            reply.raw.end(`event: end\ndata: ${JSON.stringify({ status: record.status, runId: record.runId, historical: true, logMissing: record.logMissing, truncated: record.truncated })}\n\n`);
+            return;
+        }
         streamJobSSE(reply, job, { intervalMs: 1500, ping: true });
     });
 
     // 手动停止（杀树）
     app.post("/api/agent-cards/:id/exec/stop", async (req, reply) => {
         const cardId = Number(req.params.id);
-        const job = findJobByCard(jobs, cardId, { runningOnly: true });
+        const job = findJobByCard(jobs, cardId, { runningOnly: true, runId: String(req.query.runId ?? "") });
         if (!job)
             return reply.code(404).send({ ok: false, error: "该卡当前没有执行中的任务" });
         pushLine(job, "sys", "[执行器] 用户手动停止");
@@ -355,7 +407,11 @@ export function registerCliExec(app, ctx) {
         const list = [...jobs.values()].filter((j) => j.cardId === cardId || j.agentCardId === cardId)
             .map((j) => ({ runId: j.runId, status: j.status, pid: j.pid, cmd: j.cmd, cwd: j.cwd,
                 startedAt: j.startedAt, finishedAt: j.finishedAt, lines: j.lines.length }));
-        return { ok: true, runs: list };
+        const merged = new Map(history.list(cardId).map(r => [r.runId, { ...r, historical: true }]));
+        for (const r of list) merged.set(r.runId, { ...merged.get(r.runId), ...r, historical: false });
+        return { ok: true, runs: [...merged.values()].sort((a, b) =>
+            (b.createdAt || b.startedAt || 0) - (a.createdAt || a.startedAt || 0)).slice(0, 100),
+            history_error: history.error };
     });
 
     ctx.cliLogDir = logDir;

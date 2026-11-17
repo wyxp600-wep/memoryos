@@ -1,3 +1,5 @@
+import {preferences,sourceAllowed} from './personal-settings.js';
+const MEMORIES = "main.knowledge_records"; // ★ 2026-11-17（B4 组7）：导入导出/规则反思直连记忆物理表（merge-db 保持视图，它能读旧单库）
 /**
  * MemoryOS — 采集消化（ingest）：读取本机各 AI Agent 的明文记忆/规则/对话，提炼入库。
  * 流程：源发现 → 读文本 → 分块 → 本地嵌入 → 库内相似去重 → LLM 提炼 → writeMemory 入库。
@@ -7,11 +9,18 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from 'node:crypto';
+import { memoryFields } from './memory-fields.js';
 import { getEmbedder, cosine } from "./embed.js";
-import { writeMemory, logUsage, logDaemon, getVectorsOnProject, getIngestStates, setIngestState } from "./db.js";
+import { logUsage, logDaemon, getVectorsOnProject, getIngestStates, setIngestState } from "./db.js";
+import { createMemoryRow } from "./memory-writer.js"; // ★ 2026-11-17（B8 前置）：写入直连物理表，不再经 temp.memories 视图
 import { extractFromSource } from "./llm.js";
 const MAX_CALLS = Math.max(1, Number(process.env.INGEST_MAX_CALLS ?? 80) || 80); // 单轮 LLM 提炼总次数上限（默认80，覆盖环境变量）
 const BLOCKS_PER_SOURCE = 12; // 每源最多提炼块数（防单源吃掉全部预算）
+// ★ 2026-11-08（卡外 item3）：同源块级熔断阈值 —— 同一源连续 N 块提炼失败即跳过该源本轮剩余块。
+//   典型触发是 429 限流/鉴权失效：继续逐块重试只是空刷配额并拖长整轮时长。
+//   恢复条件：下一轮采集 srcFailStreak 归零自然重试；该源同时受 noteSourceFailure 的 30min→6h 退避约束。
+const SRC_FAIL_STREAK_MAX = Math.max(1, Number(process.env.INGEST_SRC_FAIL_STREAK_MAX ?? 3) || 3);
 const home = os.homedir();
 /** 明文知识源清单：以「真实存在」为准，运行时可读才返回 */
 const SOURCE_SPECS = [
@@ -78,6 +87,21 @@ export function loadCustomSpecs() {
         return [];
     }
 }
+/** ★ 2026-11-16 安全加固（M-5）：采集源的敏感路径闸。
+ *  自定义源允许任意绝对路径（用户导入自己的笔记），但不能把凭据/密钥/系统目录
+ *  变成「可检索记忆」。目录级拒绝 + 文件级扩展名拒绝，双层。
+ *  需排除时用 MEMORYOS_INGEST_DENY_OFF=1（明确知情，自行承担）。 */
+const INGEST_SENSITIVE_SEG_RE = /(^|[\\/])(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.config[\\/]gcloud|AppData|Windows|Program Files|Program Files \(x86\))([\\/]|$)/i;
+const INGEST_SENSITIVE_EXT_RE = /\.(pem|key|pfx|p12|jks|keystore|env|db|db-wal|db-shm|sqlite|sqlite3|cookies?|credentials|token|secret)$/i;
+function ingestDenyOn() {
+    return process.env.MEMORYOS_INGEST_DENY_OFF !== "1";
+}
+export function isSensitiveIngestPath(p) {
+    if (!ingestDenyOn())
+        return false;
+    const s = String(p ?? "").replace(/\\/g, "/");
+    return INGEST_SENSITIVE_SEG_RE.test(s) || INGEST_SENSITIVE_EXT_RE.test(s);
+}
 /** 校验单个自定义源：路径合法性 + 展开后的文件数/总大小/样例（不写盘，供前端预检）
  *  只接受绝对路径（`C:\…` / `/…`）或 `~` 开头的家目录路径，拒绝相对路径（避免 cwd 歧义）。 */
 export function validateCustomSource(spec) {
@@ -87,6 +111,9 @@ export function validateCustomSource(spec) {
     if (!/^~[/\\]/.test(raw) && !/^[a-zA-Z]:[/\\]/.test(raw) && !raw.startsWith("/")) {
         return { ok: false, error: "请填绝对路径（如 C:\\Users\\you\\notes）或以 ~ 开头的家目录路径", files: 0, totalBytes: 0, samples: [] };
     }
+    // ★ 2026-11-16（M-5）：敏感目录（.ssh/.aws/AppData/Windows/Program Files…）一律拒绝
+    if (isSensitiveIngestPath(raw))
+        return { ok: false, error: "该路径属于敏感目录（凭据/系统目录），不允许作为采集源；如确需请设 MEMORYOS_INGEST_DENY_OFF=1 自行承担风险", files: 0, totalBytes: 0, samples: [] };
     const maxFiles = Math.min(Math.max(Number(spec.maxFiles ?? 50) || 50, 1), 200);
     const maxDepth = Math.min(Math.max(Number(spec.maxDepth ?? 3) || 3, 0), 6);
     let re;
@@ -117,6 +144,7 @@ export function validateCustomSource(spec) {
     catch (e) {
         return { ok: false, error: `路径展开失败：${e instanceof Error ? e.message : String(e)}`, files: 0, totalBytes: 0, samples: [] };
     }
+    files=files.filter(f=>sourceAllowed(f,spec.id||''));
     if (!files.length) {
         return {
             ok: false,
@@ -159,7 +187,9 @@ export function saveCustomSpecs(specs) {
     }
 }
 /** 枚举真实存在、非空、可读的源文件（同一物理文件仅归属首个匹配的 spec，避免重复采集） */
+export function sourceCatalog(){ return SOURCE_SPECS.map(s=>({id:s.id,name:s.name,kind:s.kind,builtin:true})).concat(loadCustomSpecs().map(s=>({id:s.id,name:s.name||s.id,kind:s.kind,builtin:false}))); }
 export function getSources() {
+    const prefs=preferences();
     const out = [];
     const seen = new Set();
     for (const spec of SOURCE_SPECS) {
@@ -241,7 +271,7 @@ export function getSources() {
             catch { /* ignore */ }
         }
     }
-    return out;
+    return out.filter(f=>sourceAllowed(f.path,f.id,prefs));
 }
 /** 安全 glob：递归但带深度/文件数上限，跳过 .git 等内部目录，仅收文本扩展名。
  *  includeFilter(filename) 可进一步过滤文件名（如只收 project_memory.md）。
@@ -327,14 +357,21 @@ function glob(pattern, opts = {}) {
     return statted.slice(0, maxFiles).map((x) => x.f);
 }
 /** 读文件全文（失败返回 ''） */
-export function readText(f, maxBytes = 1_000_000) {
+export function readText(f, maxBytes = 50_000_000) {
     try {
+        // ★ 2026-11-16（M-5）：文件级闸只按**扩展名**（.env/.pem/.key/.db…）拒绝。
+        //   这里不套目录规则 —— 内置源可能位于 AppData 等目录，按目录拒绝会静默丢数据。
+        if (ingestDenyOn() && INGEST_SENSITIVE_EXT_RE.test(String(f).replace(/\\/g, "/"))) {
+            console.warn(`[ingest] 跳过敏感文件（安全策略）：${String(f).slice(0, 200)}`);
+            return "";
+        }
+        const size=fs.statSync(f).size;
+        if(size>maxBytes)throw new RangeError(`INGEST_SOURCE_TOO_LARGE: ${size} bytes exceeds ${maxBytes}; 未读取、未截断、未推进水位`);
         const buf = fs.readFileSync(f);
-        if (buf.length > maxBytes)
-            return buf.subarray(0, maxBytes).toString("utf8") + "\n[已截断]";
         return buf.toString("utf8");
     }
-    catch {
+    catch (e) {
+        if(e instanceof RangeError)throw e;
         return "";
     }
 }
@@ -408,17 +445,20 @@ function traeLearnedToText(raw) {
  * L1 条目切分：以 markdown 列表项 / 小节标题为界聚合成「一条一记忆」。
  * 不用 1500 字硬切 —— L1 内容本身是结论，硬切会把一条完整结论劈成两半。
  */
-function splitL1Items(text, max = 1200) {
-    const clean = text.replace(/<!--[\s\S]*?-->/g, ""); // 去 HTML 注释（规则段标记）
+export function splitL1Items(text) {
+    const clean = String(text).replace(/\r\n?/g,'\n').trim();
+    const conclusions=memoryFields(clean).filter(f=>f.name==='结论');
+    if(conclusions.length)return conclusions.map((f,i)=>clean.slice(i?f.index:0,conclusions[i+1]?.index??clean.length).trim()).filter(t=>t.length>=20);
     const out = [];
-    let cur = "";
+    let cur = "",fence=null;
     const flush = () => { const t = cur.trim(); if (t.length >= 20)
         out.push(t); cur = ""; };
     for (const ln of clean.split(/\r?\n/)) {
-        const isBoundary = /^\s*(?:[-*+]\s|\d+[.、)]\s|#{1,6}\s)/.test(ln);
+        const mark=ln.trim().match(/^(`{3,}|~{3,})/);
+        const inCode=!!fence;
+        if(mark){if(!fence)fence=mark[1];else if(mark[1][0]===fence[0]&&mark[1].length>=fence.length)fence=null;}
+        const isBoundary = !inCode&&!mark&&/^(?:[-*+]\s|\d+[.、)]\s|#{1,6}\s)/.test(ln);
         if (isBoundary && cur.trim())
-            flush();
-        if (cur && (cur + "\n" + ln).length > max)
             flush();
         cur = cur ? cur + "\n" + ln : ln;
     }
@@ -431,7 +471,7 @@ function splitL1Items(text, max = 1200) {
  * 而 L1 源多为规则/路径密集的 markdown（表格、加粗、Windows 路径 `C:\...`），
  * 用它会误杀大量正常内容（首次实跑 513 块被拒 320 条，62%）。改用控制字符判定「真乱码」。
  */
-function l1Gate(content) {
+export function l1Gate(content) {
     const t = content.trim();
     if (t.length < 20)
         return false;
@@ -439,6 +479,20 @@ function l1Gate(content) {
         return false; // 控制字符 / 特殊区
     if (/^#{1,6}\s*$/.test(t))
         return false; // 纯标题行
+    // ★ 2026-11-01（记忆库整理，本次归档 120 条结构碎片的根因）：
+    //   ① 纯引用条目——只有反引号片段（路径/命令/URL）与标点，没有一句可复用的判断；
+    //   ② 单行标题——没有正文的裸标题，分块后只剩标题本身。
+    //   两条判据都放在既有白名单之后：规则/路径密集的 markdown 仍按原口径放行，
+    //   只挡「去掉引用与标点后什么都不剩」的条目。
+    if (/^#{1,6}\s/.test(t) && !t.includes("\n"))
+        return false; // 单行标题（无正文）
+    const bare = t
+        .replace(/`[^`\n]*`/g, "")            // 去反引号片段
+        .replace(/^[\s>*+\-#\d.、)]+/, "")    // 去 markdown 列表/标题前缀
+        .replace(/[及和与或、]/g, "")          // 去并列连接词（`a`及`b` 这类纯清单）
+        .replace(/[\p{P}\p{S}\s]/gu, "");     // 去标点、符号、空白
+    if (bare.length === 0 && /`/.test(t))
+        return false; // 纯引用条目
     return true;
 }
 /** 按源的 transform 规则取文本；返回空串表示该源本轮无有效内容 */
@@ -462,6 +516,116 @@ function markIngestState(db, src) {
     }
     catch { /* 文件消失则忽略 */ }
 }
+/* ── ★ #700059（2026-11-07）：失败源退避 + 死信 ──────────────────────────────
+ * 背景：原实现 srcLlmFail>0 就整源不写水位（下方 markIngestState 的 old 判据），
+ *   一个块 429 会让整个源每轮从同一处重跑 —— 实测 desktop.log 7 天 1,103 次「提炼失败」，
+ *   settings.json 水位停在 3,617B/10-31，真实已 24,658B/11-07（漏采 7 天）。
+ * 现改为：
+ *   ① 失败不再阻塞水位（按源推进到文件末尾），但失败块必须落 dead-letter（可精确重放）；
+ *   ② 失败源按 fail_count 指数退避（30min→6h 封顶），冷却期内不读文件、不调 LLM；
+ *   ③ 退避状态落在 ingest_state 的新列，跨进程/跨重启有效（不再依赖单轮内存的 srcLlmFailStreak）。
+ * 为什么不用「块内逐条位移」：ingest_state 只有 (size,mtime)，没有字节偏移；readSourceText
+ *   每次读整文件，逐条位移既不减少读放大，又要多维护一套游标与一致性；而入库前的向量去重
+ *   (cos>0.92) 已能保证已采内容不会重复写入。故取「源级推进 + 块级死信」，代价最小且可观测。
+ */
+const RETRY_BASE_MIN = 30;
+const RETRY_MAX_MIN = 360;
+/** 指数退避分钟数：30 → 60 → 120 … 封顶 360（6h） */
+export function backoffMinutes(failCount) {
+    const n = Math.max(1, Math.min(Number(failCount) || 1, 10));
+    return Math.min(RETRY_BASE_MIN * 2 ** (n - 1), RETRY_MAX_MIN);
+}
+/** 幂等补齐退避列 + 死信表；只读库/旧库不允许 ALTER 时静默降级为「无退避」但流程不中断。
+ *  死信为什么落独立表而不是塞 daemon_log：daemon_log 是审计流水（写入量已 27 万行、无保留策略），
+ *  死信是「待重放队列」，需要按源/块精确查（source+block+fp）且要存正文才能脱离原文件重放；
+ *  混进审计表既查不快也难清理，故单开一张小表（每轮至多 BLOCKS_PER_SOURCE 行/源）。 */
+function ensureIngestColumns(db) {
+    try {
+        const cols = db.prepare("PRAGMA table_info(ingest_state)").all().map((c) => c.name);
+        if (!cols.includes("fail_count"))
+            db.exec("ALTER TABLE ingest_state ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0");
+        if (!cols.includes("next_retry_at"))
+            db.exec("ALTER TABLE ingest_state ADD COLUMN next_retry_at TEXT");
+        if (!cols.includes("last_error"))
+            db.exec("ALTER TABLE ingest_state ADD COLUMN last_error TEXT");
+        db.exec(`CREATE TABLE IF NOT EXISTS ingest_dead_letters (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            source     TEXT    NOT NULL,
+            name       TEXT,
+            block      INTEGER NOT NULL DEFAULT -1,
+            chars      INTEGER NOT NULL DEFAULT 0,
+            fp         TEXT,
+            error      TEXT,
+            content    TEXT,
+            created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_dl_source ON ingest_dead_letters(source, created_at);`);
+        return true;
+    }
+    catch {
+        return false; // 迁移失败不阻断采集（退化为原行为）
+    }
+}
+/** 读源的退避状态；无行/无列 → null（当作可采） */
+function retryStateOf(db, p) {
+    try {
+        return db.prepare("SELECT fail_count, next_retry_at FROM ingest_state WHERE path = ?").get(p) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 记一次失败：fail_count+1 并按退避算 next_retry_at；不写 size/mtime（水位另由 markIngestState 推进） */
+function noteSourceFailure(db, src, errMsg, failCount) {
+    try {
+        const next = new Date(Date.now() + backoffMinutes(failCount) * 60000).toISOString();
+        const msg = String(errMsg).slice(0, 300);
+        const cur = db.prepare("SELECT size, mtime_ms FROM ingest_state WHERE path = ?").get(src.path);
+        if (cur) {
+            db.prepare(`UPDATE ingest_state SET fail_count = ?, next_retry_at = ?, last_error = ?,
+                last_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE path = ?`).run(failCount, next, msg, src.path);
+        }
+        else {
+            db.prepare(`INSERT INTO ingest_state(path, size, mtime_ms, last_at, fail_count, next_retry_at, last_error)
+                VALUES(?, 0, 0, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`).run(src.path, failCount, next, msg);
+        }
+    }
+    catch { /* 退避落库失败不阻断本轮 */ }
+}
+/** 成功一轮 → 清退避（保留水位，由 markIngestState 单独写） */
+function clearSourceFailure(db, p) {
+    try {
+        db.prepare("UPDATE ingest_state SET fail_count = 0, next_retry_at = NULL, last_error = NULL WHERE path = ?").run(p);
+    }
+    catch { /* 旧库无列时忽略 */ }
+}
+/** 死信摘要：块内容指纹（FNV-1a）→ 让「哪一块失败」可被精确重放 */
+function blockFingerprint(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16).padStart(8, "0");
+}
+/** 死信：失败块落 ingest_dead_letters，带正文 → 即使水位已推进、原文件后续再变，也能脱离文件重放。
+ *  block = -1 表示「整源级失败」（嵌入失败，一个块都没进 LLM）。 */
+function logDeadLetter(db, src, blockIndex, block, errMsg) {
+    try {
+        const body = String(block ?? "");
+        db.prepare(`INSERT INTO ingest_dead_letters(source, name, block, chars, fp, error, content)
+            VALUES(?, ?, ?, ?, ?, ?, ?)`).run(
+            src.path,
+            src.name ?? "",
+            blockIndex,
+            body.length,
+            blockFingerprint(body),
+            String(errMsg).slice(0, 300),
+            body,
+        );
+    }
+    catch { /* 死信落库失败不阻断采集（stats.deadLetters 仍有计数） */ }
+}
 /** 按段落分块，每块约 ~1500 字符；单段落超长按 size 硬切，避免块膨胀 */
 /** 成本治理·渐进压缩（P1 CostGuard「渐进式压缩-降级-终止」第一级）：
  * 预算吃紧时把输入块压缩到 ≤45% 再送 LLM（省 token），保留句首与结论性句子。 */
@@ -482,7 +646,7 @@ function compressBlock(block, ratio = 0.45) {
             head.push(t);
     return head.join("\n").slice(0, 700);
 }
-function chunk(text, size = 1500) {
+export function chunk(text, size = 1500) {
     const blocks = [];
     let cur = "";
     for (const para of text.split(/\n{2,}|\r?\n/)) {
@@ -545,7 +709,13 @@ function hardGate(content) {
 /** 执行一轮采集：读全部源 → 分块 → 嵌入 → 库内去重 → LLM 提炼 → 入库。
  *  dryLimit>0 时只处理前 dryLimit 个源（调试用）；出错单源跳过不中断。 */
 export async function ingestAll(db, dryLimit = 0, opts = {}) {
-    const stats = { sources: 0, files: 0, chunks: 0, skippedDup: 0, skippedUnchanged: 0, l1Inserted: 0, l1Files: 0, llmFail: 0, inserted: 0, qualityReject: 0, gateReview: 0, gateMeta: 0, items: [], errors: [] };
+    const stats = { sources: 0, files: 0, chunks: 0, skippedDup: 0, skippedUnchanged: 0, skippedBackoff: 0, deadLetters: 0, l1Inserted: 0, l1Files: 0, llmFail: 0, inserted: 0, qualityReject: 0, gateReview: 0, gateMeta: 0, terminatedSources: [], items: [], errors: [] };
+    // ★ #700059：退避列 + 死信表幂等迁移（首次运行自动建；失败则退化为原行为，不阻断采集）
+    const hasRetryCols = ensureIngestColumns(db);
+    // 原文与分块进度分开保留：预算耗尽只能暂停，不能把未尝试的尾部标成已读。
+    db.exec(`CREATE TABLE IF NOT EXISTS ingest_source_snapshots(hash TEXT PRIMARY KEY,source TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS ingest_block_progress(source TEXT PRIMARY KEY,hash TEXT NOT NULL,next_block INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS ingest_item_sources(memory_id INTEGER NOT NULL,source_hash TEXT NOT NULL,block INTEGER NOT NULL,quote TEXT NOT NULL,PRIMARY KEY(memory_id,source_hash,block));`);
     const sources = getSources();
     stats.sources = sources.length;
     const all = dryLimit > 0 ? sources.slice(0, dryLimit) : sources;
@@ -562,7 +732,7 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
         return stats;
     }
     // 库内现有向量缓存（global scope，去重比较用）
-    const existing = getVectorsOnProject(db, "global");
+    const existingContents = new Set(db.prepare(`SELECT content FROM ${MEMORIES} WHERE project='global' AND status IN ('active','trial')`).all().map(r=>r.content));
     let calls = 0; // 本轮 LLM 提炼次数，达 MAX_CALLS 停止后续源
     let budgetExhausted = false;
     // ★ P1 成本治理·三级渐进（CostGuard）：按已耗预算比例切档，不是一刀切 break
@@ -588,8 +758,13 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
         if (level === "downgrade") {
             // L3 降级+终止：剩余源跳过不再调 LLM（只放行 L1 免 LLM 源）
             budgetDowngrade++;
-            if ((src.level ?? "L2") === "L2")
+            if ((src.level ?? "L2") === "L2") {
+                // ★ #700059：原实现只累加计数、没有 continue —— L2 源照旧读文件并调 LLM，
+                //   熔断名存实亡。现在真正跳过，并记下被终止的源名以便与计数对账。
                 budgetTerminated++;
+                stats.terminatedSources.push(src.name);
+                continue;
+            }
         }
         if (budgetExhausted)
             break;
@@ -597,12 +772,22 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
             budgetExhausted = true;
             break;
         }
+        // ★ #700059：失败源退避冷却 —— 冷却期内整源跳过（不 stat / 不读 / 不调 LLM）
+        let prevFail = 0;
+        if (hasRetryCols) {
+            const rs = retryStateOf(db, src.path);
+            prevFail = rs?.fail_count || 0;
+            if (rs && rs.next_retry_at && Date.parse(rs.next_retry_at) > Date.now()) {
+                stats.skippedBackoff++;
+                continue;
+            }
+        }
         // 增量：size+mtime 未变 → 跳过（本轮零读取成本）
         if (states) {
             try {
                 const st = fs.statSync(src.path);
                 const prev = states.get(src.path);
-                if (prev && prev.size === st.size && prev.mtime_ms === Math.floor(st.mtimeMs)) {
+                if (prev && prevFail===0 && prev.size === st.size && prev.mtime_ms === Math.floor(st.mtimeMs)) {
                     stats.skippedUnchanged++;
                     continue;
                 }
@@ -611,37 +796,51 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                 continue; // 文件已消失/不可读
             }
         }
-        let srcLlmFail = 0; // 本源 LLM 失败次数；>0 则不写水位，下轮重试
-        const text = readSourceText(src);
+        let srcLlmFail = 0;   // 本源本轮 LLM 失败块数（只用于统计与退避计数，不再作为「不写水位」的判据）
+        let srcFirstErr = ""; // 本轮首个失败原因 → ingest_state.last_error（可回查是哪类错）
+        let text;
+        try{text=readSourceText(src);}catch(e){stats.errors.push(`${src.name} 读取失败：${String(e)}`);noteSourceFailure(db,src,e,prevFail+1);continue;}
         if (!text) {
             // 本源无有效内容（如审计日志过滤后没有风险事件）→ 同样要记水位，
             // 否则这类源每轮都被重读一遍（大文件如 12MB 的会话 transcript 尤其浪费）。
-            if (states)
-                markIngestState(db, src);
+            markIngestState(db, src);
+            clearSourceFailure(db, src.path);
             continue;
         }
+        const sourceHash=createHash('sha256').update(text).digest('hex');
+        db.prepare('INSERT OR IGNORE INTO ingest_source_snapshots(hash,source,content) VALUES(?,?,?)').run(sourceHash,src.path,text);
         stats.files++;
         // ── L1：内容本身已是结论 → 免 LLM 直读入库（省掉二次蒸馏与提炼预算）──
         if ((src.level ?? "L2") === "L1") {
             stats.l1Files++;
             const l1items = splitL1Items(text);
-            if (!l1items.length)
+            if (!l1items.length) {
+                // 切不出条目 ≠ 没读完：不写水位会让本文件每轮重读（原 L1 全量重跑的同类问题）
+                markIngestState(db, src);
+                clearSourceFailure(db, src.path);
                 continue;
+            }
             let l1vecs;
             try {
                 l1vecs = await embedder.embedTexts(l1items);
             }
             catch (e) {
+                // 整源嵌入失败：一条都没入库，此时推进水位等于永久丢这一版内容 → 不推进，只记退避。
+                // 冷区（cooling）到期后会重试；死信记整源一条（block=-1）便于回查。
                 stats.errors.push(`${src.name} 嵌入失败：${String(e)}`);
+                stats.deadLetters++;
+                logDeadLetter(db, src, -1, text, e);
+                noteSourceFailure(db, src, e, prevFail + 1);
                 srcLlmFail++;
                 continue;
             }
             const l1type = src.kind === "rule" ? "rule" : "experience";
+            let l1WriteFailure=null;
             for (let i = 0; i < l1items.length; i++) {
                 stats.chunks++;
                 const it = l1items[i];
                 const vec = l1vecs[i];
-                if (existing.length && vec && existing.some((ex) => cosine(ex.vec, vec) > 0.92)) {
+                if (existingContents.has(it)) {
                     stats.skippedDup++;
                     continue;
                 }
@@ -650,7 +849,7 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                     continue;
                 }
                 try {
-                    const row = writeMemory(db, {
+                    const row = createMemoryRow(db, {
                         content: it,
                         type: l1type,
                         agent: src.agent,
@@ -659,9 +858,11 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                         embedding: vec ?? undefined,
                         confidence: 0.7,
                         status: "trial",
+                        // ★ 2026-10-14（③）：采集来源标记 —— 外部文件内容不得进规则反思候选（见 rule-reflection.js）
+                        source: "ingest",
                     });
-                    if (vec)
-                        existing.push({ id: row.id, vec });
+                    existingContents.add(it);
+                    db.prepare('INSERT OR IGNORE INTO ingest_item_sources VALUES(?,?,?,?)').run(row.id,sourceHash,i,it);
                     logUsage(db, { memory_id: row.id, event: "write", reader_agent: src.agent, writer_agent: src.agent, project: row.project });
                     stats.inserted++;
                     stats.l1Inserted++;
@@ -669,43 +870,46 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                 }
                 catch (e) {
                     stats.errors.push(`${src.name} 写入失败：${String(e)}`);
+                    console.error(`[ingest] L1 写入失败（${src.name}）: ${String(e).slice(0, 300)}`);
+                    l1WriteFailure=e;
                 }
             }
-            // ⚠️ 必须在此写水位：continue 会跳过循环末尾的统一写法，否则 L1 每轮全量重跑
-            if (states && srcLlmFail === 0)
-                markIngestState(db, src);
+            if(l1WriteFailure){noteSourceFailure(db,src,l1WriteFailure,prevFail+1);continue;}
+            // ⚠️ 必须在此写水位：continue 会跳过循环末尾的统一写法，否则 L1 每轮全量重跑。
+            // ★ #700059：L1 免 LLM，能走到这里即表示不含「整源级失败」（嵌入失败已在上方 continue），
+            //   故无条件推进水位 + 清退避；原实现依赖 opts.incremental（states 非空）才写，
+            //   手动/全量采集时水位永远不更新。
+            markIngestState(db, src);
+            clearSourceFailure(db, src.path);
             continue; // 关键：L1 不消耗 LLM 预算
         }
-        const blocks = chunk(text).slice(0, BLOCKS_PER_SOURCE);
-        if (!blocks.length)
-            continue;
-        let vecs;
-        try {
-            vecs = await embedder.embedTexts(blocks);
-        }
-        catch (e) {
-            stats.errors.push(`${src.name} 嵌入失败：${String(e)}`);
+        const blocks = chunk(text);
+        if (!blocks.length) {
+            markIngestState(db, src);
+            clearSourceFailure(db, src.path);
             continue;
         }
-        for (let i = 0; i < blocks.length; i++) {
+        const progress=db.prepare('SELECT hash,next_block FROM ingest_block_progress WHERE source=?').get(src.path);
+        const previousBlock=progress?.hash===sourceHash?Number(progress.next_block):0;
+        const startBlock=prevFail>0&&previousBlock>=blocks.length?0:previousBlock;
+        let earliestFailed=null;
+        const saveProgress=next=>db.prepare('INSERT OR REPLACE INTO ingest_block_progress VALUES(?,?,?)').run(src.path,sourceHash,earliestFailed==null?next:Math.min(next,earliestFailed));
+        let truncated = false; // 块循环因全局预算耗尽提前 break（这些块未尝试，不得推进水位）
+        let circuitBroken = false; // ★ 同源连续失败熔断提前 break（同上：剩余块未尝试，不推进水位）
+        let srcFailStreak = 0; // ★ 本源的「连续失败块数」；成功一块即清零（与跨源的 srcLlmFailStreak 分开统计）
+        for (let i = startBlock; i < blocks.length; i++) {
+            if(i-startBlock>=BLOCKS_PER_SOURCE){truncated=true;break;}
             stats.chunks++;
             let block = blocks[i];
-            const vec = vecs[i];
-            // 库内去重：与已有向量 cos>0.92 视为重复跳过
-            if (existing.length && vec) {
-                const hit = existing.some((ex) => cosine(ex.vec, vec) > 0.92);
-                if (hit) {
-                    stats.skippedDup++;
-                    continue;
-                }
-            }
             // LLM 提炼（受全局预算约束）
-            if (calls >= MAX_CALLS)
+            if (calls >= MAX_CALLS) {
+                truncated = true;
                 break;
+            }
             // ★ P1 成本治理 L2 压缩档：预算 50–80% 时压缩输入块（省 token），统计 budgetCompress
             const lvl = budgetLevel();
             if (lvl === "compress") {
-                block = compressBlock(block);
+                // 保留完整块；预算通过暂停/续读控制，不能删中间事实换成本。
                 budgetCompress++;
             }
             calls++;
@@ -713,17 +917,44 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
             try {
                 items = await extractFromSource(block, src.kind, `${src.agent}:${src.path}`);
                 srcLlmFailStreak = 0; // 一次成功即清零连续失败
+                srcFailStreak = 0; // ★ 本源连续失败同样清零
             }
             catch (e) {
                 stats.llmFail++;
+                earliestFailed=earliestFailed==null?i:Math.min(earliestFailed,i);
+                saveProgress(i);
                 srcLlmFail++;
                 srcLlmFailStreak++;
                 stats.errors.push(`${src.name} 提炼失败：${String(e)}`);
+                if (!srcFirstErr)
+                    srcFirstErr = String(e);
+                // ★ #700059：失败块落死信（存 blocks[i] 原文，不是压缩后的副本），
+                //   但**不阻塞同源后续块** —— 一个 429 不该让整源剩余块陪葬。
+                stats.deadLetters++;
+                logDeadLetter(db, src, i, blocks[i], e);
+                // ★ 2026-11-08（卡外 item3）：同源块级熔断 —— 同一源连续 SRC_FAIL_STREAK_MAX 块失败
+                //   （典型 429 / 鉴权失效）判定该源本轮不可用，跳过剩余块，避免继续空刷配额。
+                //   已失败块均已落死信（可重放）；剩余块未尝试 → truncated=true 不推进水位；
+                //   源级退避在块循环外补记（noteSourceFailure），下轮按 30min→6h 退避重试。
+                srcFailStreak++;
+                if (srcFailStreak >= SRC_FAIL_STREAK_MAX) {
+                    circuitBroken = true;
+                    truncated = true;
+                    stats.errors.push(`${src.name} 连续 ${srcFailStreak} 块提炼失败 → 本轮跳过剩余 ${blocks.length - i - 1} 块（源退避后下轮重试）`);
+                    break;
+                }
                 continue;
             }
-            if (!items.length)
+            if (!items.length){saveProgress(i+1);
                 continue;
+            }
+            const itemVectors=await embedder.embedTexts(items.map(it=>it.content)).catch(e=>{stats.errors.push(`${src.name} 正文嵌入失败，保留原文走词法检索：${String(e)}`);return [];});
+            let itemIndex=-1;
+            let blockWriteFailure=null;
             for (const it of items) {
+                itemIndex++;
+                const vec=itemVectors[itemIndex];
+                if(existingContents.has(it.content)){stats.skippedDup++;continue;}
                 // P2 硬门禁：pass 直入；review 降置信走 trial；meta 路由 meta scope；reject 拒收（管道一律 status='trial' 由 daemon 考核）
                 const gate = hardGate(it.content);
                 if (gate.verdict === "reject") {
@@ -742,7 +973,7 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                 try {
                     // ★ M10（R4 裁决）：LLM 提炼的情绪信号落库 —— |valence|≥0.5 归入 affective 扇区（自动提炼写入路径）
                     const affective = it.valence !== undefined && Math.abs(it.valence) >= 0.5;
-                    row = writeMemory(db, {
+                    row = createMemoryRow(db, {
                         content: it.content,
                         type: it.type,
                         agent: src.agent,
@@ -751,13 +982,17 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                         embedding: vec ?? undefined,
                         confidence,
                         status: "trial",
+                        // ★ 2026-10-14（③）：采集来源标记（同上）
+                        source: "ingest",
+                        source_ref: `ingest:${sourceHash}#block=${i}`,
                         sector: affective ? "affective" : undefined,
                         valence: it.valence,
                         arousal: it.arousal,
                     });
+                    db.prepare('INSERT OR IGNORE INTO ingest_item_sources VALUES(?,?,?,?)').run(row.id,sourceHash,i,it.source_quote);
+                    if(!vec)db.prepare(`UPDATE ${MEMORIES} SET embedding_stale=1 WHERE id=?`).run(row.id);
                     // 同步补进去重缓存：同一轮内后续源再命中相同内容也能去重，避免重复入库
-                    if (vec)
-                        existing.push({ id: row.id, vec });
+                    existingContents.add(it.content);
                     // 写入必须落 usage（漏斗 write 基线）；仅 logDaemon 会被"只写不搜"触发率高估
                     logUsage(db, { memory_id: row.id, event: "write", reader_agent: src.agent, writer_agent: src.agent, project: row.project });
                     logDaemon(db, {
@@ -770,15 +1005,41 @@ export async function ingestAll(db, dryLimit = 0, opts = {}) {
                 }
                 catch (e) {
                     stats.errors.push(`${src.name} 写入失败：${String(e)}`);
+                    console.error(`[ingest] L2 写入失败（${src.name}）: ${String(e).slice(0, 300)}`);
+                    blockWriteFailure=e;
                     continue;
                 }
                 stats.inserted++;
                 stats.items.push({ id: row.id, type: row.type, content: row.content.slice(0, 80), agent: row.agent });
             }
+            if(blockWriteFailure){
+                truncated=true;
+                circuitBroken=true;
+                srcLlmFail++;
+                srcFirstErr=String(blockWriteFailure);
+                earliestFailed=earliestFailed==null?i:Math.min(earliestFailed,i);
+                saveProgress(i);
+                break; // 本块仍须重试；已成功条目由正文去重，不能推进越过失败写入。
+            }
+            saveProgress(i+1);
         }
-        // 全部块处理完且无 LLM 失败 → 记录水位（下一轮跳过该文件）
-        if (states && srcLlmFail === 0)
+        // ★ #700059：水位「按源推进」—— 不再因 srcLlmFail>0 整源回滚。
+        //   失败块已落 ingest_dead_letters（带正文，可重放），水位必须前移；否则整源每轮从同一处重跑，
+        //   正是 desktop.log 7 天 1,103 次「提炼失败」的根因。
+        //   唯一例外：预算耗尽导致块循环 break（truncated）—— 那些块压根没尝试，推进等于静默丢弃；
+        //   下轮重跑时已采块会被 cos>0.92 去重挡在 LLM 之前，成本可控。
+        if (!truncated&&srcLlmFail===0) {
             markIngestState(db, src);
+            if (srcLlmFail === 0)
+                clearSourceFailure(db, src.path);
+            else
+                noteSourceFailure(db, src, srcFirstErr || "LLM 提炼失败", prevFail + 1);
+        }
+        // ★ 2026-11-08（卡外 item3）：熔断虽然也置了 truncated（不推进水位），但成因是「源不可用」，
+        //   必须补记源级退避 —— 否则下一轮立刻重刷同一源，熔断就白做了。
+        else if (circuitBroken||srcLlmFail>0) {
+            noteSourceFailure(db, src, srcFirstErr || "同源连续块提炼失败熔断", prevFail + 1);
+        }
     }
     // ★ P1 成本治理：最终档位 + 三级统计（normal/compress 次数、downgrade 终止数），供 dashboard 展示
     stats.budgetLevel = budgetLevel();

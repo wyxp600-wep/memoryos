@@ -1,6 +1,7 @@
 "use strict";
 const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
+const fs = require("node:fs");
 const { portOpen } = require("./port");
 
 /**
@@ -163,39 +164,114 @@ function createCore(deps) {
     return true;
   }
 
+  /**
+   * ★ 2026-10-15 核心发现协议（根治端口竞态 + 重复拉起 → 僵尸壳）：
+   *   dashboard 1a 批已在 listen 成功后写 `core.json {port,pid,startedAt}`。
+   *   落点口径：内核 writeCoreJson 的 dataDirOf() 对 MEMORY_DB（…/MemoryOS/data/memory.db）
+   *   去两层 = `…/MemoryOS`（与壳层 dataDir 同根，config.json 同目录）——故本函数读
+   *   `dataDir()/core.json`。
+   *   三项校验：① 文件可解析且 port/pid 齐全；② pid 存活（kill 0）；③ 该端口
+   *   `/api/health` 带 `x-memory-token` 返回 200（防 pid 撞号/陈旧 core.json 指向他人
+   *   服务——token 不对即非本机核心）。三项全过 → 复用该核心，跳过 spawn。
+   *   任一项失败 → 返回 null，调用方回退原 spawn 路径（行为不劣于改前）。
+   *   注入缝：fetchImpl（测试替身；生产缺省 globalThis.fetch）。
+   */
+  async function discoverHealthyCore() {
+    try {
+      const raw = fs.readFileSync(path.join(dataDir(), "core.json"), "utf8");
+      const j = JSON.parse(raw);
+      if (!j || !Number(j.port) || !Number(j.pid))
+        return null;
+      try {
+        process.kill(Number(j.pid), 0); // 存活探针（不真杀）
+      }
+      catch {
+        return null; // pid 已退出 → 陈旧 core.json
+      }
+      const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+      const res = await fetchImpl(`http://127.0.0.1:${Number(j.port)}/api/health`, {
+        headers: { "x-memory-token": getToken() },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res || res.ok !== true)
+        return null;
+      return { port: Number(j.port), pid: Number(j.pid) };
+    }
+    catch {
+      return null; // 文件不存在/JSON 坏/网络失败 → 一律回退 spawn
+    }
+  }
+
   async function startCore() {
     const cfg = readConfig() || {};
     log(`启动内核（端口 ${getPort()}）…`);
-    const llmEnv = {};
-    if (cfg.llmUrl) {
-      llmEnv.MIMOS_URL = cfg.llmUrl;
-      if (cfg.llmModel) llmEnv.INGEST_MODEL = cfg.llmModel;
-      if (cfg.llmKey) llmEnv.INGEST_KEY = cfg.llmKey;
-    }
-    // 受限模式：桌面版默认关闭（MEMORY_RESTRICTED=0）——用户可在「笔记」页自建笔记、
-    // 在任务看板建卡。若 config.json 显式写 "restricted": true，则恢复「仅系统采集」。
-    llmEnv.MEMORY_RESTRICTED = cfg.restricted === true ? "1" : "0";
-    // 执行工具面（P0）：开启后 server.js 向 agent 暴露 file_read/file_write/exec_run（工具面 22→25）。
-    // 安全双保险：① file_write/exec_run 带 ⟨risk:L1|gate:required⟩ 前缀，agent-core writeGate 拦截
-    //   （受限模式下 allowWrites=false ⇒ 写门禁一律拒绝，agent 只能调只读 file_read）；
-    //   ② 无头 --work 模式执行类 L1 不在 HEADLESS_PREAUTHORIZED 白名单（方案 c），仍需审批。
-    // 兜底熔断：进程环境置 MEMORYOS_EXEC_OFF=1 可全局禁用（优先级最高）。
-    // 遗留（P1）：执行工具未纳入 B3 受限能力位（RESTRICTED 下按能力位隐藏 exec）。
-    llmEnv.MEMORYOS_EXEC_ON = "1";
-    spawnUnlessAlive("dashboard.js", llmEnv);
+    // ★ 2026-10-15：核心发现协议——已有健康核心在服务则复用（不再 spawn 自己那份）。
+    //   根治：多壳/桌面工具重复拉起时 findFreePort 探测空窗 → 各自 spawn →
+    //   EADDRINUSE 秒退 → 60s 重试循环 → 极端下 startCore 超时 → quit 挂起僵尸壳。
+    // ★ 2026-11-01：环境构造抽成函数，供「健康核心复用」路径补拉 daemon 时复用。
+    const buildLlmEnv = () => {
+      const llmEnv = {};
+      if (cfg.llmUrl) {
+        llmEnv.MIMOS_URL = cfg.llmUrl;
+        if (cfg.llmModel) llmEnv.INGEST_MODEL = cfg.llmModel;
+        if (cfg.llmKey) llmEnv.INGEST_KEY = cfg.llmKey;
+      }
+      // 受限模式：桌面版默认关闭（MEMORY_RESTRICTED=0）——用户可在「笔记」页自建笔记、
+      // 在任务看板建卡。若 config.json 显式写 "restricted": true，则恢复「仅系统采集」。
+      llmEnv.MEMORY_RESTRICTED = cfg.restricted === true ? "1" : "0";
+      // 执行工具面（P0）：开启后 server.js 向 agent 暴露 file_read/file_write/exec_run（工具面 22→25）。
+      // 安全双保险：① file_write/exec_run 带 ⟨risk:L1|gate:required⟩ 前缀，agent-core writeGate 拦截
+      //   （受限模式下 allowWrites=false ⇒ 写门禁一律拒绝，agent 只能调只读 file_read）；
+      //   ② 无头 --work 模式执行类 L1 不在 HEADLESS_PREAUTHORIZED 白名单（方案 c），仍需审批。
+      // 兜底熔断：进程环境置 MEMORYOS_EXEC_OFF=1 可全局禁用（优先级最高）。
+      // 遗留（P1）：执行工具未纳入 B3 受限能力位（RESTRICTED 下按能力位隐藏 exec）。
+      // ★ 2026-10-14（发布默认收口）：原实现**无条件**写 "1"，与本仓既定决策相反 ——
+      //   server.js:157、README:76、docs/P1-实施与验证记录-20260915.md（提交 7b167e7）均明写
+      //   「P0-2 用户拍板决策 1(a)：**默认关闭执行面**，显式 MEMORYOS_EXEC_ON=1 才启用」。
+      //   改为 **缺省=关**：对齐该决策与全局 fail-closed 惯例，也让新成员开箱不带执行能力。
+      //   仅 config.json 显式 `execOn: true` 才注入 "1"；用户可在「设置 → 安全 → Agent 执行能力」
+      //   即时切换（该开关持久化，dashboard 启动时按同一 config 值回填 MCP 子进程 env）。
+      llmEnv.MEMORYOS_EXEC_ON = cfg.execOn === true ? "1" : "0";
+      return llmEnv;
+    };
     // ★ P1-perf（B6′）嵌入侧车收敛：daemon 不再进程内驻留 560MB BGE-M3，改经 dashboard
     //   常驻的 /v1/embeddings（OpenAI 兼容，Bearer=MEMORY_TOKEN）复用同一份模型；
     //   dashboard 不可用时 reembed 失败仅记日志（daemon 小时级自愈重跑），零功能改动。
-    spawnUnlessAlive("daemon.js", {
-      ...llmEnv,
-      EMBED_MODE: "api",
-      EMBED_API_URL: `http://127.0.0.1:${getPort()}/v1/embeddings`,
-      EMBED_API_KEY: getToken(),
-    });
+    let daemonSpawned = false;
+    function spawnDaemon(env) {
+      if (daemonSpawned) return;
+      daemonSpawned = true;
+      spawnUnlessAlive("daemon.js", {
+        ...env,
+        EMBED_MODE: "api",
+        EMBED_API_URL: `http://127.0.0.1:${getPort()}/v1/embeddings`,
+        EMBED_API_KEY: getToken(),
+      });
+    }
+    const healthy = await discoverHealthyCore();
+    if (healthy) {
+      log(`发现已在服务的核心（pid=${healthy.pid} port=${healthy.port}），复用并跳过拉起`);
+      // ★ 2026-11-01 自愈补齐：daemon 崩溃后走自愈 → startCore 看到 dashboard 仍健康 →
+      //   原实现直接 return，daemon 永远不再拉起（实测 14:23:38 daemon 退出后无人补拉）。
+      //   仅当「自家 dashboard 子进程存活」时才补 daemon：说明这个健康核心是自己这份，
+      //   不会在多壳场景下重复拉起别人的 daemon。
+      const ownDashboard = coreChildren.some((c) => c.__script === "dashboard.js");
+      if (ownDashboard && !coreChildren.some((c) => c.__script === "daemon.js")) spawnDaemon(buildLlmEnv());
+      return;
+    }
+    const llmEnv = buildLlmEnv();
+    spawnUnlessAlive("dashboard.js", llmEnv);
+    // ★ 2026-11-01 首启加速：daemon 改为「dashboard 端口就绪后再拉起」。
+    //   根因（desktop.log 2026/11/1 13:36:32→13:36:56）：两者同时拉起时，daemon 启动即跑
+    //   治理（单事务持写锁约 16s），dashboard 打开库撞锁 → "database is locked" 崩溃 →
+    //   自愈重启两轮（3s+6s）→ 首启白等 24s，用户看到启动页长时间停留。
+    //   串行化后 dashboard 先完成 openDb（含 TEMP 视图/索引安装）并 listen，daemon 再开跑，
+    //   启动期零锁竞争。兜底：端口 20s 仍未就绪也把 daemon 拉起（不让治理永久缺席）。
     const t0 = Date.now();
     while (Date.now() - t0 < 60000) {
       await new Promise((r) => setTimeout(r, 400));
-      if (await portOpen(getPort())) return;          // ← 注意：portOpen(port)，先取值再传（曾误传函数导致 ERR_INVALID_ARG_TYPE）
+      if (await portOpen(getPort())) { spawnDaemon(llmEnv); return; } // ← 注意：portOpen(port)，先取值再传（曾误传函数导致 ERR_INVALID_ARG_TYPE）
+      if (Date.now() - t0 >= 20000) spawnDaemon(llmEnv);              // 兜底：内核迟迟未就绪也不让治理缺席
       if (isQuitting()) throw new Error("启动过程中应用已退出");
     }
     throw new Error("内核 60s 未就绪，请查看日志");
@@ -235,7 +311,9 @@ function createCore(deps) {
     return { selfHeal: SELFHEAL, maxRestarts: MAX_RESTARTS, baseDelayMs: BASE_DELAY_MS, maxDelayMs: MAX_DELAY_MS, scripts: out };
   }
 
-  return { startCore, restartCore, killAll, stats };
+  function stopForRestore(){restarting=true;killAll();}
+  async function resumeAfterRestore(){try{return await startCore();}finally{restarting=false;}}
+  return { startCore, restartCore, killAll, discoverHealthyCore, stats,stopForRestore,resumeAfterRestore };
 }
 
 module.exports = { createCore };

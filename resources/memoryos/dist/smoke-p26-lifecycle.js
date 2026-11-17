@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { bodyFixture } from "./memory-body-fixture.js";
 /**
  * MemoryOS — P2-6（MACP C-2/C-3）任务生命周期 **独立验收** 冒烟
  *
@@ -14,7 +15,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { StorageConnection as DatabaseSync } from './storage.js';
 
 const WS = fs.mkdtempSync(path.join(os.tmpdir(), "p26-life-"));
 const DB = path.join(WS, "life.db");
@@ -79,6 +80,10 @@ try {
     check("C1.release 后记忆头=pending", /已释放/.test(await call("task_release", { memory_id: a, reason: "验收释放" })) && headStatus(a) === "pending", `head=${headStatus(a)}`);
     const cardA3 = cardOf(a);
     check("C2.★release 后卡片=ready 且清锁（卡侧副作用，防静默失败）", cardA3?.status === "ready" && !cardA3?.claim_lock, `card=${cardA3?.status} lock=${cardA3?.claim_lock ?? "null"}`);
+    // ★ 2026-11-13（fix1 回归）：claim 建了工作证，release 必须把它一并结算。
+    //   否则会留下「卡已 ready、dispatch 仍 active」的悬挂行——task_claim 的 takeover 会误判有人持有权威。
+    const dspAfterRelease = db.prepare(`SELECT id, state FROM dispatches WHERE memory_id=? AND state IN ('active','stale')`).all(a);
+    check("C2b.★release 后无 active/stale 派发残留（防悬挂工作证）", dspAfterRelease.length === 0, dspAfterRelease.length ? `残留 ${dspAfterRelease.map((d) => `#${d.id}:${d.state}`).join(",")}` : "0 条");
     check("C3.release 递增记忆版本（乐观锁语义）", versionOf(a) === vBefore + 1, `${vBefore}→${versionOf(a)}`);
     check("C4.非进行中任务 release 被拒（负路径）", /仅进行中任务可释放/.test(await call("task_release", { memory_id: a })));
 
@@ -91,12 +96,12 @@ try {
 
     /* ── E. block：必填原因 + 卡侧同步 + 不进可做集 ── */
     const b = Number((await call("task_assign", { content: "生命周期验收任务 B（用于 block/reopen）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
-    const blockFromPending = await call("task_block", { memory_id: b, reason: "验收：pending 直接 block 应非法" });
+    const blockFromPending = await call("task_admin", { action: "block", memory_id: b, reason: "验收：pending 直接 block 应非法" });
     check("E0.裸 pending 不可直接 block（状态机拦截）", !/已标记受阻/.test(blockFromPending) && headStatus(b) === "pending", blockFromPending.replace(/\s+/g, " ").slice(0, 80));
     await call("task_claim", { memory_id: b, as: "p26-life" });              // 先进入 in_progress 才允许 block
-    const noReason = await call("task_block", { memory_id: b });
+    const noReason = await call("task_admin", { action: "block", memory_id: b });
     check("E1.block 缺原因被拒（必填校验）", !/已标记受阻/.test(noReason), noReason.replace(/\s+/g, " ").slice(0, 100));
-    const blockOk = await call("task_block", { memory_id: b, reason: "验收：模拟依赖断裂" });
+    const blockOk = await call("task_admin", { action: "block", memory_id: b, reason: "验收：模拟依赖断裂" });
     check("E2.block 带原因成功且头=blocked", /已标记受阻/.test(blockOk) && headStatus(b) === "blocked", `head=${headStatus(b)}｜${blockOk.replace(/\s+/g, " ").slice(0, 60)}`);
     const cardB = cardOf(b);
     check("E3.★block 卡侧同步为 blocked", cardB?.status === "blocked", `card=${cardB?.status}`);
@@ -107,14 +112,14 @@ try {
     /* ── F. 终态 + reopen（E-0 口径：reopened 为派生态） ── */
     const c = Number((await call("task_assign", { content: "生命周期验收任务 C（用于 reopen）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
     await call("task_claim", { memory_id: c, as: "p26-life" });
-    const reopenNonTerminal = await call("task_reopen", { memory_id: c, reason: "试" });
+    const reopenNonTerminal = await call("task_admin", { action: "reopen", memory_id: c, reason: "试" });
     check("F1.非终态任务 reopen 被拒（负路径）", !/已重开/.test(reopenNonTerminal), reopenNonTerminal.replace(/\s+/g, " ").slice(0, 80));
     check("F2.先完成（done）", /已完成/.test(await call("task_done", { memory_id: c, conclusion: "生命周期验收：完成" })) && headStatus(c) === "done", `head=${headStatus(c)}`);
     const cardC1 = cardOf(c);
     check("F3.★done 卡侧同步为 done", cardC1?.status === "done", `card=${cardC1?.status}`);
-    const reopenNoReason = await call("task_reopen", { memory_id: c });
+    const reopenNoReason = await call("task_admin", { action: "reopen", memory_id: c });
     check("F4.reopen 缺原因被拒（必填）", !/已重开/.test(reopenNoReason), reopenNoReason.replace(/\s+/g, " ").slice(0, 100));
-    const reopenOk = await call("task_reopen", { memory_id: c, reason: "验收：结论被推翻需重做" });
+    const reopenOk = await call("task_admin", { action: "reopen", memory_id: c, reason: "验收：结论被推翻需重做" });
     check("F5.reopen 后头=in_progress 且原因留痕（派生态不落库）", /已重开/.test(reopenOk) && headStatus(c) === "in_progress", `head=${headStatus(c)}｜${reopenOk.replace(/\s+/g, " ").slice(0, 60)}`);
     const cardC2 = cardOf(c);
     check("F6.★reopen 卡侧回 ready 且清锁", cardC2?.status === "ready" && !cardC2?.claim_lock, `card=${cardC2?.status}`);
@@ -131,10 +136,10 @@ try {
     check("G2.★supersede 后 loser 头文本同步 [status:merged]（P0#2）", headStatus(eG) === "merged", `head=${headStatus(eG)}`);
     const claimMerged = await call("task_claim", { memory_id: eG });
     check("G3.merged 任务按 id 领取被拒（双保险）", /不可按 id 操作/.test(claimMerged), claimMerged.replace(/\s+/g, " ").slice(0, 90));
-    const reopenMerged = await call("task_reopen", { memory_id: eG, reason: "试复活被取代任务" });
+    const reopenMerged = await call("task_admin", { action: "reopen", memory_id: eG, reason: "试复活被取代任务" });
     check("G4.merged 任务不可 reopen（应操作 winner）", !/已重开/.test(reopenMerged), reopenMerged.replace(/\s+/g, " ").slice(0, 90));
     const asgBefore = (db.prepare(`SELECT content FROM memories WHERE id=?`).get(gG).content.match(/\[assignee:([^\]]*)\]/) ?? [])[1];
-    const verifyMsg = await call("task_verify", { memory_id: gG, reason: "守卫验收：证据=smoke G5" });
+    const verifyMsg = await call("task_admin", { action: "verify", memory_id: gG, reason: "守卫验收：证据=smoke G5" });
     check("G5.★task_verify pending→done（不改归属不发租约）", /已验收关闭/.test(verifyMsg) && headStatus(gG) === "done", verifyMsg.replace(/\s+/g, " ").slice(0, 90));
     const asgAfter = (db.prepare(`SELECT content FROM memories WHERE id=?`).get(gG).content.match(/\[assignee:([^\]]*)\]/) ?? [])[1];
     check("G6.verify 不改归属（assignee 原样）", asgBefore === asgAfter, `${asgBefore}→${asgAfter}`);
@@ -142,7 +147,7 @@ try {
     check("G7.★verify 卡侧同步 done 且清锁", cardG?.status === "done" && !cardG?.claim_lock, `card=${cardG?.status} lock=${cardG?.claim_lock ?? "null"}`);
     const verifyEvt = db.prepare(`SELECT COUNT(*) n FROM memory_events WHERE memory_id=? AND op='task_verify'`).get(gG)?.n;
     check("G8.verify 事件留痕（verified_by，非 claim 噪音）", Number(verifyEvt) >= 1, `events=${verifyEvt}`);
-    const verifyAgain = await call("task_verify", { memory_id: gG, reason: "重复验收" });
+    const verifyAgain = await call("task_admin", { action: "verify", memory_id: gG, reason: "重复验收" });
     check("G9.重复验收被拒（幂等负路径）", !/已验收关闭/.test(verifyAgain), verifyAgain.replace(/\s+/g, " ").slice(0, 90));
     // G10：依赖死锁修复 —— 依赖「头 done 但列归档」的任务不再永久阻塞
     const iG = Number((await call("task_assign", { content: "守卫验收任务 I（done 后列将被归档）", assignee: "p26-life", project: "global" })).match(/#(\d+)/)?.[1]);
@@ -160,10 +165,14 @@ try {
     const tidOf = (msg) => parseInt(String(msg).split("#")[1] ?? "0", 10) || 0;
     const badAsg = await call("task_assign", { content: "白名单探针任务（脏 assignee 应被拒）", assignee: "前端开发者", project: "global" });
     check("H1.assignee 脏值被拒（小写 kebab 白名单，#6）", !/已分派/.test(badAsg), badAsg.replace(/\s+/g, " ").slice(0, 80));
-    const wMsg = await call("memory_write", { content: "[task][assignee:?][status:pending] 强制通道探针：以 memory_write 建任务", type: "convention", project: "global" });
+    // ★ 2026-11-05（第6步⑨）收紧：只有显式 type="task" 才走任务通道；
+    //   普通类型带 [task] 头不再被静默改型，而是明确拒绝（原口径「见到就强制 type=task」已废弃）。
+    const wReject = await call("memory_write", { content: "[task][assignee:?][status:pending] 强制通道探针：以 memory_write 建任务", type: "convention", project: "global" });
+    check("H2a.普通类型带 [task] 头被拒并点名（不再静默改型）", !/已写入记忆/.test(wReject) && /\[task\] 状态头只供任务记忆/.test(wReject), wReject.replace(/\s+/g, " ").slice(0, 100));
+    const wMsg = await call("memory_write", { content: "[task][assignee:?][status:pending] 强制通道探针：以 memory_write 建任务", type: "task", project: "global" });
     const wId = tidOf(wMsg);
     const wType = db.prepare(`SELECT type FROM memories WHERE id=?`).get(wId)?.type;
-    check("H2.★[task] 头强制 type=task（修静默降级，#9）", wType === "task" && /已强制 task/.test(wMsg), `type=${wType}`);
+    check("H2b.★显式 type=task 放行并以 task 落库", wType === "task" && /按任务记忆写入/.test(wMsg), `type=${wType}`);
     const fId = tidOf(await call("task_assign", { content: "凭据探针任务（A1）", assignee: "p26-life", project: "global" }));
     const forged = await call("task_claim", { memory_id: fId, credential: "deadbeefdeadbeefdeadbeefdeadbeef" });
     check("H3.A1 伪造凭据被拒（不属于该 agent，#8）", /A1 拒绝/.test(forged) && headStatus(fId) === "pending", forged.replace(/\s+/g, " ").slice(0, 80));
@@ -189,10 +198,10 @@ try {
     try { iParsed = JSON.parse(iState); } catch { /* 解析失败置 null */ }
     check("I1.★task_claim 回执含 ⟨state⟩ 终态行（#10）", iParsed?.op === "task_claim" && iParsed?.id === iA && iParsed?.status === "in_progress" && Number.isInteger(iParsed?.version), iState.slice(0, 120));
     const iV = tidOf(await call("task_assign", { content: "回执探针任务 B（verify 后查验 ⟨state⟩）", assignee: "p26-life", project: "global" }));
-    const iVer = await call("task_verify", { memory_id: iV, reason: "回执断言" });
+    const iVer = await call("task_admin", { action: "verify", memory_id: iV, reason: "回执断言" });
     const vParsed = (() => { try { return JSON.parse((iVer.split("⟨state⟩ ")[1] ?? "").split("\n")[0]); } catch { return null; } })();
     check("I2.★task_verify 回执含 verified_by 终态行", vParsed?.op === "task_verify" && vParsed?.verified_by === "p26-life" && vParsed?.status === "done", (vParsed ? JSON.stringify(vParsed) : "").slice(0, 120));
-    const iW = await call("memory_write", { content: "回执探针：普通写入路径的结构化终态行（唯一性后缀 KZ7Q）", type: "experience", project: "global" });
+    const iW = await call("memory_write", { content: bodyFixture("回执探针：普通写入路径的结构化终态行（唯一性后缀 KZ7Q）"), type: "experience", project: "global" });
     const wParsed = (() => { try { return JSON.parse((iW.split("⟨state⟩ ")[1] ?? "").split("\n")[0]); } catch { return null; } })();
     check("I3.★memory_write 回执含 ⟨state⟩（id/type/version）", (wParsed?.op === "memory_write" || wParsed?.op === "memory_write_merged") && wParsed?.id > 0, (wParsed ? JSON.stringify(wParsed) : "").slice(0, 120));
     // CAS 并发守卫（黑盒模拟）：H5 已认领的 fId 版本被 dbFix 外部推进后，同版本 CAS 写必被拒

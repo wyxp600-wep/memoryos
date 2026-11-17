@@ -9,7 +9,7 @@
  *   D6 M-2.2：eff≤0.15 的 active 记忆不再被 hybridSearch 召回
  * 用法：node dist/smoke-daemon.js
  */
-import { openDb, writeMemory, daemonLogCount, writeConfig } from "./db.js";
+import { openDb, writeMemory, daemonLogCount, writeConfig, appendEvent, logUsage, logDaemon, readTaskEventRows, readTaskEventLatest, taskLastActivityDays } from "./db.js";
 import { buildPlan, applyPlan, loadHygieneConfig, DEFAULT_HYGIENE_CONFIG } from "./daemon.js";
 import { hybridSearch } from "./search.js";
 import { getEmbedder } from "./embed.js";
@@ -49,6 +49,19 @@ try {
     const dupB = await w("微信回调时间戳容差需设5分钟（时钟偏差）", "experience", "claude");
     db.prepare(`UPDATE memories SET hit_count=10 WHERE id=?`).run(dupA.id);
     db.prepare(`UPDATE memories SET hit_count=1 WHERE id=?`).run(dupB.id);
+    // ⑥⑦⑧ 任务夹具（★ 2026-11-14 回归）：任务带向量也必须被记忆治理排除。
+    //   ⑥ 60 天前、0 曝光 → 若按记忆规则必被衰减/归档；
+    //   ⑦ 试用态任务 → 若按记忆规则会被试用考核归档；
+    //   ⑧ 同内容双任务 → 若按记忆去重规则会被合并（任务查重只提示，不自动合并）。
+    const tOld = await w("[task][assignee:?][status:pending] 任务治理回归：旧任务不得被记忆衰减归档", "task", "dispatcher");
+    db.prepare(`UPDATE memories SET created_at=datetime('now','-60 days') WHERE id=?`).run(tOld.id);
+    const tTrial = await w("[task][assignee:?][status:pending] 任务治理回归：试用态任务不参与试用考核", "task", "dispatcher");
+    db.prepare(`UPDATE memories SET status='trial', created_at=datetime('now','-60 days') WHERE id=?`).run(tTrial.id);
+    const tDupA = await w("[task][assignee:?][status:pending] 任务治理回归：同内容任务不得去重合并", "task", "dispatcher");
+    const tDupB = await w("[task][assignee:?][status:pending] 任务治理回归：同内容任务不得去重合并", "task", "dispatcher");
+    db.prepare(`UPDATE memories SET hit_count=10 WHERE id=?`).run(tDupA.id);
+    db.prepare(`UPDATE memories SET hit_count=1 WHERE id=?`).run(tDupB.id);
+    const TASK_IDS = new Set([tOld.id, tTrial.id, tDupA.id, tDupB.id]);
     const plan = buildPlan(db);
     // D1/D2/D3 计划
     check("D1.decision 不衰减（eff=salience，60 天不贬损）", plan.decays.find((x) => x.id === dec.id)?.eff === db.prepare("SELECT salience FROM memories WHERE id=?").get(dec.id).salience, `eff=${plan.decays.find((x) => x.id === dec.id)?.eff}`);
@@ -58,6 +71,11 @@ try {
     check("D3.重复对命中多者为 winner", !!dup, dup ? `sim=${dup.sim.toFixed(3)}` : "未找到");
     // 归档不应包含高命中 hot（eff 高、有曝光）——但 exception 用 eff，hot 也应算。归档候选里不应有 hot：
     check("D2.高命中 hot 不进归档", !plan.archives.some((a) => a.id === hot.id));
+    // D9：任务不被当成记忆治理（2026-11-14 回归；修复前 tOld 会进 decays+archives、tTrial 进 trials、双任务进 dedupes）
+    check("D9.任务不进衰减计划", !plan.decays.some((x) => TASK_IDS.has(Number(x.id))), `taskDecays=${plan.decays.filter((x) => TASK_IDS.has(Number(x.id))).map((x) => `#${x.id}`).join(",")}`);
+    check("D9.任务不进归档候选", !plan.archives.some((x) => TASK_IDS.has(Number(x.id))), `taskArchives=${plan.archives.filter((x) => TASK_IDS.has(Number(x.id))).map((x) => `#${x.id}`).join(",")}`);
+    check("D9.任务不进去重合并", !plan.dedupes.some((d) => TASK_IDS.has(Number(d.loser)) || TASK_IDS.has(Number(d.winner))));
+    check("D9.试用态任务不进试用考核", !plan.trials.some((t) => TASK_IDS.has(Number(t.id))), `taskTrials=${plan.trials.filter((t) => TASK_IDS.has(Number(t.id))).map((t) => `#${t.id}`).join(",")}`);
     // D4：dry-run 不落库
     const archBefore = db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='archived'`).get();
     const logBefore = daemonLogCount(db);
@@ -71,12 +89,19 @@ try {
     check("D5.once 归档旧记忆", db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='archived'`).get().c === 1);
     check("D5.daemon_log 有 archive 留痕", daemonLogCount(db, "archive", "archive") === 1, `log=${daemonLogCount(db, "archive", "archive")}`);
     check("D5.去重 loser 已 merged", db.prepare(`SELECT COUNT(*) c FROM memories WHERE status='merged'`).get().c === 1);
+    // D9 落库后：任务行必须原样（状态、eff、任务头都不被治理改写）
+    const tOldRow = db.prepare(`SELECT status, eff_confidence, content FROM memories WHERE id=?`).get(tOld.id);
+    const tTrialRow = db.prepare(`SELECT status FROM memories WHERE id=?`).get(tTrial.id);
+    check("D9.真跑后旧任务仍 active 且 eff 未被写", tOldRow.status === "active" && tOldRow.eff_confidence == null, `status=${tOldRow.status}, eff=${tOldRow.eff_confidence}`);
+    check("D9.真跑后任务头仍为 pending（未被归档改写）", /^\[task\]\[assignee:[^\]]*\]\[status:pending\]/.test(tOldRow.content));
+    check("D9.真跑后试用态任务未被试用考核归档", tTrialRow.status === "trial", `status=${tTrialRow.status}`);
     // D7：记忆卫生配置可覆盖（config 表覆盖后 buildPlan 反映新阈值）
     check("D7.缺省配置与 DEFAULT 一致", JSON.stringify(loadHygieneConfig(db)) === JSON.stringify(DEFAULT_HYGIENE_CONFIG));
     writeConfig(db, "hygiene", { ...DEFAULT_HYGIENE_CONFIG, archiveEff: 0.99 }); // 抬高归档阈值 → hot 也应进候选
     check("D7.writeConfig 后读到新值", loadHygieneConfig(db).archiveEff === 0.99);
     const plan2 = buildPlan(db);
     check("D7.归档阈值可配置：0.99 使 hot 进归档候选", plan2.archives.some((a) => a.id === hot.id), `plan2.archives=${plan2.archives.map((a) => `#${a.id}`).join(",")}`);
+    check("D9.阈值 0.99 下任务仍不进归档", !plan2.archives.some((a) => TASK_IDS.has(Number(a.id))), `taskArchives=${plan2.archives.filter((a) => TASK_IDS.has(Number(a.id))).map((a) => `#${a.id}`).join(",")}`);
     check("D7.未覆盖字段走默认（dedupeSim）", loadHygieneConfig(db).dedupeSim === DEFAULT_HYGIENE_CONFIG.dedupeSim);
     // D6：M-2.2 —— 显著性压到 ≤0.15 后不应再被召回
     // ★ 2026-09-15 修正：检索侧自 M9 起**查询时现算** eff = salience × e^(-λ·Δt)（search.js:142-149），
@@ -92,6 +117,24 @@ try {
     // 对照：同条件的 experience 必须仍被归档（防"豁免写宽了"造成漏归档）
     db.prepare(`UPDATE memories SET status='active', created_at=datetime('now','-200 days'), hit_count=0, last_seen_at=NULL WHERE id=?`).run(old.id);
     check("D8.对照：同条件 experience 仍进归档候选", buildPlan(db).archives.some((a) => a.id === old.id));
+    // D10（第4项）：任务事件/埋点双写 + 新旧合并读取
+    const evTask = await w("[task][assignee:?][status:pending] 任务事件双写回归", "task", "dispatcher");
+    appendEvent(db, { memory_id: evTask.id, op: "task_claim", payload: JSON.stringify({ session_id: "S1" }), operator: "agent:dispatcher" });
+    logUsage(db, { memory_id: evTask.id, event: "write", reader_agent: "dispatcher", writer_agent: "dispatcher", project: "ecommerce", is_task: true });
+    logDaemon(db, { task: "reconcile", op: "sync", memory_id: evTask.id, detail: "回归：任务日志双写", operator: "daemon" });
+    const te = db.prepare(`SELECT COUNT(*) c FROM task_store.task_events WHERE memory_id=?`).get(evTask.id).c;
+    const tu = db.prepare(`SELECT COUNT(*) c FROM task_store.task_usage WHERE memory_id=?`).get(evTask.id).c;
+    check("D10.任务事件双写任务库", te >= 2, `task_events=${te}`);
+    check("D10.任务埋点双写任务库", tu === 1, `task_usage=${tu}`);
+    // 模拟历史：只在旧表插一条，读取方应新旧合并（去重后 2 条）
+    db.prepare(`INSERT INTO memory_events(memory_id,op,payload,operator,created_at) VALUES (?,?,?,?,datetime('now','-10 days'))`).run(evTask.id, "task_claim", JSON.stringify({ session_id: "LEGACY" }), "agent:old");
+    const merged = readTaskEventRows(db, evTask.id, ["task_claim"], 10);
+    check("D10.新旧事件合并去重（历史仍可见）", merged.length === 2 && merged.some((e) => e.payload.includes("LEGACY")) && merged.some((e) => e.payload.includes("S1")), `rows=${merged.length}`);
+    check("D10.最近事件优先新表", readTaskEventLatest(db, evTask.id, "task_claim")?.payload.includes("S1"));
+    check("D10.最近活动天数可读", taskLastActivityDays(db, evTask.id) != null);
+    const tuBefore = db.prepare(`SELECT COUNT(*) c FROM task_store.task_usage`).get().c;
+    logUsage(db, { memory_id: evTask.id, event: "read", reader_agent: "x", writer_agent: "x", project: "ecommerce" });
+    check("D10.未标记 is_task 不写任务埋点", db.prepare(`SELECT COUNT(*) c FROM task_store.task_usage`).get().c === tuBefore);
     db.close();
 }
 finally {

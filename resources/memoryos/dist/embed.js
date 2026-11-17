@@ -13,6 +13,20 @@ import os from "node:os";
  *  默认值不变：未设 env → fake。 */
 const resolveMode = () => process.env.EMBED_MODE ?? "fake";
 const RUNTIME_DIM = Number(process.env.EMBED_DIM ?? 1024);
+/* ★ 2026-11-14 个人版致命修复：长文嵌入不再冻结主线程。
+ * 实测（本机 bge-m3 / fp32 / CPU，走真实 /api/memory）：330 字 0.37s、1500 字 2.7s、
+ * 6000 字 25s、18000 字 75s；长文写入期间 dashboard 其他请求 20s 全超时（整个应用假死）。
+ * 口径：参与语义嵌入的正文最多取前 EMBED_CLIP_CHARS 个字符（默认 1500，约 ≤3s）；
+ * 全文仍完整入库并由 FTS/trigram 词法索引覆盖（长文后半段按关键词仍可命中）。
+ * 回滚/调整：EMBED_CLIP_CHARS=0 关闭截断（恢复原行为），或按需设更大值。 */
+const _rawClip = Number(process.env.EMBED_CLIP_CHARS ?? 1500);
+const EMBED_CLIP_CHARS = Number.isFinite(_rawClip) && _rawClip >= 0 ? Math.floor(_rawClip) : 1500;
+const clipForEmbed = (text) => {
+    const s = String(text ?? "");
+    if (!EMBED_CLIP_CHARS || s.length <= EMBED_CLIP_CHARS)
+        return s;
+    return Array.from(s).slice(0, EMBED_CLIP_CHARS).join("");
+};
 /* ---------- 通用缓存 ---------- */
 class TextCache {
     max;
@@ -54,6 +68,10 @@ class FakeEmbedder {
     dim = RUNTIME_DIM;
     mode = "fake";
     cache = new TextCache();
+    /** ★ 2026-10-15：向量出处（供 upsertVector 的 opts.model/dim 使用；见 db.js） */
+    provenance() {
+        return { model: "fake", dim: this.dim };
+    }
     /** 基于字符二元组哈希 → 稳定单位向量。同"主题词"共享子串故局部相似。 */
     async embedTexts(texts) {
         return texts.map((t) => {
@@ -92,16 +110,21 @@ class ApiEmbedder {
         if (!this.key)
             throw new Error("EMBED_MODE=api 但 EMBED_API_KEY 未设置，请在环境变量中配置后重试");
     }
+    /** ★ 2026-10-15：向量出处（model 名取自 EMBED_MODEL 配置，与写入请求体一致） */
+    provenance() {
+        return { model: this.model, dim: this.dim };
+    }
     async embedTexts(texts) {
         const out = [];
         const miss = [];
         const missIdx = [];
         texts.forEach((t, i) => {
-            const c = this.cache.get(t);
+            const key = clipForEmbed(t);
+            const c = this.cache.get(key);
             if (c)
                 out[i] = c;
             else {
-                miss.push(t);
+                miss.push(key);
                 missIdx.push(i);
             }
         });
@@ -168,19 +191,23 @@ class LocalEmbedder {
         this.pipe = pipe;
         this.modelName = model;
     }
+    /** ★ 2026-10-15：向量出处（model 名 = 实际加载的 HF 模型标识，dim = RUNTIME_DIM） */
+    provenance() {
+        return { model: this.modelName, dim: this.dim };
+    }
     async embedTexts(texts) {
         const out = [];
         for (let i = 0; i < texts.length; i++) {
-            const c = this.cache.get(texts[i]);
+            // BGE 系 query 指令前缀：检索端点需加，保证两侧一致
+            const input = clipForEmbed(texts[i]); // 写入与查询同一模板；超长正文按 EMBED_CLIP_CHARS 截断（见文件头）
+            const c = this.cache.get(input);
             if (c) {
                 out[i] = c;
                 continue;
             }
-            // BGE 系 query 指令前缀：检索端点需加，保证两侧一致
-            const input = texts[i]; // 写入与查询同一模板；如需 query 指令可在负载里按需加
             const outT = await this.pipe(input, { pooling: "mean", normalize: true });
             const v = Float32Array.from(outT.data);
-            this.cache.set(texts[i], v);
+            this.cache.set(input, v);
             out[i] = v;
         }
         return out;
@@ -229,6 +256,9 @@ export function bufToVec(b) {
 }
 let _local = null;
 let _api = null;
+/** ★ 2026-10-14（架构重构 1a）：**本进程**是否已真正驻留嵌入模型 —— 只读状态位，不触发加载。
+ *  核心 /ops/catalog 据此如实上报（1a 的收敛目标正是"模型只让核心加载一份"）。 */
+export function embedderLoaded() { return _local !== null || _api !== null; }
 /** 工厂：按 EMBED_MODE 生产；local 为懒加载（首次真正调用才下载模型）。 */
 export async function getEmbedder() {
     const mode = resolveMode(); // ★ P0③：每次调用解析（惰性），不再吃模块体固化的值
@@ -246,4 +276,17 @@ export async function getEmbedder() {
 }
 export function embedMode() {
     return resolveMode();
+}
+/**
+ * ★ 2026-10-15 向量出处：取当前嵌入器的 model/dim 标签，供 upsertVector 的 opts.model/dim 使用。
+ * 惰性解析——不触发 local 模型加载（未调用 getEmbedder() 时 model 名按当前 EMBED_MODE/EMBED_MODEL
+ * 配置推导，与真正的写入路径一致，仅用于「记录出处」，不承担推理职责）。
+ */
+export function embedderProvenance() {
+    const mode = resolveMode();
+    if (mode === "local")
+        return { model: process.env.EMBED_MODEL ?? "Xenova/bge-m3", dim: RUNTIME_DIM };
+    if (mode === "api")
+        return { model: process.env.EMBED_MODEL ?? "bge-m3", dim: RUNTIME_DIM };
+    return { model: "fake", dim: RUNTIME_DIM };
 }

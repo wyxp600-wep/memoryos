@@ -1,0 +1,8 @@
+node_modules/
+actual/
+*.log
+*-results.json
+results.json
+*.png
+!baseline/
+!baseline/*.png

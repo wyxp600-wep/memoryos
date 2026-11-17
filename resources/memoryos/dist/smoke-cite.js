@@ -2,12 +2,12 @@
  * MemoryOS v0.2 — 埋点 + cite + 周报五查询冒烟（M-1.5 + M-1.6）
  * 用 db 层直接驱动（fake embed），验证：
  *   U1 埋点落库：write/returned/cited 三事件计数正确
- *   U2 memory_cite 逻辑：cited 埋点 + confidence 抬升（复刻 server 同源）
+ *   U2 memory_cite 逻辑：cited 埋点，置信度不变（复刻 server 同源）
  *   U3 inferred-cited（R4）：同 session 内 returned 后又 write → 记 inferred
  *   U4 五查询全可跑：funnel(含 raw/inferred 两行) / trend / top / zombies / cross_tool
  * 用法：node dist/smoke-cite.js
  */
-import { openDb, writeMemory, logUsage, readMemory, bumpConfidence, usageCount } from "./db.js";
+import { openDb, writeMemory, logUsage, readMemory, usageCount } from "./db.js";
 import { funnel, trend, topMemories, zombies, crossTool } from "./report.js";
 import os from "node:os";
 import path from "node:path";
@@ -36,12 +36,11 @@ try {
     check("U1.write 事件=3", usageCount(db, "write") === 3, `write=${usageCount(db, "write")}`);
     check("U1.returned 事件=1", usageCount(db, "returned") === 1, `returned=${usageCount(db, "returned")}`);
     check("U1.cited 事件=1", usageCount(db, "cited") === 1, `cited=${usageCount(db, "cited")}`);
-    // U2 复刻 server.memory_cite：显式 cite r1 → 埋点 + confidence+0.05
+    // U2 引用只记使用；真实工具行为另由 smoke-memory-quality 覆盖
     const confBefore = readMemory(db, r1.id).confidence;
     logUsage(db, { memory_id: r1.id, event: "cited", reader_agent: "claude", writer_agent: "codex", project: "ecommerce", session_id: "S4" });
-    bumpConfidence(db, r1.id, 0.05);
     const confAfter = readMemory(db, r1.id).confidence;
-    check("U2.cite 抬 confidence +0.05", Math.abs(confAfter - (confBefore + 0.05)) < 1e-9, `${confBefore}→${confAfter}`);
+    check("U2.cite 保持 confidence 不变", confAfter === confBefore, `${confBefore}→${confAfter}`);
     check("U2.cited 事件+1=2", usageCount(db, "cited") === 2, `cited=${usageCount(db, "cited")}`);
     // U4 五查询全可跑
     const f = funnel(db, {});

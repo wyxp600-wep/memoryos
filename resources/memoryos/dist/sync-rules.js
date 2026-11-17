@@ -1,3 +1,5 @@
+import { MEMORY_BODY_GUIDE, MEMORY_BODY_TEMPLATE } from './memory-body.js';
+import {installFeedback,recordFeedback} from './feedback-events.js';
 /**
  * MemoryOS — 规则强制注入（sync-rules）：
  * 把记忆库中 status=active 且 confidence≥MIN_CONF 的 rule，同步写进各智能体
@@ -14,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openDb, queryByType } from "./db.js";
+import { recordsFrom } from "./record-source.js"; // ★ 2026-11-17（B8）：显式跨库查询
 /** 只同步高置信规则（默认 ≥0.6），低置信/待仲裁的不强塞给智能体。
  *  v0.4 token 减负（P2）：全局/项目注入段从「全量高置信规则平铺」收敛为「内置门禁层」。
  *  门禁 = 跨项目通用行为守则，稳定且少量；其余规则留库靠 memory_search 按需检索（JIT）。
@@ -22,6 +25,7 @@ import { openDb, queryByType } from "./db.js";
 const MIN_CONF = Math.max(0, Math.min(1, Number(process.env.RULE_MIN_CONF ?? 0.6) || 0.6));
 /** 内置门禁层：仅这 8 条常驻注入段（token 收益最大的低语义重复行为守则） */
 const GATE_RULES = [
+    { content: MEMORY_BODY_GUIDE+"\n\n标准模板（字段名与内容分行）：\n\n"+MEMORY_BODY_TEMPLATE, agent: "gate" },
     { content: "每条消息先读记忆（硬性·不可跳过·第一步）：收到用户任何消息后，第一件事必须是调用 memory_context（可带 focus=当前任务主题）注入当前项目高价值记忆，之后才能回复或调用其他工具；接着按需 memory_search 精确检索（关键词覆盖主题/模块/报错现象）；命中相关记忆须 memory_cite 标注来源，确无相关也须声明'已检索无相关'。若本机未安装或未连接 MemoryOS MCP，须先明确提示用户安装接入，不得跳过此步。禁止跳过直接回复或开干，修改核心模块或遇报错时尤其如此。", agent: "gate" },
     { content: "完成后沉淀：解决重要问题（>30min 修复/技术决策/踩坑/隐藏约定/阶段性结论）后，须 memory_write 沉淀一条核心结论+依据，与 memory_search/memory_cite 构成先查-命中-沉淀-回查闭环；未沉淀不得声明任务完成，且须在回复里报出本次沉淀的记忆编号（便于用户回查）。", agent: "gate" },
     { content: "实证后声明：完成声明必须附 build/curl/netstat 等实证日志，禁用 should/probably/basically 等模糊表述，坚持 docs before code、evidence before conclusions。", agent: "gate" },
@@ -125,7 +129,9 @@ export function hasRuleSegment(file) {
 }
 function buildSegment(rules) {
     const body = rules
-        .map((r) => `- ${r.content.replace(/\s+/g, " ").trim()}（来源：${r.agent}）`)
+        .map((r) => r.agent === 'gate' && r.content.includes(MEMORY_BODY_TEMPLATE)
+            ? `- ${MEMORY_BODY_GUIDE}（来源：gate）\n\n\`\`\`text\n${MEMORY_BODY_TEMPLATE}\n\`\`\`\n`
+            : `- ${r.content.replace(/\s+/g, " ").trim()}（来源：${r.agent}）`)
         .join("\n");
     return [
         "",
@@ -167,7 +173,7 @@ function writeSegment(file, seg) {
             added = true;
         }
         else {
-            next = old.slice(0, i0) + seg + old.slice(i1 + SEG_END.length);
+            next = old.slice(0, i0) + seg.trim() + old.slice(i1 + SEG_END.length);
         }
     }
     else {
@@ -206,8 +212,11 @@ function pickRules(db) {
     return all.filter((r) => (r.confidence ?? 0) >= MIN_CONF);
 }
 /** 当前 active 规则总数（独立 COUNT，避免 queryByType 的 limit 截断低估） */
+export function currentRuleSegment(db) {
+    const text=buildSegment(pickRules(db));return text.slice(text.indexOf(SEG_START),text.indexOf(SEG_END)+SEG_END.length);
+}
 function countActiveRules(db) {
-    const row = db.prepare(`SELECT COUNT(*) AS n FROM memories WHERE status='active' AND type='rule'`).get();
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${recordsFrom(db)} WHERE status='active' AND type='rule'`).get();
     return row.n;
 }
 /** 被排除在注入段之外的规则数（仅统计口径，用于日志）。
@@ -223,15 +232,20 @@ function countSkipped(db, rules) {
     return Math.max(0, active - rules.length);
 }
 export function syncRules(db, opts = {}) {
+    installFeedback(db);
     const targets = getSyncTargets().filter((t) => !opts.target || t.id === opts.target);
-    if (!targets.length)
+    if (!targets.length) {
+        recordFeedback(db,{agent:String(opts.target||'unknown'),tool:'rule_sync',status:'failed',code:'rules_failed'});
         throw new Error(`未知注入目标：${opts.target ?? ""}`);
+    }
     const rules = pickRules(db);
     const skipped = countSkipped(db, rules);
     return targets.map((t) => {
         const file = t.file;
         const seg = buildSegment(rules);
-        const { added, backedUp } = writeSegment(file, seg);
+        const actor=t.id==='trae-cn'?'traecode':t.id;
+        let change;try{change=writeSegment(file,seg);recordFeedback(db,{agent:actor,tool:'rule_sync',status:'success',code:'rules_written'});}catch(e){recordFeedback(db,{agent:actor,tool:'rule_sync',status:'failed',code:'rules_failed'});throw e;}
+        const { added, backedUp } = change;
         return { ok: true, target: t.id, rules: rules.length, skipped, file, added, backedUp, content: seg };
     });
 }
@@ -241,15 +255,18 @@ export function syncRules(db, opts = {}) {
  * 这是覆盖「无全局明文入口」桌面智能体的通用通道。
  */
 export function syncProjectRules(db, dir) {
+    installFeedback(db);
     const resolved = path.resolve(dir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        recordFeedback(db,{agent:'project-rules',tool:'rule_sync',status:'failed',code:'rules_failed'});
         throw new Error(`项目目录不存在或不可读：${dir}`);
     }
     const file = path.join(resolved, "AGENTS.md");
     const rules = pickRules(db);
     const skipped = countSkipped(db, rules);
     const seg = buildSegment(rules);
-    const { added, backedUp } = writeSegment(file, seg);
+    let change;try{change=writeSegment(file,seg);recordFeedback(db,{agent:'project-rules',tool:'rule_sync',status:'success',code:'rules_written'});}catch(e){recordFeedback(db,{agent:'project-rules',tool:'rule_sync',status:'failed',code:'rules_failed'});throw e;}
+    const { added, backedUp } = change;
     return { ok: true, target: "project", rules: rules.length, skipped, file, added, backedUp, content: seg };
 }
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

@@ -54,14 +54,14 @@ export function pruneFinishedJobs(jobs, maxFinished = 20) {
 /** 按卡片找任务（任务卡与智能体卡都能命中）；runningOnly 时只返回执行中的。 */
 export function findJobByCard(jobs, cardId, { runningOnly = false, runId = "" } = {}) {
     return [...jobs.values()].reverse().find((j) => (j.cardId === cardId || j.agentCardId === cardId)
-        && (!runningOnly || j.status === "running" || j.status === "launching" || j.status === "driving")
+        && (!runningOnly || j.status === "queued" || j.status === "running" || j.status === "launching" || j.status === "driving")
         && (!runId || j.runId === runId));
 }
 
 /** SSE 任务流：重放 lines → 持续推送 → end 关闭。extraFlush 供 CDP 推帧等差量。 */
 export function streamJobSSE(reply, job, { intervalMs = 1500, ping = false, extraFlush } = {}) {
     reply.raw.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-    let sent = 0;
+    let lastLine = null;
     // ★ 收口后再写会抛 ERR_STREAM_WRITE_AFTER_END，且它是 ServerResponse 的 'error' 事件、
     //   无人监听 → 整个 dashboard 进程被未捕获异常打死（实测 2026-10-05：一次 CLI run 收口即崩，
     //   日志 stack 落在 cliexec finish 的 waiters.forEach）。故 write 必须自防护。
@@ -71,8 +71,10 @@ export function streamJobSSE(reply, job, { intervalMs = 1500, ping = false, extr
         reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     const flush = () => {
-        while (sent < job.lines.length)
-            write("line", job.lines[sent++]);
+        const index=lastLine ? job.lines.indexOf(lastLine) : -1;
+        const fresh=job.lines.slice(index+1);
+        for(const line of fresh)write("line",line);
+        if(job.lines.length)lastLine=job.lines[job.lines.length-1];
         extraFlush?.(write);
         if (job.status === "done" || job.status === "failed") {
             write("end", { status: job.status, runId: job.runId });

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:">
+<title>正在启动 MemoryOS</title>
+<style>
+:root{--paper:#f7f9fb;--ink:#182230;--accent:#086f76;color-scheme:light}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font:14px/1.6 "Microsoft YaHei","Segoe UI",sans-serif;display:grid;place-items:center;padding:76px 40px 40px}
+main{width:min(800px,100%);display:grid;grid-template-columns:1.2fr 1fr;align-items:center;gap:56px;visibility:hidden}html[data-startup-ready] main{visibility:visible;animation:appear .4s ease-out both}
+.startup-art{height:280px;display:grid;place-items:center;color:var(--ink)}.startup-art>svg{width:100%;height:100%;overflow:visible}.startup-copy{min-width:0}h1{font-size:38px;line-height:1.15;letter-spacing:-1.4px;margin:0 0 22px;font-weight:700}p{margin:0}#startupSkin{margin:0 0 12px;font-size:13px;opacity:.72}.status{margin-top:25px;font-size:13px}.hint{font-size:12px;opacity:.65;margin-top:8px;max-width:26em}
+.track{height:3px;max-width:210px;background:color-mix(in srgb,var(--ink) 18%,transparent);overflow:hidden;margin:28px 0 0}.track::after{content:"";display:block;width:38%;height:100%;background:var(--ink);animation:travel 1.7s ease-in-out infinite}
+html[data-skin=studio] main{background:#4e2347;color:#f4d36c;padding:42px;border-radius:72px 12px 36px 12px;gap:30px}html[data-skin=studio] .track{--ink:#f4d36c}
+html[data-skin=industrial] main{border-block:2px solid var(--accent);padding-block:30px}html[data-skin=industrial] h1{font-family:Consolas,"Microsoft YaHei",monospace;letter-spacing:-1px}
+html[data-skin=modules] main{border:2px solid var(--ink);gap:0}html[data-skin=modules] .startup-copy{border-left:2px solid var(--ink);padding:35px}html[data-skin=modules] .startup-art{padding:20px}
+html[data-skin=radio] main{gap:30px}html[data-skin=radio] h1{font-size:46px;font-weight:900;letter-spacing:-2px}html[data-skin=radio] .startup-art{transform:rotate(-5deg)}
+html[data-skin=city] .startup-art{height:340px}html[data-skin=liquid] h1{font-family:SimSun,"Songti SC",serif;font-weight:400;font-size:46px}html[data-skin=sky] main{border-radius:28px;background:#dbe7ff;padding:38px;gap:25px}
+.masthead-loop{transform-box:fill-box;transform-origin:center;animation:breathe 2.8s ease-in-out infinite}.appearance-record{transform-box:fill-box;transform-origin:center;animation:turn 10s linear infinite}
+@keyframes appear{from{opacity:0}to{opacity:1}}@keyframes travel{from{transform:translateX(-110%)}to{transform:translateX(370%)}}@keyframes breathe{50%{opacity:.6;transform:scale(.97)}}@keyframes turn{to{transform:rotate(360deg)}}
+html[data-reduce-motion=true] *,html[data-reduce-motion=true] *::after{animation:none!important}html[data-reduce-motion=true] .track::after{width:100%}
+@media(prefers-reduced-motion:reduce){*,*::after{animation:none!important}.track::after{width:100%}}
+@media(max-width:700px){body{padding:60px 24px 24px}main{grid-template-columns:1fr!important;gap:16px!important;max-width:420px}.startup-art,html[data-skin=city] .startup-art{height:180px}html[data-skin=modules] .startup-copy{border-left:0;border-top:2px solid var(--ink)}.startup-copy{padding:0 10px 25px}h1{font-size:32px}}
+</style></head><body><main aria-label="MemoryOS 启动中"><div id="startupArt" class="startup-art" aria-hidden="true"></div><section class="startup-copy"><p id="startupSkin"></p><h1>MemoryOS</h1><p>让每一次积累，<br>都成为下一次的起点</p><div class="track" aria-hidden="true"></div><p class="status" role="status">正在连接本地记忆内核…</p><p class="hint">就绪后自动进入工作台</p></section></main></body></html>
