@@ -9,7 +9,7 @@
 <p align="center">保存项目约定、找回历史经验、连接知识与任务，让下一次协作接得上上一次。</p>
 
 <p align="center">
-  <a href="https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.4">下载 Windows 个人版</a> ·
+  <a href="https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.5">下载 Windows 个人版</a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="#它能帮你做什么">功能介绍</a> ·
   <a href="RELEASE-20261117.md">发行说明</a>
@@ -78,13 +78,13 @@
 
 ### 1. 下载个人版
 
-当前版本为 **0.1.4 预览版**，支持 **Windows 10 / 11 x64**。
+当前版本为 **0.1.5 预览版**，支持 **Windows 10 / 11 x64**。
 
 | 下载方式 | 适合你，如果…… |
 |---|---|
-| [下载安装程序](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.4/MemoryOS-Personal-0.1.4-windows-x64-setup.exe) | 希望使用安装向导，安装到当前用户目录并创建快捷方式 |
-| [下载便携 ZIP](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.4/MemoryOS-Personal-0.1.4-windows-x64.zip) | 希望自己选择目录，解压后直接运行 |
-| [查看全部发行文件与校验值](https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.4) | 需要核对下载完整性或查看版本说明 |
+| [下载安装程序](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.5/MemoryOS-Personal-0.1.5-windows-x64-setup.exe) | 希望使用安装向导，安装到当前用户目录并创建快捷方式 |
+| [下载便携 ZIP](https://github.com/wyxp600-wep/memoryos/releases/download/v0.1.5/MemoryOS-Personal-0.1.5-windows-x64.zip) | 希望自己选择目录，解压后直接运行 |
+| [查看全部发行文件与校验值](https://github.com/wyxp600-wep/memoryos/releases/tag/v0.1.5) | 需要核对下载完整性或查看版本说明 |
 
 下载包约 **748 MB**，已包含桌面运行环境、Node 和 BGE-M3 本地检索模型，普通使用无需先安装 Node 或 Python。安装向导需要 .NET Framework 4.6.2+；部分桌面维护操作需要 PowerShell 7。
 
@@ -92,13 +92,17 @@
 
 ### 2. 启动并连接 AI 助手
 
-完整安装或解压后，双击 `MemoryOS.exe`。如果旧版本正在运行，请先退出旧版本。
+完整安装或解压后，双击桌面快捷方式或安装目录中的 `MemoryOS.exe`。如果旧版本正在运行，请先退出旧版本。
 
 进入软件的智能体连接页面，查看已发现的客户端，按提示配置 MemoryOS 的 MCP 连接。然后在对应客户端重新加载连接，确认能够调用 MemoryOS 的记忆工具。
 
 可以先让助手执行一次简单验证：“检索 MemoryOS 里当前项目的相关记忆。”空记忆库返回无结果是正常情况，随后再保存第一条有用的项目结论。
 
-### 3. 逐步积累自己的记忆
+### 3. 在同一局域网共享任务
+
+打开「任务看板 → 共享任务」，选择同伴所在的 Wi-Fi 或有线网卡，点击「启动本机服务器」即可复制当前地址。房主可以创建或恢复房间、邀请成员。收到邀请后可在个人版或浏览器中加入。房间和任务保存在本机，退出应用后服务离线。
+
+### 4. 逐步积累自己的记忆
 
 - 先保存少量有用的项目规则、已验证的排错经验和重要决策。
 - 按需打开本地来源采集，选择需要保留的内容，排除不希望采集的目录。
@@ -126,9 +130,9 @@
 
 这次公开发行的是 **个人版**，不包含企业版。
 
-0.1.4 已完成个人内核、桌面壳、实际本地模型和安装文件完整性检查，保留当前版本的皮肤、启动动画和程序图标。它仍是预览版：部分检查告警尚未消除，外部 AI 调用及其他物理电脑未做完整验收。
+0.1.5 增加局域网共享任务和本机服务器的一键启动，桌面启动与操作无需打开终端。默认皮肤为晴空协作。此版本继续以预览版发布，同一局域网内的第二台物理设备及外部 AI 服务尚未进行完整验收。
 
-具体结果见 [验证记录](RELEASE-VALIDATION.md)，安装与维护细节见 [发行说明](RELEASE-20261117.md)。
+安装、局域网使用与已验证范围见 [0.1.5 发行说明](RELEASE-20261119.md)。
 
 ## 源码与反馈
 

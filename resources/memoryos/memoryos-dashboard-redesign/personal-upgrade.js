@@ -151,7 +151,3 @@ async function pollNotices(){try{const r=await api('/api/settings/notifications'
 setInterval(pollNotices,12000);void pollNotices();
 window.MemoryOSPersonalUpgrade={refresh,showTab:switchTab,prompt:LONG_PROMPT};
 })();
-
-
-
-

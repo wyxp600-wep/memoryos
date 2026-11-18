@@ -4769,7 +4769,20 @@ body:has(#page-tasks.active .subview.on[data-view="cards"]) .task-dock { display
 .task-dock #cardsBoard { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:12px; }
 .task-dock-lanes { display:flex; flex-direction:column; gap:12px; }
 .task-dock .task-dock-lane { min-width:0 !important; max-height:none !important; overflow:visible !important; }
-.task-dock .task-dock-lane>div[style*="display:grid"] { grid-template-columns:1fr !important; }
+.task-dock .task-dock-lane > .task-dock-card-grid {
+  grid-template-columns:minmax(0,1fr) !important;
+  min-width:0;
+  padding-inline-end:6px;
+  padding-block-end:6px;
+}
+.task-dock-card-grid > [data-board-card] {
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+  overflow-wrap:anywhere;
+}
+.task-dock-card-grid > [data-board-card] > div:first-child { flex-wrap:wrap; }
+.task-dock-card-grid > [data-board-card] > div:first-child > span { min-width:0; }
 #taskDockCreateBody { height:100%; min-height:0; }
 .task-dock .task-dock-form { position:static; display:flex; padding:0; background:transparent; height:100%; }
 .task-dock .form-dialog { width:100%; height:100%; max-height:none; border:0; border-radius:0; box-shadow:none; }
@@ -4823,6 +4836,7 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
 .global-nav-logo #memoryosBrand.logo-icon>.mos-brand-symbol{display:block!important;width:100%!important;height:100%!important;color:inherit!important;overflow:visible}
 </style>
 <link rel="stylesheet" href="./personal-upgrade.css">
+<link rel="stylesheet" href="./lan-room.css">
 </head>
 <body>
 <svg class="p1-icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><defs><symbol id="mos-icon-1" viewBox="0 0 24 24"><path d="M9 4.5H7.5A1.5 1.5 0 0 0 6 6v13.5A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H15"/><rect x="9" y="2.5" width="6" height="4" rx="1"/><path d="M8.5 11h7M8.5 15h5"/></symbol><symbol id="mos-icon-2" viewBox="0 0 24 24"><path d="M9.5 14.5l5-5"/><path d="M11 6.5l1.8-1.8a3.8 3.8 0 0 1 5.4 5.4L16.4 12"/><path d="M13 17.5l-1.8 1.8a3.8 3.8 0 0 1-5.4-5.4L7.6 12"/></symbol><symbol id="mos-icon-3" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol><symbol id="mos-icon-4" viewBox="0 0 24 24"><path d="M20 6.5L9 17.5 4 12.5"/></symbol><symbol id="mos-icon-5" viewBox="0 0 24 24"><path d="M10.3 3.9L2.1 17.9A2 2 0 0 0 3.8 21h16.4a2 2 0 0 0 1.7-3.1L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4.5"/><circle cx="12" cy="17.2" r=".6"/></symbol><symbol id="mos-icon-6" viewBox="0 0 24 24"><path d="M13.5 2L4 13.5h6L10.5 22 20 10.5h-6z"/></symbol><symbol id="mos-icon-7" viewBox="0 0 24 24"><path d="M21 11.1V12a9 9 0 1 1-5.3-8.2"/><path d="M22 4L12 14.01l-3-3"/></symbol><symbol id="mos-icon-8" viewBox="0 0 24 24"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5"/><path d="M8.5 13h7M8.5 17h5"/></symbol><symbol id="mos-icon-9" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8 7.5L20 18M8 16.5L20 6"/></symbol><symbol id="mos-icon-10" viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol><symbol id="mos-icon-11" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 4.5V8"/><circle cx="12" cy="4" r="1.4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9.5 16.2h5"/></symbol><symbol id="mos-icon-12" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.4"/><circle cx="10" cy="17" r="2.4"/></symbol><symbol id="mos-icon-13" viewBox="0 0 24 24"><path d="M5 15l-2 6 6-2"/><path d="M12.5 3.5c3.5-1 6-1 6-1s0 2.5-1 6l-6 6-4-4z"/><circle cx="14.5" cy="9.5" r="1.6"/><path d="M9 15l-3.5 3.5M6 18l-2.5 2.5"/></symbol><symbol id="mos-icon-14" viewBox="0 0 24 24"><path d="M14.2 6.2a4.5 4.5 0 0 0 5.9 5.9l-8 8a2.7 2.7 0 0 1-3.8-3.8z"/><path d="M6.5 3.5L9 6 6 9l-2.5-2.5a3.5 3.5 0 0 0 3-3z"/></symbol><symbol id="mos-icon-15" viewBox="0 0 24 24"><path d="M4 12h15"/><path d="M13.5 6.5L19 12l-5.5 5.5"/></symbol><symbol id="mos-icon-16" viewBox="0 0 24 24"><path d="M20.5 11.5a8.5 8.5 0 0 0-14.8-4.6L2 10.5"/><path d="M2 4.5v6h6"/><path d="M3.5 12.5a8.5 8.5 0 0 0 14.8 4.6L22 13.5"/><path d="M22 19.5v-6h-6"/></symbol><symbol id="mos-icon-17" viewBox="0 0 24 24"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.3-2.3l8.1-8.1"/></symbol><symbol id="mos-icon-18" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6"/><path d="M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="mos-icon-19" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/></symbol><symbol id="mos-icon-20" viewBox="0 0 24 24"><path d="M17 3.5a2.83 2.83 0 1 1 4 4L7.5 21 2 22.5 3.5 17z"/><path d="M15 5.5l4 4"/></symbol><symbol id="mos-icon-21" viewBox="0 0 24 24"><path d="M12 2.5a7.5 7.5 0 0 0-7.5 7.5v.8a4 4 0 0 0 1 2.6l1.3 1.7v4.4a2 2 0 0 0 2 2h6.4a2 2 0 0 0 2-2v-4.4l1.3-1.7a4 4 0 0 0 1-2.6v-.8A7.5 7.5 0 0 0 12 2.5z"/><path d="M12 8.5v3M9 10h6"/></symbol><symbol id="mos-icon-22" viewBox="0 0 24 24"><path d="M18 11V6.5a1.5 1.5 0 0 0-3 0V11"/><path d="M15 10.5V4.5a1.5 1.5 0 0 0-3 0V11"/><path d="M12 10.5V6a1.5 1.5 0 0 0-3 0v8"/><path d="M18 8.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.2a6 6 0 0 1-4.3-1.8L4 14.5a1.6 1.6 0 0 1 2.3-2.2L9 15V4a1.5 1.5 0 0 1 3 0"/></symbol><symbol id="mos-icon-23" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.5h8.8A1.5 1.5 0 0 1 21 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol><symbol id="mos-icon-24" viewBox="0 0 24 24"><path d="M9 2.5v6M15 2.5v6"/><path d="M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0z"/><path d="M12 17v4.5"/></symbol><symbol id="mos-icon-25" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="M20.5 20.5l-4.2-4.2"/></symbol><symbol id="mos-icon-26" viewBox="0 0 24 24"><path d="M5 3.5A1.5 1.5 0 0 1 6.5 2H19v20H6.5A1.5 1.5 0 0 1 5 20.5z"/><path d="M9 2v20M12 7h4M12 11h4"/></symbol><symbol id="mos-icon-27" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 19.5h15"/></symbol><symbol id="mos-icon-28" viewBox="0 0 24 24"><path d="M12 6.5v15"/><path d="M3 4.5h5a2.5 2.5 0 0 1 2 2.4V21a2 2 0 0 0-1.6-1H3z"/><path d="M21 4.5h-5a2.5 2.5 0 0 0-2 2.4V21a2 2 0 0 1 1.6-1H21z"/></symbol><symbol id="mos-icon-29" viewBox="0 0 24 24"><path d="M9 4.5L3 6.8v13L9 17.5l6 2.3 6-2.3v-13L15 6.8z"/><path d="M9 4.5v13M15 6.8v13"/></symbol><symbol id="mos-icon-30" viewBox="0 0 24 24"><path d="M21 8.2v7.6a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4a2 2 0 0 1-1-1.7V8.2a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4a2 2 0 0 1 1 1.7z"/><path d="M3.3 7.3L12 12.2l8.7-4.9"/><path d="M12 22V12.2"/></symbol><symbol id="mos-icon-31" viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21.5h4"/><path d="M12 2.5a6.5 6.5 0 0 0-3.8 11.8c.6.5.8 1 .8 1.7h6c0-.7.2-1.2.8-1.7A6.5 6.5 0 0 0 12 2.5z"/></symbol><symbol id="mos-icon-32" viewBox="0 0 24 24"><path d="M3 15.5l6-6M9 9.5l5.5 5.5"/><rect x="12" y="3" width="9" height="6" rx="1.5" transform="rotate(45 16.5 6)"/><rect x="12" y="15" width="9" height="6" rx="1.5" transform="rotate(45 16.5 18)"/></symbol><symbol id="mos-icon-33" viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 0 0 0 19c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.6 0-.8.7-1.4 1.6-1.4h1.8A5.3 5.3 0 0 0 21.5 10C21.5 5.8 17.2 2.5 12 2.5z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="11" cy="7" r="1.1"/><circle cx="15.5" cy="8.5" r="1.1"/></symbol><symbol id="mos-icon-34" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/></symbol><symbol id="mos-icon-35" viewBox="0 0 24 24"><path d="M20.5 14.3A8.8 8.8 0 0 1 9.7 3.5a8.8 8.8 0 1 0 10.8 10.8z"/></symbol><symbol id="mos-icon-36" viewBox="0 0 24 24"><path d="M3 3.5v17.5h18"/><rect x="6" y="12" width="3.5" height="6"/><rect x="12" y="8" width="3.5" height="10"/><rect x="18" y="4.5" width="3.5" height="13.5"/></symbol><symbol id="mos-icon-37" viewBox="0 0 24 24"><circle cx="12" cy="16.5" r="2"/><path d="M8.8 13.2a4.5 4.5 0 0 1 0 6.6M15.2 13.2a4.5 4.5 0 0 0 0 6.6"/><path d="M5.8 9.8a8.8 8.8 0 0 1 0 12.4M18.2 9.8a8.8 8.8 0 0 0 0 12.4"/></symbol><symbol id="mos-icon-38" viewBox="0 0 24 24">
@@ -4846,6 +4860,7 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
       <a class="nav-item" data-route="agent" href="#agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-39"></use></svg>智能体</a>
       <a class="nav-item" data-route="memory" href="#memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-40"></use></svg>记忆中心</a>
       <a class="nav-item" data-route="tasks" href="#tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-41"></use></svg>任务看板</a>
+
       <a class="nav-item" data-route="obsidian" href="#obsidian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-42"></use></svg>笔记</a>
 <a class="nav-item" data-route="guide" href="#guide" id="navGuide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-65"></use></svg>新手教程</a>
 <a class="nav-item" id="systemNav" data-route="govern" href="#govern"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#mos-icon-12"></use></svg>系统</a>
@@ -4859,7 +4874,7 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
       </div>
       <!-- E5（2026-10-06）：纯图标按钮的可访问名此前只有 title（屏幕阅读器读不出、触屏无提示）；
            统一补 aria-label。E4：去掉内联 style 尺寸，改由 .nav-icon-btn svg 统一控制。 -->
-      <button class="btn-ghost nav-icon-btn" title="导出" aria-label="导出"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-47"></use></svg></button>
+      <button class="btn-ghost nav-icon-btn" id="headerExportBtn" title="导出" aria-label="导出"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-47"></use></svg></button>
       <button class="btn-primary nav-icon-btn" id="createMemoryBtn" title="写入记忆" aria-label="写入记忆"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="#mos-icon-48"></use></svg></button>
       <button class="theme-toggle" id="themeToggle" title="切换暗色/亮色模式" aria-label="切换暗色/亮色模式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#mos-icon-49"></use></svg></button>
       <button class="theme-toggle" id="settingsBtn" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#mos-icon-50"></use></svg></button>
@@ -5907,12 +5922,13 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
 
     <!-- ===== Page: Tasks 任务看板（v1.1 七态状态机）===== -->
     <section class="page" id="page-tasks">
-      <div class="subnav">
-        <button class="subtab" role="tab" data-view="cards" aria-selected="true">卡片工作流</button>
-        <button class="subtab" role="tab" data-view="runs" aria-selected="false">运行记录<span class="subtab-badge" id="runsBadge" style="display:none">0</span></button>
-      </div>
+      <nav class="subnav" role="tablist" aria-label="任务看板视图">
+        <button type="button" class="subtab" role="tab" id="taskCardsTab" data-view="cards" aria-controls="taskCardsPanel" aria-selected="true">卡片工作流</button>
+        <button type="button" class="subtab" role="tab" id="taskSharedTab" data-view="shared" aria-controls="taskSharedPanel" aria-selected="false" tabindex="-1">共享任务</button>
+        <button type="button" class="subtab" role="tab" id="taskRunsTab" data-view="runs" aria-controls="taskRunsPanel" aria-selected="false" tabindex="-1">运行记录<span class="subtab-badge" id="runsBadge" style="display:none">0</span></button>
+      </nav>
 
-      <div class="subview on" data-view="cards" role="tabpanel">
+      <div class="subview on" id="taskCardsPanel" data-view="cards" role="tabpanel" aria-labelledby="taskCardsTab">
       <div class="toolbar">
         <span style="font-size:var(--fs-base);font-weight:600;color:var(--text-primary)">多智能体任务看板</span>
         <span class="text-muted" style="font-size:var(--fs-sm)">安排任务、跟进进度与检查结果</span>
@@ -6008,8 +6024,12 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
       <!-- ★ 2026-10-05 精简批：旧任务视图容器 #tasksBoard 已随整条死链删除（任务地图 + 列式看板双视图覆盖全部功能） -->
       </div>
 
+      <div class="subview" id="taskSharedPanel" data-view="shared" role="tabpanel" aria-labelledby="taskSharedTab">
+        <div id="lanRooms" class="lan-workspace"></div>
+      </div>
+
       <!-- Slice C4：原「执行中心」整段并入本子视图，DOM id 全部保留，故 app.js 渲染/绑定零改动 -->
-  <div class="subview" data-view="runs" role="tabpanel">
+  <div class="subview" id="taskRunsPanel" data-view="runs" role="tabpanel" aria-labelledby="taskRunsTab">
  <div class="workflow-head"><div><h2>卡片运行记录</h2><p>追踪卡片的派发、状态变化和执行结果。</p></div><button class="btn-ghost" id="workflowRefresh">刷新记录</button></div>
  <div class="workflow-filters"><input id="workflowSearch" type="search" aria-label="搜索卡片运行记录" placeholder="搜索卡片标题或编号"><select id="workflowKind" aria-label="按卡片类型筛选"><option value="all">全部类型</option><option value="task">任务</option><option value="agent">智能体</option><option value="handoff">交接文档</option><option value="doc">文档</option><option value="aux">辅助卡</option></select><select id="workflowStatus" aria-label="按卡片状态筛选"><option value="all">全部状态</option><option value="triage">待分流</option><option value="todo">待办</option><option value="ready">就绪</option><option value="running">运行中</option><option value="review">待验收</option><option value="blocked">受阻</option><option value="failed">失败</option><option value="done">已完成</option><option value="cancelled">已取消</option><option value="archived">已归档</option></select><span id="workflowCount"></span></div>
  <div class="table-wrap"><table class="data-table workflow-table"><thead><tr><th>卡片</th><th>类型</th><th>负责人</th><th>当前状态</th><th>最后更新</th><th>操作</th></tr></thead><tbody id="workflowRecords"></tbody></table></div>
@@ -6532,6 +6552,7 @@ body.dragging-type-card .task-dock-pane { visibility:hidden; pointer-events:none
 
 
 <script src="./app.js" defer></script>
+<script src="./lan-room.js" defer></script>
 <script src="./personal-upgrade.js" defer></script>
 </body>
 </html>

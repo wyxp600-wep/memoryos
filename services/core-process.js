@@ -282,7 +282,7 @@ function createCore(deps) {
     restarting = true;                              // ★ 窗口开启：随后杀出的旧子进程 exit 不排自愈（否则新实例就绪后旧定时器复活 → 重复拉起）
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }
@@ -297,7 +297,7 @@ function createCore(deps) {
     clearTimers();
     for (const c of coreChildren) {
       try {
-        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+        if (process.platform === "win32") spawnSyncImpl("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
         else c.kill("SIGTERM");
       } catch { /* 已退出 */ }
     }

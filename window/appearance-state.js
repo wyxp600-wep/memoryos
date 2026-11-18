@@ -4,14 +4,15 @@ const path = require("node:path");
 const { app } = require("electron");
 const themes = require("./appearance-themes.json");
 const stateFile = () => path.join(app.getPath("userData"), "appearance-startup.json");
+const DEFAULT_SKIN = "sky";
 function normalize(value) {
-  const skin = typeof value?.skin === "string" && Object.hasOwn(themes,value.skin) && value.skin !== "original-dark" ? value.skin : "original";
-  return { skin, theme:value?.theme === "dark" ? "dark" : "light", reduceMotion:value?.reduceMotion === true };
+  const skin = typeof value?.skin === "string" && Object.hasOwn(themes, value.skin) ? value.skin : DEFAULT_SKIN;
+  return { skin, theme: themes[skin].scheme, reduceMotion: value?.reduceMotion === true };
 }
 function read() { try { return normalize(JSON.parse(fs.readFileSync(stateFile(), "utf8"))); } catch { return normalize({}); } }
 function theme(value = read()) {
-  const state=normalize(value), selected=themes[state.skin === "original" && state.theme === "dark" ? "original-dark" : state.skin];
-  return { ...selected, ...state };
+  const state = normalize(value);
+  return { ...themes[state.skin], ...state };
 }
 function save(value) {
   const next=normalize(value), json=JSON.stringify(next);

@@ -1,0 +1,165 @@
+
+.lan-guest{
+  --text-primary:#172b4c;
+  --text-secondary:#45608b;
+  --bg-card:#f9fcff;
+  --border-glass:#cfdef1;
+  --c-primary:#2459dd;
+  --c-primary-soft:#e6efff;
+  --ui-card-r:18px;
+  --ui-button-r:10px;
+  --ui-input-r:10px;
+  margin:0;background:#f1f6fc;color:var(--text-primary);
+  font:16px/1.55 "Microsoft YaHei UI",system-ui,sans-serif;
+}
+.lan-guest .lan-workspace{max-width:1160px;margin:auto;padding:clamp(16px,5vw,64px)}
+.lan-workspace{
+  --lan-ink:var(--text-primary,#22362f);
+  --lan-muted:var(--text-secondary,#4f665d);
+  --lan-surface:var(--bg-card,#fbfdf8);
+  --lan-line:var(--border-glass,#cbd5cb);
+  --lan-accent:var(--c-primary,#285e49);
+  --lan-radius:var(--ui-card-r,12px);
+  color:var(--lan-ink);min-width:0;
+}
+.lan-workspace *, .lan-workspace *::before, .lan-workspace *::after{box-sizing:border-box}
+.lan-workspace [hidden]{display:none!important}
+.lan-workspace h1,.lan-workspace h2,.lan-workspace h3,.lan-workspace p{margin:0;overflow-wrap:anywhere}
+.lan-workspace h1,.lan-workspace .lan-title{font-size:clamp(30px,4vw,54px);line-height:1.15;letter-spacing:-.035em}
+.lan-workspace h2{font-size:clamp(19px,2vw,24px)}
+.lan-workspace h3{font-size:16px}
+.lan-workspace small,.lan-workspace .lan-muted{color:var(--lan-muted)}
+.lan-workspace label{display:grid;gap:6px;font-weight:600}
+.lan-workspace input,.lan-workspace select,.lan-workspace textarea{
+  background:var(--lan-surface);color:var(--lan-ink);border:1px solid var(--lan-line);
+  border-radius:var(--ui-input-r,8px);padding:10px 12px;font:inherit;min-width:0;width:100%;
+}
+.lan-workspace textarea{resize:vertical;min-height:120px}
+.lan-guest .lan-workspace button{
+  padding:9px 15px;border:1px solid var(--lan-line);border-radius:var(--ui-button-r,8px);min-height:40px;
+  background:var(--lan-surface);color:var(--lan-ink);font:inherit;font-weight:650;cursor:pointer;
+  overflow-wrap:anywhere;
+}
+.lan-guest .lan-workspace button:hover:not(:disabled){border-color:var(--lan-accent)}
+.lan-workspace button:disabled{opacity:.55;cursor:default}
+.lan-guest .lan-workspace .lan-primary{background:var(--lan-accent);border-color:var(--lan-accent);color:#fff}
+.lan-workspace :focus-visible{outline:2px solid var(--lan-accent);outline-offset:3px}
+.lan-workspace .lan-header{
+  display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;
+  padding:14px 0 22px;border-bottom:2px solid var(--lan-accent);margin-bottom:20px;
+}
+.lan-workspace .lan-header p{margin-top:8px}
+.lan-workspace .lan-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lan-workspace .lan-home-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:20px}
+.lan-workspace .lan-panel{background:var(--lan-surface);border:1px solid var(--lan-line);border-radius:var(--lan-radius);padding:clamp(14px,2vw,24px);min-width:0}
+.lan-workspace .lan-section{margin-top:18px}
+.lan-workspace .lan-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--lan-line)}
+.lan-workspace .lan-row>div{min-width:0;overflow-wrap:anywhere}
+.lan-workspace .lan-form{display:grid;gap:14px;max-width:660px}
+.lan-workspace .lan-form h2,.lan-workspace .lan-form .lan-actions{margin-top:4px}
+.lan-workspace .lan-note{border-left:3px solid var(--lan-accent);padding:6px 12px;color:var(--lan-muted)}
+.lan-workspace .lan-error{color:var(--c-danger,#8b291c);margin-block:8px 16px;white-space:pre-wrap}
+.lan-workspace .lan-error:empty{margin:0}
+.lan-workspace .lan-status{font-weight:650;color:var(--lan-muted);white-space:normal}
+.lan-workspace .lan-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+.lan-workspace .lan-lane{background:var(--lan-surface);border:1px solid var(--lan-line);border-radius:var(--lan-radius);min-width:0}
+.lan-workspace .lan-lane>h3{display:flex;justify-content:space-between;gap:8px;padding:13px 16px;border-bottom:2px solid var(--lan-accent)}
+.lan-workspace .lan-task{padding:14px 16px;border-bottom:1px solid var(--lan-line);display:grid;gap:8px;min-width:0}
+.lan-workspace .lan-task:last-child{border-bottom:0}
+.lan-workspace .lan-task summary{cursor:pointer}
+.lan-workspace .lan-task details p{white-space:pre-wrap;padding-top:5px}
+.lan-guest .lan-workspace .lan-task .lan-actions button{min-height:36px;padding:5px 10px}
+.lan-workspace .lan-empty{padding:15px 16px;color:var(--lan-muted)}
+.lan-workspace .lan-room-tools{margin-bottom:18px;display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.lan-workspace .lan-members{margin-top:18px}
+.lan-workspace .lan-members summary{cursor:pointer;font-weight:650}
+.lan-workspace .lan-members ul{display:flex;flex-wrap:wrap;gap:6px 26px;padding-inline-start:20px}
+@media(max-width:740px){
+  .lan-workspace .lan-home-grid,.lan-workspace .lan-board{grid-template-columns:minmax(0,1fr)}
+  .lan-workspace .lan-header{align-items:flex-start}
+  .lan-workspace .lan-row{flex-wrap:wrap}
+}
+
+
+#lanLocalServer { margin-bottom:var(--sp-4,16px); }
+.lan-server-head,.lan-server-start {
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px;
+}
+.lan-server-head { justify-content:space-between; }
+.lan-server-start select { flex:1 1 15rem; max-width:25rem; }
+#lanLocalServer .lan-actions:has(>[hidden]:only-child) { display:none; }
+#lanServers .lan-row { justify-content:flex-start; flex-wrap:wrap; }
+#lanServers .lan-row:first-child { margin-top:var(--sp-4,16px); }
+#lanServers .lan-row input{flex:1 1 16rem;max-width:24rem}
+#lanServers .lan-row button{flex:none}
+.lan-workspace #lanDirectory a{color:var(--lan-accent);font-weight:650;text-underline-offset:3px}
+
+/* 桌面标题栏已占位，看板上的横向导航贴合内容区域。 */
+html:has(#memoryosTitlebar):not([data-skin="industrial"],[data-skin="obsidian"],[data-skin="modules"],[data-skin="radio"])
+.app-layout:has(#page-tasks.active) > .global-nav { top:0 !important; }
+@media(max-width:1119px) {
+  html[data-skin]:has(#memoryosTitlebar) .app-layout:has(#page-tasks.active) > .global-nav { top:0 !important; }
+}
+:where(#taskSharedPanel) .lan-workspace {
+  container-type:inline-size;
+  padding:var(--sp-3,12px) var(--sp-4,16px) var(--sp-5,20px);
+  font-size:var(--fs-md,14px);
+}
+:where(#taskSharedPanel) .lan-workspace h2 { font-size:var(--fs-xl,20px); }
+:where(#taskSharedPanel) .lan-workspace h3 { font-size:var(--fs-base,16px); }
+:where(#taskSharedPanel) :is(.lan-panel,.lan-lane) { margin-bottom:0; }
+:where(#taskSharedPanel) .lan-home-grid { gap:var(--sp-4,16px); align-items:start; }
+:where(#taskSharedPanel) .lan-workspace .lan-lane {
+  padding:0;
+  overflow:visible;
+}
+:where(#taskSharedPanel) .lan-lane>h3 {
+  border-radius:inherit;
+  border-end-start-radius:0;
+  border-end-end-radius:0;
+  background:var(--ui-header);
+  color:var(--ui-header-ink);
+  border-bottom:1px solid var(--lan-line);
+}
+:where(#taskSharedPanel) .lan-lane>h3 span { color:inherit; }
+:where(#taskSharedPanel) :is(#lanFormPanel,#lanInvite) {
+  margin:0 0 var(--sp-4,16px);
+}
+:where(#taskSharedPanel) .lan-status {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:5px 10px;
+  border-radius:var(--ui-chip-r,8px);
+  background:var(--ui-header);
+  color:var(--ui-header-ink);
+}
+:where(#taskSharedPanel) .lan-status::before {
+  content:'';
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  border:1px solid currentColor;
+}
+:where(#taskSharedPanel) .lan-status[data-connected="true"]::before { background:currentColor; }
+:where(#taskSharedPanel) .lan-workspace button { white-space:normal; min-width:0; }
+#taskSharedPanel .lan-header {
+  gap:12px;
+  padding:4px 0 14px;
+  margin-bottom:14px;
+  border-bottom:1px solid var(--lan-line);
+}
+#taskSharedPanel .lan-title { font-size:var(--fs-2xl,26px); letter-spacing:-.015em; }
+#taskSharedPanel .lan-header p { margin-top:4px; }
+#taskSharedPanel .lan-share-prompt {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:8px 16px;
+  margin-bottom:14px;
+  background:var(--lan-surface);
+}
+@container (max-width:650px) {
+  #taskSharedPanel .lan-home-grid, #taskSharedPanel .lan-board { grid-template-columns:minmax(0,1fr); }
+}

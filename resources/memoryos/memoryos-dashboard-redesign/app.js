@@ -14,25 +14,36 @@
   const ROOT = document.documentElement;
   const catalog = [
     ['original','原始主题','base'],
+    ['sky','晴空协作','sky'],
     ['industrial','工业控制台','industrial'],
     ['studio','色块工作室','studio'],
     ['obsidian','黑曜图谱','obsidian'],
-    ['sky','晴空协作','sky'],
     ['modules','模块空间','modules'],
     ['liquid','液态档案','liquid'],
     ['radio','波普广播','radio'],
     ['city','折叠之城','city']
   ];
-  let edition='personal',account='local',skin='original',reduced=false,title='记忆中心',route='memory';
+  const PERSONAL_DEFAULT_SKIN = 'sky';
+  let edition='personal',account='local',skin=PERSONAL_DEFAULT_SKIN,reduced=false,title='记忆中心',route='memory';
   let initialized=false,dialog=null,returnFocus=null,anim=null,baseReduced=false,baseTheme='light',lastSkin='original',lastIconSkin=null,swap=null,applySeq=0,pending=null,slowSwaps=0;
   // 导航栏形态分组：左侧栏组切换时必须整页重排，顶栏组之间只换配色与排版。
   const RAIL_SKINS=new Set(['industrial','obsidian','modules','radio']);
   const layoutOf=id=>RAIL_SKINS.has(id)?'rail':'top';
   const media=matchMedia('(prefers-reduced-motion: reduce)');
-  const allowed=()=>catalog.filter(c=>edition!=='enterprise'||!['studio','liquid'].includes(c[0]));
+  const defaultSkin = () => edition === 'personal' ? PERSONAL_DEFAULT_SKIN : 'original';
+  const allowed = () => catalog.filter(([id]) => edition === 'personal' ? id !== 'original' : !['studio', 'liquid'].includes(id));
   const key=()=>`memoryos-appearance:v1:${edition}:${account}`;
   const isReduced=()=>reduced||baseReduced||media.matches;
-  function read(){try{const value=JSON.parse(localStorage.getItem(key())||'{}');return {skin:allowed().some(c=>c[0]===value.skin)?value.skin:'original',reduceMotion:value.reduceMotion===true};}catch{return {skin:'original',reduceMotion:false};}}
+  function read() {
+    try {
+      const value = JSON.parse(localStorage.getItem(key()) || '{}');
+      const selected = allowed().some(([id]) => id === value.skin) ? value.skin : defaultSkin();
+      const migrated = edition === 'personal' && ['original', 'original-dark'].includes(value.skin);
+      return { skin: selected, reduceMotion: value.reduceMotion === true, migrated };
+    } catch {
+      return { skin: defaultSkin(), reduceMotion: false };
+    }
+  }
   function notify(message){const status=document.getElementById('appearanceStatus');if(status)status.textContent=message;}
   function save(){try{localStorage.setItem(key(),JSON.stringify({skin,reduceMotion:reduced}));notify('');return true;}catch{notify('浏览器未保存外观选择');return false;}}
   const svg=(body,view='0 0 320 200')=>`<svg viewBox="${view}" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">${body}</svg>`;
@@ -258,7 +269,7 @@
     document.querySelectorAll('[data-appearance-motion]').forEach(c=>c.checked=isReduced());
   }
   function apply(id,{persist=true,animate=true}={}){
-    if(!allowed().some(c=>c[0]===id))id='original';
+    if (!allowed().some(([option]) => option === id)) id = defaultSkin();
     // 过渡进行中连点：只记住最后一次选择，过渡结束后一次落地，避免动画排队或皮肤被回滚。
     if(swap){pending={id,persist,animate};return;}
     const changed=id!==skin,seq=++applySeq;
@@ -328,7 +339,7 @@
     dialog.querySelector('[data-appearance-close]').focus();
   }
   function init(opts){
-    if(initialized)return;initialized=true;edition=opts.edition;const stored=read();skin=stored.skin;reduced=stored.reduceMotion;apply(skin,{persist:false,animate:false});
+    if(initialized)return;initialized=true;edition=opts.edition;const stored=read();skin=stored.skin;reduced=stored.reduceMotion;apply(skin,{persist:stored.migrated===true,animate:false});
     media.addEventListener('change',()=>apply(skin,{persist:false,animate:false}));
     window.addEventListener('storage',e=>{if(e.key!==key()&&e.key!==null)return;const value=read();reduced=value.reduceMotion;apply(value.skin,{persist:false,animate:false});});
     document.addEventListener('visibilitychange',()=>{const head=document.getElementById('skinMasthead');if(head)head.dataset.documentHidden=String(document.hidden);if(document.hidden)window.MosSculpture?.suspend?.();else window.MosSculpture?.resume?.();syncHeaderMotion(head);});
@@ -336,7 +347,7 @@
   function setAccount(id){const next=id==null?'login':String(id);if(next===account)return;close();account=next;const value=read();reduced=value.reduceMotion;apply(value.skin,{persist:false,animate:false});}
   function updatePage(value,id){title=value;route=id;header();updateIcons();}
   function setReducedMotion(value,theme){baseReduced=!!value;baseTheme=theme==='dark'?'dark':'light';ROOT.dataset.skinMotion=isReduced()?'reduced':'full';if(skin!=='original'){if(['industrial','obsidian','liquid'].includes(skin))ROOT.dataset.theme='dark';else ROOT.removeAttribute('data-theme');}if(skin==='liquid')header();}
-  window.MemoryOSAppearance={init,picker,apply,open,icon,setAccount,updatePage,setReducedMotion,handleKey,reset:()=>apply('original'),catalog:()=>allowed().map(([id,name])=>({id,name})),current:()=>skin};
+  window.MemoryOSAppearance={init,picker,apply,open,icon,setAccount,updatePage,setReducedMotion,handleKey,reset:()=>apply(defaultSkin()),catalog:()=>allowed().map(([id,name])=>({id,name})),current:()=>skin};
 })();
 
 /* 原创参数化铬金属雕塑。无外部依赖、纹理或网络请求。 */
@@ -1613,6 +1624,8 @@ window.MemoryOSAppearance.init({edition:"personal"});
     $('#detailModal').onclick = e => { if (e.target.id === 'detailModal') $('#detailModal').classList.remove('show'); };
     // 新建/编辑表单
     const createBtn = $('#createMemoryBtn'); if (createBtn) createBtn.onclick = () => openEdit(null);
+    // ★ 2026-11-18：头部「导出」图标按钮此前无 id、从未绑定，点击无任何反应；与设置面板 exportAllBtn 同动作。
+    const headerExport = $('#headerExportBtn'); if (headerExport) headerExport.onclick = () => $('#exportAllBtn')?.click();
     $('#editModalClose').onclick = closeEdit;
     $('#memCancel').onclick = closeEdit;
     $('#editModal').onclick = e => { if (e.target.id === 'editModal') closeEdit(); };
@@ -1773,10 +1786,14 @@ window.MemoryOSAppearance.init({edition:"personal"});
     });
   }
   const SYSTEM_ROUTES = ['govern', 'rules', 'skills'];
-  const LEGACY_PAGE_ROUTES={all:['memory','all'],top:['memory','top'],zombies:['memory','zombies'],arbitrate:['memory','arbitrate'],ingest:['memory','ingest'],audit:['memory','audit'],cross:['govern','feedback'],feedback:['govern','feedback'],connect:['govern','connect'],graph:['obsidian','unified'],runs:['agent','runs'],trend:['memory','all']};
+  const LEGACY_PAGE_ROUTES={shared:['tasks','shared'],all:['memory','all'],top:['memory','top'],zombies:['memory','zombies'],arbitrate:['memory','arbitrate'],ingest:['memory','ingest'],audit:['memory','audit'],cross:['govern','feedback'],feedback:['govern','feedback'],connect:['govern','connect'],graph:['obsidian','unified'],runs:['agent','runs'],trend:['memory','all']};
   const PAGE_TITLES = { guide: ['新手向导', '连接 Agent，开始长期协作'], govern: ['连接与治理', '工具接入 · 运行反馈 · 治理与健康'], memory: ['记忆中心', '全量记忆 · 价值 · 治理 · 采集'], agent: ['智能体', '内置智能体 · MCP 工具面 · 可插拔 LLM 端点'],rules: ['规则管理', 'AI 智能体协同约束'], obsidian: ['笔记', '仓库笔记库 · 笔记×记忆×卡片统一图谱'], skills: ['技能同步', '中央技能库 ↔ 多智能体分发'],tasks: ['任务看板', '卡片工作流 · 卡片事件与结果'] };
   function navigate(route, sub) {
     if(route==='styleguide'){route='guide';sub=undefined;}
+    if (route === 'shared') {
+      history.replaceState(history.state, '', '#tasks/shared');
+      sub = undefined;
+    }
     if(LEGACY_PAGE_ROUTES[route]){const target=LEGACY_PAGE_ROUTES[route];route=target[0];sub=sub||target[1];}
     if(route==='govern'&&sub==='cross')sub='feedback';
     if(route==='memory'&&sub==='trend')sub='all';
@@ -1823,10 +1840,16 @@ window.MemoryOSAppearance.init({edition:"personal"});
 
     if (route === 'obsidian' && initObsidian) initObsidian();
     if (route === 'skills' && initSkills) initSkills();
-    if (route === 'tasks') applyMemoryView(sub || 'cards', true, 'page-tasks');
-    if (route === 'tasks' && initTasks) initTasks();
-    /* ★ 实时看板：进任务看板开卡片 SSE（变更即重画当前视图），离开即关 */
-    if (route === 'tasks') _cardsStreamStart(); else _cardsStreamStop();
+    if (route === 'tasks') {
+      applyMemoryView(sub || 'cards', true, 'page-tasks');
+      if (sub === 'shared') window.dispatchEvent(new Event('memoryos:shared-route'));
+    }
+    if (route === 'tasks' && sub !== 'shared') {
+      const needsRefresh = $('#tabCards')?.dataset.bound && !_cardsEs && sub !== 'runs';
+      initTasks();
+      if (needsRefresh) refreshCurrentTaskView();
+      _cardsStreamStart();
+    } else _cardsStreamStop();
     // ★ UI2.0：入场动画结束后统一重算图表尺寸，修正 ECharts 在容器尺寸未稳定时初始化导致的挤压/只显首点
     requestAnimationFrame(() => { try { resizeAllCharts(); } catch { /* ignore */ } window.dispatchEvent(new Event('memoryos:layout')); });
   }
@@ -1836,7 +1859,7 @@ window.MemoryOSAppearance.init({edition:"personal"});
   const MEMORY_VIEWS = ['all', 'top', 'zombies', 'arbitrate', 'ingest', 'audit'];
   const GOVERN_VIEWS = ['connect', 'feedback', 'govern'];
   const OBSIDIAN_VIEWS = ['vault', 'unified'];
-  const TASK_VIEWS = ['cards', 'runs'];
+  const TASK_VIEWS = ['cards', 'shared', 'runs'];
   /* 页面 -> 子视图白名单；子视图懒加载映射（等价于原按路由分发） */
   const GUIDE_CHAPTERS = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10'];
   const PAGE_VIEWS = { memory: MEMORY_VIEWS, govern: GOVERN_VIEWS, obsidian: OBSIDIAN_VIEWS, tasks: TASK_VIEWS, agent:['chat','runs'], guide: GUIDE_CHAPTERS };
@@ -1861,7 +1884,11 @@ window.MemoryOSAppearance.init({edition:"personal"});
     const root = document.getElementById(pid);
     if (root) {
       root.querySelectorAll('.subview').forEach(v => v.classList.toggle('on', v.dataset.view === view));
-      root.querySelectorAll('.subtab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
+      root.querySelectorAll('.subtab').forEach(b => {
+        const selected = b.dataset.view === view;
+        b.setAttribute('aria-selected', String(selected));
+        if (pid === 'page-tasks') b.tabIndex = selected ? 0 : -1;
+      });
     }
     const hook = pid==='page-tasks'&&view==='runs' ? renderWorkflowRecords : VIEW_HOOKS[view]; if (hook) { try { hook(); } catch (e) { console.error('[subview] ' + view + ' init failed:', e); } }
     updateMemoryBadges();
@@ -1882,6 +1909,25 @@ window.MemoryOSAppearance.init({edition:"personal"});
       nav.dataset.bound = '1';
       const pageId = nav.closest('.page') ? nav.closest('.page').id : 'page-memory';
       const route = String(pageId).replace(/^page-/, '');
+      if (route === 'tasks') {
+        const tabs = Array.from(nav.querySelectorAll('.subtab'));
+        tabs.forEach(tab => tab.onclick = () => navigate('tasks', tab.dataset.view));
+        nav.addEventListener('keydown', event => {
+          const index = tabs.indexOf(event.target);
+          if (index < 0) return;
+          const destination = {
+            ArrowLeft: (index + tabs.length - 1) % tabs.length,
+            ArrowRight: (index + 1) % tabs.length,
+            Home: 0,
+            End: tabs.length - 1,
+          }[event.key];
+          if (destination === undefined) return;
+          event.preventDefault();
+          tabs[destination].focus();
+          tabs[destination].click();
+        });
+        return;
+      }
       nav.querySelectorAll('.subtab').forEach(btn => {
         btn.onclick = () => {
           const v = btn.dataset.view;
@@ -5007,7 +5053,7 @@ window.MemoryOSAppearance.init({edition:"personal"});
           <span class="mono" style="font-size:var(--fs-sm);color:var(--text-muted)">${items.length}</span>
         </div>
         <div style="font-size:var(--fs-sm);color:var(--text-muted);margin:-2px 0 8px">${esc(LANE_SUB[st] || '')}</div>
-        ${items.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;align-items:start">${items.map(c => `
+        ${items.length ? `<div class="task-dock-card-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;align-items:start">${items.map(c => `
           <div data-board-card tabindex="0" role="button" aria-label="定位${taskLabel(c)} ${esc(c.title)}" data-card-id="${c.id}" data-status="${st}" style="padding:9px 11px;background:var(--bg-card);border:1px solid rgba(0,0,0,0.07);border-radius:10px;cursor:pointer;touch-action:none" title="点击定位地图并高亮 · 拖动改状态">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
               <span class="mono" style="font-size:var(--fs-sm);color:var(--text-muted)">${taskLabel(c)}</span>
@@ -6803,6 +6849,7 @@ window.MemoryOSAppearance.init({edition:"personal"});
       <div id="cardTabBody"></div>
       <div class="cw-actions">
         ${card.kind === 'agent' ? '<button class="btn-ghost" id="cardRunMonitorBtn">执行记录</button>' : ''}
+        ${card.kind === 'task' && window.memoryosDesktop ? '<button type="button" class="btn-ghost" id="cardShareRoomBtn">分享到房间</button>' : ''}
         <button class="btn-primary" id="cardAgentBtn" title="跳到智能体页并预填本卡任务说明（不自动发送，你过目后回车）"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#mos-icon-13"></use></svg> 交给智能体</button>
         <button class="btn-ghost" id="cardTermBtn" title="打开准终端，并把工作目录切到本卡的工作区">⌨ 终端</button>
         <button class="btn-ghost" id="cardDesignBtn" title="打开 Design Mode：去真实浏览器点元素，抓 HTML+CSS+截图"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#mos-icon-19"></use></svg> 拾取</button>
@@ -7243,6 +7290,12 @@ window.MemoryOSAppearance.init({edition:"personal"});
     $('#detailModal').classList.add('show');
     // ★ 2026-09-14 查漏：统一关闭路径（关按钮 / Esc / 认领成功 / 删除成功），移除监听器防累积泄漏
     $('#cardCloseBtn').onclick = closeCardDetail;
+    $('#cardShareRoomBtn')?.addEventListener('click', () => {
+      closeCardDetail();
+      window.dispatchEvent(new CustomEvent('memoryos:share-task', { detail: Number(id) }));
+      navigate('tasks', 'shared');
+      $('#taskSharedTab').focus();
+    });
     /* ★ P4 工作台动作条：交给 Agent / 终端（自动切本卡目录）/ 设计拾取 / 一键改状态 */
     $('#cardRunMonitorBtn')?.addEventListener('click', () => { closeCardDetail(); agentCardMonitor(id); });
     $('#cardAgentBtn').onclick = () => { closeCardDetail(); sendCardToAgent(card); };

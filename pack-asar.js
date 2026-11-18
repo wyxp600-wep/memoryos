@@ -34,7 +34,7 @@ const SYNC_FILES = [
   "/security/token.js",
   "/services/core-process.js",
   "/services/login-startup.js",
-  "/services/personal-desktop.js",
+  "/services/personal-desktop.js", "/services/lan-rooms.js", "/services/lan-rooms-store.js",
   "/services/port.js",
   "/services/scheduler.js",
   "/services/updater.js",

@@ -34,6 +34,8 @@ export function registerStatic(app, ctx) {
     app.get("/personal-upgrade.js", sendStatic("personal-upgrade.js", "application/javascript", "no-cache"));
     app.get("/personal-upgrade.css", sendStatic("personal-upgrade.css", "text/css", "no-cache"));
     app.get("/echarts.min.js", sendStatic("echarts.min.js", "application/javascript", "public, max-age=31536000, immutable"));
+    app.get("/lan-room.js", sendStatic("lan-room.js", "application/javascript", "no-cache"));
+    app.get("/lan-room.css", sendStatic("lan-room.css", "text/css", "no-cache"));
     app.get("/app.js", sendStatic("app.js", "application/javascript", "no-cache"));
     // 固定白名单，禁止路径穿越；字体与 HTML/JS 一样用 ETag 协商缓存，更新后不保留旧字体。
     for (const font of ['inter-400.woff2','inter-600.woff2','jetbrains-mono-400.woff2','jetbrains-mono-600.woff2']) {

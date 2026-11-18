@@ -12,7 +12,7 @@ using System.Windows.Forms;
 // No administrator rights, network downloads, registry changes or profile copies.
 internal static class Installer
 {
-    const string Version = "0.1.4";
+    const string Version = "0.1.5";
     const string Magic = "MEMOSZIP";
     [STAThread]
     static int Main(string[] args)

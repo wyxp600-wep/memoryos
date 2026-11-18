@@ -3,10 +3,34 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {pathToFileURL}=require('node:url');
 const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
-const {ipcMain,Notification}=require('electron');
+const {app,ipcMain,Notification}=require('electron');
 function registerPersonalDesktop(deps){
  const {readConfig,dataDir,getKernel,getPort,getToken,shell,core,updater,restartMcp,getMainWindow,log}=deps;
  let busy=false;
+ let rooms;
+ app.once('before-quit', () => rooms?.close());
+ async function listCards(card, offset = 0) {
+   if (card !== undefined && (!Number.isSafeInteger(card) || card <= 0)) throw Error('个人任务编号无效');
+   if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) throw Error('任务页码无效');
+   const suffix = card ? '/' + card : '?limit=80&offset=' + offset;
+   const response = await fetch('http://127.0.0.1:' + getPort() + '/api/cards' + suffix, {
+     headers: { 'x-memory-token': getToken() },
+     redirect: 'error',
+     signal: AbortSignal.timeout(3000),
+   });
+   if (!response.ok) throw Error('无法读取个人任务看板');
+   const data = await response.json();
+   if (card) {
+     if (data.card?.kind !== 'task') throw Error('请选择个人看板中的任务');
+     return { title: data.card.title, body: data.card.body || '' };
+   }
+   const rows = Object.values(data.buckets || {}).flat();
+   return {
+     cards: rows.filter(row => row.kind === 'task').map(({id,title}) => ({id,title})),
+     more: offset + 80 < data.total,
+   };
+ }
+
  const statusFile=()=>path.join(dataDir(),'update-status.json');
  function updateStatus(r){let previous={};try{previous=JSON.parse(fs.readFileSync(statusFile(),'utf8'));}catch{/* 初次检查 */}const note=r.status==='disabled'?'未配置可信更新源。':r.status==='none'?`当前版本 ${r.current}，已是最新。`:r.status==='available'?`发现版本 ${r.latest}，当前 ${r.current}。`:r.status==='applied'?`已安装 ${r.latest}。`:r.status==='error'?'更新失败：'+r.error:'尚未检查更新';const out={...r,note,checkedAt:new Date().toISOString()};fs.writeFileSync(statusFile(),JSON.stringify(out));if(r.status==='available'&&(previous.latest!==r.latest||previous.status!=='available')){const file=path.join(dataDir(),'notifications.json');let notices=[];try{notices=JSON.parse(fs.readFileSync(file,'utf8'));}catch{/* 首次通知 */}notices.push({id:'update-'+r.latest,kind:'update',message:`发现可用更新 ${r.latest}，可在设置中安装。`,at:new Date().toISOString()});fs.writeFileSync(file,JSON.stringify(notices.slice(-100)));}return out;}
  updater.onStatus=r=>updateStatus(r);
@@ -59,6 +83,17 @@ function registerPersonalDesktop(deps){
    const main=getMainWindow();if(!main||main.isDestroyed()||event.sender.id!==main.webContents.id)return {ok:false,error:'调用来源无效'};
    try{
      const action=request?.action;
+     if (action === 'lan-rooms') {
+       const source = event.senderFrame;
+       if (!source || source !== event.sender.mainFrame ||
+           new URL(source.url).origin !== 'http://127.0.0.1:' + getPort()) throw Error('房间操作来源无效');
+       if (!rooms) rooms = require('./lan-rooms').createRoomService({
+         filename: path.join(dataDir(), 'lan-rooms', 'rooms.sqlite'),
+         uiDir: path.join(getKernel(), 'memoryos-dashboard-redesign'),
+         listCards, log,
+       });
+       return { ok: true, value: await rooms.dispatch(request) };
+     }
      if(action==='open-backup'||action==='open-logs'){const dir=action==='open-backup'?path.join(dataDir(),'data','backup'):path.join(dataDir(),'logs');fs.mkdirSync(dir,{recursive:true});const error=await shell.openPath(dir);if(error)throw Error(error);return {ok:true};}
      if(action==='update-status'){let r={note:'尚未检查更新'};try{r=JSON.parse(fs.readFileSync(statusFile(),'utf8'));}catch{/* 初次 */}return {ok:true,...r};}
      if(action==='check-update')return {ok:true,...updateStatus(await updater.applyKernelUpdate({checkOnly:true}))};
@@ -68,7 +103,7 @@ function registerPersonalDesktop(deps){
      if(action==='restore')return await restore(request.id);
      if(action==='notify'){if(!readConfig()?.preferences?.desktopNotifications)return {ok:true};if(Notification.isSupported())new Notification({title:'MemoryOS',body:String(request.body||'').slice(0,240),silent:true}).show();return {ok:true};}
      throw Error('不支持的桌面操作');
-   }catch(e){return {ok:false,error:e.message};}
+   }catch(e){return {ok:false,error:e.message,status:e.status};}
  });
  return {isBusy:()=>busy};
 }
